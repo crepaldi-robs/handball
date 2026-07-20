@@ -6,6 +6,9 @@ __pycache__/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/app-config.json
+backups/
+server-release/
 exports/
 .DS_Store
 Thumbs.db

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#0b1f33">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Handball">
+  <title>Registro de Presenças</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="identity">
+        <div class="mini-mark" aria-hidden="true">H</div>
+        <div>
+          <strong>Registro de Presenças</strong>
+          <span>Handebol</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="offline-lock-button" class="icon-button" type="button" title="Proteção offline" aria-label="Proteção offline">⌁</button>
+        <span id="connection-badge" class="status-badge">Conectando…</span>
+        <form method="post" action="/logout">
+          <button class="text-button" type="submit">Sair</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-layout">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="call" type="button"><span>✓</span> Chamada</button>
+        <button class="nav-item" data-view="summary" type="button"><span>≡</span> Resumo</button>
+        <button class="nav-item online-only" data-view="history" type="button"><span>◷</span> Histórico</button>
+        <button class="nav-item online-only" data-view="roster" type="button"><span>♙</span> Elenco</button>
+        <button class="nav-item online-only" data-view="audit" type="button"><span>⌕</span> Auditoria</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Servidor particular</span>
+        <strong>Fonte oficial dos dados</strong>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <div id="global-alert" class="alert hidden" role="status"></div>
+
+      <section id="view-call" class="view active" aria-labelledby="call-title">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">TREINO</span>
+            <h1 id="call-title">Chamada</h1>
+            <p id="session-state" class="muted">Carregando informações…</p>
+          </div>
+          <label class="date-control">
+            <span>Data do treino</span>
+            <input id="training-date" type="date">
+          </label>
+        </div>
+
+        <div id="metrics" class="metrics" aria-label="Resumo da chamada"></div>
+
+        <div class="section-toolbar">
+          <div>
+            <h2>Atletas</h2>
+            <p id="queue-status" class="muted">Nenhuma alteração pendente.</p>
+          </div>
+          <div class="toolbar-actions">
+            <a id="session-export" class="button online-only" href="#">Baixar CSV</a>
+            <button id="save-button" class="button button-primary" type="button">Salvar alterações</button>
+            <button id="finalize-button" class="button button-danger online-only" type="button">Encerrar chamada</button>
+            <button id="reopen-button" class="button online-only hidden" type="button">Reabrir chamada</button>
+          </div>
+        </div>
+
+        <div id="athlete-list" class="athlete-list" aria-live="polite"></div>
+
+        <section class="panel session-notes-panel online-only">
+          <div>
+            <h2>Observações gerais</h2>
+            <p class="muted">Informações que valem para o treino inteiro.</p>
+          </div>
+          <textarea id="session-notes" rows="3" maxlength="4000" placeholder="Ex.: treino reduzido, quadra alterada…"></textarea>
+          <button id="save-session-notes" class="button" type="button">Salvar observações</button>
+        </section>
+      </section>
+
+      <section id="view-summary" class="view" aria-labelledby="summary-title">
+        <div class="page-heading">
+          <div><span class="eyebrow">COMUNICAÇÃO</span><h1 id="summary-title">Resumo para o técnico</h1></div>
+          <button id="copy-summary" class="button button-primary" type="button">Copiar mensagem</button>
+        </div>
+        <div class="panel message-panel"><pre id="coach-message">Carregando…</pre></div>
+      </section>
+
+      <section id="view-history" class="view" aria-labelledby="history-title">
+        <div class="page-heading">
+          <div><span class="eyebrow">REGISTROS</span><h1 id="history-title">Histórico</h1></div>
+          <a class="button" href="/api/v1/exports/history.csv">Baixar CSV</a>
+        </div>
+        <div class="panel table-wrap"><table><thead><tr><th>Data</th><th>Atleta</th><th>Posição</th><th>Confirmação</th><th>Presença</th><th>Observação</th></tr></thead><tbody id="history-body"></tbody></table></div>
+      </section>
+
+      <section id="view-roster" class="view" aria-labelledby="roster-title">
+        <div class="page-heading"><div><span class="eyebrow">EQUIPE</span><h1 id="roster-title">Elenco</h1></div></div>
+        <div class="roster-grid">
+          <div class="panel table-wrap"><table><thead><tr><th>Nome</th><th>Posição</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
+          <form id="member-form" class="panel stack-form compact-form">
+            <h2>Adicionar atleta</h2>
+            <label><span>Nome</span><input id="member-name" required maxlength="120"></label>
+            <label><span>Posição</span><input id="member-position" required maxlength="40" placeholder="Ex.: GOL, PD/PE"></label>
+            <button class="button button-primary" type="submit">Adicionar</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-audit" class="view" aria-labelledby="audit-title">
+        <div class="page-heading">
+          <div><span class="eyebrow">RASTREABILIDADE</span><h1 id="audit-title">Auditoria</h1></div>
+          <a class="button" href="/api/v1/backup">Baixar backup</a>
+        </div>
+        <div class="panel table-wrap"><table><thead><tr><th>Alterado em</th><th>Treino</th><th>Atleta</th><th>Confirmação</th><th>Presença</th><th>Origem</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Navegação móvel">
+    <button class="active" data-view="call" type="button"><span>✓</span>Chamada</button>
+    <button data-view="summary" type="button"><span>≡</span>Resumo</button>
+    <button class="online-only" data-view="history" type="button"><span>◷</span>Histórico</button>
+    <button class="online-only" data-view="roster" type="button"><span>♙</span>Elenco</button>
+  </nav>
+
+  <dialog id="offline-dialog" class="modal">
+    <form id="offline-form" method="dialog" class="stack-form">
+      <div>
+        <span class="eyebrow">MODO OFFLINE</span>
+        <h2 id="offline-dialog-title">Desbloquear dados locais</h2>
+        <p id="offline-dialog-help" class="muted">Informe seu PIN para abrir a chamada salva neste iPhone.</p>
+      </div>
+      <label><span>PIN local</span><input id="offline-pin" type="password" inputmode="numeric" pattern="[0-9]*" minlength="6" autocomplete="off" required></label>
+      <label id="offline-confirm-label" class="hidden"><span>Confirmar PIN</span><input id="offline-pin-confirm" type="password" inputmode="numeric" pattern="[0-9]*" minlength="6" autocomplete="off"></label>
+      <div id="offline-error" class="alert alert-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button id="offline-cancel" class="button" type="button">Cancelar</button>
+        <button class="button button-primary" type="submit">Continuar</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

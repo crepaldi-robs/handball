@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -75,6 +77,7 @@ class AttendanceRepository:
                     confirmation_status TEXT NOT NULL DEFAULT 'PENDING',
                     present INTEGER NULL CHECK (present IN (0, 1) OR present IS NULL),
                     notes TEXT NOT NULL DEFAULT '',
+                    version INTEGER NOT NULL DEFAULT 1,
                     updated_at TEXT NOT NULL,
                     UNIQUE (session_id, member_id),
                     FOREIGN KEY (session_id) REFERENCES training_sessions(id)
@@ -109,8 +112,25 @@ class AttendanceRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_training_date
                     ON training_sessions(training_date);
+
+                CREATE TABLE IF NOT EXISTS sync_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    request_hash TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
+
+            record_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(attendance_records)")
+            }
+            if "version" not in record_columns:
+                conn.execute(
+                    "ALTER TABLE attendance_records "
+                    "ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+                )
 
         self.seed_initial_members()
 
@@ -199,6 +219,7 @@ class AttendanceRepository:
                     ar.confirmation_status,
                     ar.present,
                     ar.notes,
+                    ar.version,
                     ar.updated_at
                 FROM attendance_records ar
                 JOIN team_members tm ON tm.id = ar.member_id
@@ -243,7 +264,7 @@ class AttendanceRepository:
 
                 row = conn.execute(
                     """
-                    SELECT confirmation_status, present, notes
+                    SELECT confirmation_status, present, notes, version
                     FROM attendance_records
                     WHERE session_id = ? AND member_id = ?
                     """,
@@ -284,6 +305,7 @@ class AttendanceRepository:
                     SET confirmation_status = ?,
                         present = ?,
                         notes = ?,
+                        version = version + 1,
                         updated_at = ?
                     WHERE session_id = ? AND member_id = ?
                     """,
@@ -333,6 +355,215 @@ class AttendanceRepository:
 
         return changed
 
+    def sync_records(
+        self,
+        session_id: int,
+        operations: Iterable[dict[str, Any]],
+        *,
+        source: str = "pwa",
+    ) -> list[dict[str, Any]]:
+        """Aplica operações idempotentes com controle otimista de versão."""
+
+        valid_statuses = set(CONFIRMATION_LABELS)
+        results: list[dict[str, Any]] = []
+        now = _now_iso()
+
+        with self.connection() as conn:
+            session = conn.execute(
+                "SELECT is_finalized FROM training_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                raise KeyError(f"Treino {session_id} não encontrado.")
+            is_finalized = bool(session["is_finalized"])
+
+            for operation in operations:
+                normalized = {
+                    "operation_id": str(operation["operation_id"]),
+                    "member_id": int(operation["member_id"]),
+                    "base_version": int(operation["base_version"]),
+                    "confirmation_status": str(operation["confirmation_status"]),
+                    "present": operation.get("present"),
+                    "notes": str(operation.get("notes") or "").strip(),
+                }
+                if normalized["confirmation_status"] not in valid_statuses:
+                    raise ValueError(
+                        f"Situação inválida: {normalized['confirmation_status']}"
+                    )
+
+                request_json = json.dumps(
+                    normalized,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                request_hash = hashlib.sha256(request_json.encode("utf-8")).hexdigest()
+                previous = conn.execute(
+                    """
+                    SELECT request_hash, response_json
+                    FROM sync_operations
+                    WHERE operation_id = ?
+                    """,
+                    (normalized["operation_id"],),
+                ).fetchone()
+                if previous is not None:
+                    if previous["request_hash"] != request_hash:
+                        raise ValueError(
+                            "O identificador da operação já foi usado com outro conteúdo."
+                        )
+                    results.append(json.loads(previous["response_json"]))
+                    continue
+
+                row = conn.execute(
+                    """
+                    SELECT
+                        ar.session_id,
+                        ar.member_id,
+                        ar.confirmation_status,
+                        ar.present,
+                        ar.notes,
+                        ar.version,
+                        ar.updated_at,
+                        tm.name,
+                        tm.position
+                    FROM attendance_records ar
+                    JOIN team_members tm ON tm.id = ar.member_id
+                    WHERE ar.session_id = ? AND ar.member_id = ?
+                    """,
+                    (session_id, normalized["member_id"]),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(
+                        f"Registro do atleta {normalized['member_id']} não encontrado."
+                    )
+
+                if int(row["version"]) != normalized["base_version"]:
+                    result = {
+                        "operation_id": normalized["operation_id"],
+                        "status": "conflict",
+                        "record": dict(row),
+                    }
+                else:
+                    requested_present = normalized["present"]
+                    if requested_present is True:
+                        new_present: int | None = 1
+                    elif is_finalized:
+                        new_present = 0
+                    elif row["present"] == 1 and requested_present is False:
+                        new_present = None
+                    else:
+                        new_present = row["present"]
+
+                    changed = (
+                        row["confirmation_status"]
+                        != normalized["confirmation_status"]
+                        or row["present"] != new_present
+                        or (row["notes"] or "") != normalized["notes"]
+                    )
+                    if changed:
+                        conn.execute(
+                            """
+                            UPDATE attendance_records
+                            SET confirmation_status = ?,
+                                present = ?,
+                                notes = ?,
+                                version = version + 1,
+                                updated_at = ?
+                            WHERE session_id = ? AND member_id = ?
+                            """,
+                            (
+                                normalized["confirmation_status"],
+                                new_present,
+                                normalized["notes"],
+                                now,
+                                session_id,
+                                normalized["member_id"],
+                            ),
+                        )
+                        conn.execute(
+                            """
+                            INSERT INTO attendance_audit_log(
+                                session_id, member_id,
+                                old_confirmation_status, new_confirmation_status,
+                                old_present, new_present,
+                                old_notes, new_notes,
+                                changed_at, source
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                session_id,
+                                normalized["member_id"],
+                                row["confirmation_status"],
+                                normalized["confirmation_status"],
+                                row["present"],
+                                new_present,
+                                row["notes"],
+                                normalized["notes"],
+                                now,
+                                source,
+                            ),
+                        )
+                    else:
+                        # Mesmo um no-op aceito consome uma versão. Isso mantém
+                        # uma sequência offline de operações causal e previsível.
+                        conn.execute(
+                            """
+                            UPDATE attendance_records
+                            SET version = version + 1, updated_at = ?
+                            WHERE session_id = ? AND member_id = ?
+                            """,
+                            (now, session_id, normalized["member_id"]),
+                        )
+                    refreshed = conn.execute(
+                        """
+                        SELECT
+                            ar.session_id,
+                            ar.member_id,
+                            ar.confirmation_status,
+                            ar.present,
+                            ar.notes,
+                            ar.version,
+                            ar.updated_at,
+                            tm.name,
+                            tm.position
+                        FROM attendance_records ar
+                        JOIN team_members tm ON tm.id = ar.member_id
+                        WHERE ar.session_id = ? AND ar.member_id = ?
+                        """,
+                        (session_id, normalized["member_id"]),
+                    ).fetchone()
+                    result = {
+                        "operation_id": normalized["operation_id"],
+                        "status": "accepted",
+                        "changed": changed,
+                        "record": dict(refreshed),
+                    }
+
+                response_json = json.dumps(result, ensure_ascii=False, sort_keys=True)
+                conn.execute(
+                    """
+                    INSERT INTO sync_operations(
+                        operation_id, request_hash, response_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        normalized["operation_id"],
+                        request_hash,
+                        response_json,
+                        now,
+                    ),
+                )
+                results.append(result)
+
+            conn.execute(
+                "UPDATE training_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+
+        return results
+
     def finalize_session(self, session_id: int, *, source: str = "ui") -> int:
         now = _now_iso()
         changed = 0
@@ -340,7 +571,7 @@ class AttendanceRepository:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT member_id, confirmation_status, present, notes
+                SELECT member_id, confirmation_status, present, notes, version
                 FROM attendance_records
                 WHERE session_id = ? AND present IS NULL
                 """,
@@ -351,7 +582,7 @@ class AttendanceRepository:
                 conn.execute(
                     """
                     UPDATE attendance_records
-                    SET present = 0, updated_at = ?
+                    SET present = 0, version = version + 1, updated_at = ?
                     WHERE session_id = ? AND member_id = ?
                     """,
                     (now, session_id, int(row["member_id"])),
@@ -427,6 +658,7 @@ class AttendanceRepository:
                     ar.confirmation_status,
                     ar.present,
                     ar.notes,
+                    ar.version,
                     ar.updated_at
                 FROM attendance_records ar
                 JOIN training_sessions ts ON ts.id = ar.session_id
@@ -509,3 +741,17 @@ class AttendanceRepository:
                 """,
                 (cleaned_position, int(active), _now_iso(), member_id),
             )
+
+    def backup_to(self, destination: str | Path) -> Path:
+        """Cria uma cópia consistente do SQLite usando a API de backup."""
+
+        destination_path = Path(destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(self.db_path, timeout=30)
+        target = sqlite3.connect(destination_path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        return destination_path
