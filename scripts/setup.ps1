@@ -8,12 +8,19 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
 if (-not (Test-Path ".venv")) {
-    py -3 -m venv .venv
+    py -3.13 -m venv .venv
 }
 
 & ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
 & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
 
+if (-not (Test-Path "data\app-config.json")) {
+    & ".\.venv\Scripts\python.exe" -m attendance.cli init `
+        --config-path "data\app-config.json" `
+        --db-path "data\presencas.db" `
+        --backup-dir "backups"
+}
+
 Write-Host ""
-Write-Host "Ambiente preparado."
+Write-Host "Ambiente e acesso administrativo preparados."
 Write-Host "Execute: .\scripts\run.ps1"

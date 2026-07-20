@@ -11,4 +11,7 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
     throw "Ambiente virtual não encontrado. Execute .\scripts\setup.ps1 primeiro."
 }
 
-& ".\.venv\Scripts\python.exe" -m streamlit run app.py
+$env:ATTENDANCE_CONFIG_PATH = Join-Path $ProjectRoot "data\app-config.json"
+& ".\.venv\Scripts\python.exe" -m uvicorn app:app `
+    --host 127.0.0.1 `
+    --port 8765
