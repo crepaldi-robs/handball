@@ -1,55 +1,25 @@
-# Registro Oficial de Presenças
+# Registro Oficial de Presenças — PWA
 
-Aplicação local em Streamlit com banco SQLite para registrar:
+Aplicação privada para administrar confirmações e presença real nos treinos de
+handebol. O backend FastAPI mantém o SQLite como fonte oficial; a interface
+responsiva funciona no computador e pode ser instalada na Tela de Início do
+iPhone.
 
-- situação da confirmação antes do treino;
-- presença real no treino;
+## Recursos
+
+- confirmação prévia e presença real como informações independentes;
+- chamada aberta, encerramento e reabertura;
 - observações individuais e gerais;
-- histórico completo por data;
-- trilha de auditoria de todas as alterações;
-- exportação em CSV;
-- mensagem pronta para envio ao técnico.
+- mensagem pronta para o técnico;
+- histórico, elenco, auditoria, CSV e backup SQLite;
+- login administrativo, CSRF, rate limit e cookies seguros;
+- chamada offline cifrada por PIN no iPhone;
+- sincronização idempotente com detecção de conflitos;
+- PC sempre preservado como fonte de verdade em conflitos.
 
-## Situações disponíveis
+## Preparar no Windows pelo VSCode
 
-- Pendente;
-- Confirmou com mais de 24 horas;
-- Confirmou dentro de 24 horas;
-- Desmarcou com mais de 24 horas;
-- Desmarcou dentro de 24 horas;
-- Sem resposta.
-
-A categoria “desmarcou dentro de 24 horas” foi incluída para evitar que
-cancelamentos tardios fiquem sem classificação.
-
-## Estrutura do projeto
-
-```text
-registrador-presencas/
-├── app.py
-├── attendance/
-│   ├── database.py
-│   ├── models.py
-│   └── services.py
-├── data/
-│   └── presencas.db           # criado automaticamente
-├── scripts/
-│   ├── setup.ps1
-│   ├── run.ps1
-│   └── test.ps1
-├── tests/
-│   └── test_database.py
-├── AGENTS.md
-├── requirements.txt
-└── README.md
-```
-
-## Instalação no Windows pelo VSCode
-
-1. Extraia a pasta.
-2. Abra a pasta no VSCode.
-3. Abra o terminal PowerShell integrado.
-4. Execute:
+No PowerShell integrado:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -57,47 +27,33 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\run.ps1
 ```
 
-O navegador abrirá a aplicação. O banco será criado em:
+O primeiro comando solicitará usuário e uma senha com pelo menos 12 caracteres.
+Acesse `http://127.0.0.1:8765`. A senha não é salva; somente seu hash Argon2id é
+gravado em `data\app-config.json`, arquivo ignorado pelo Git.
 
-```text
-data\presencas.db
-```
+## Uso no iPhone
 
-## Fluxo operacional
+Depois da publicação em `https://handball.crepaldi.com.br`, abra o endereço no
+Safari, faça login e use **Compartilhar > Adicionar à Tela de Início**. No botão
+de proteção offline do cabeçalho, crie um PIN local de pelo menos seis dígitos.
 
-### Antes do treino
+Somente chamada, confirmação e observações individuais funcionam offline. Elenco,
+histórico, auditoria, exportações, encerramento e reabertura exigem o servidor.
+Se um registro tiver mudado no PC, a edição offline não o sobrescreve.
 
-1. Escolha a data.
-2. Atualize a situação de confirmação de cada atleta.
-3. Clique em **Salvar alterações**.
-4. Abra **Resumo para o técnico** e copie a mensagem.
+## Servidor permanente e domínio
 
-### Durante ou depois do treino
+O roteiro completo está em [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Em resumo:
 
-1. Marque apenas os atletas presentes.
-2. Salve as alterações.
-3. Clique em **Encerrar chamada**.
-4. Os demais atletas serão registrados como ausentes.
-5. Exporte o CSV, se necessário.
+1. `scripts\install-server.ps1` instala a aplicação em
+   `C:\ProgramData\CrepaldiHandball` e registra tarefas de servidor e backup.
+2. O Cloudflare Tunnel publica apenas `127.0.0.1:8765` em
+   `handball.crepaldi.com.br`, sem abrir portas do roteador.
+3. DNS e Hostinger são configurados manualmente pelo proprietário.
 
-
-## Acesso pelo celular na mesma rede Wi-Fi
-
-Depois da instalação, execute:
-
-```powershell
-.\scripts\run-network.ps1
-```
-
-O terminal mostrará um endereço semelhante a:
-
-```text
-http://192.168.0.15:8501
-```
-
-Abra esse endereço no celular conectado à mesma rede. Esse modo não possui
-login próprio; use somente em rede privada e confiável. O Firewall do Windows
-pode solicitar autorização para o Python acessar a rede privada.
+O projeto vizinho `../site` permanece exclusivo de
+`https://crepaldi.com.br/roberto/`. Nenhum arquivo deste aplicativo deve ser
+enviado para `public_html/roberto/`.
 
 ## Testes
 
@@ -105,50 +61,17 @@ pode solicitar autorização para o Python acessar a rede privada.
 .\scripts\test.ps1
 ```
 
-## Criar repositório remoto no GitHub
+Os testes cobrem regras de domínio, migrações, auditoria, backup, autenticação,
+CSRF, sincronização idempotente e conflitos de versão.
 
-Com o GitHub CLI instalado e autenticado:
+## Dados e recuperação
 
-```powershell
-git init
-git add .
-git commit -m "feat: cria registrador oficial de presencas"
-gh repo create registrador-presencas --private --source=. --remote=origin --push
-```
-
-Sem o GitHub CLI:
-
-1. Crie um repositório privado vazio no GitHub.
-2. Copie a URL HTTPS.
-3. Execute:
-
-```powershell
-git init
-git add .
-git commit -m "feat: cria registrador oficial de presencas"
-git branch -M main
-git remote add origin URL_DO_REPOSITORIO
-git push -u origin main
-```
-
-## Uso com Codex
-
-O arquivo `AGENTS.md` informa ao Codex as regras do sistema. Depois de conectar
-ou abrir o repositório no Codex, use tarefas como:
+Em desenvolvimento, o banco fica em `data\presencas.db`. Na instalação permanente:
 
 ```text
-Leia AGENTS.md, execute os testes e melhore o registrador sem alterar as regras
-de domínio nem apagar o banco SQLite existente.
+C:\ProgramData\CrepaldiHandball\data\presencas.db
 ```
 
-## Backup
-
-O arquivo essencial é:
-
-```text
-data\presencas.db
-```
-
-Faça cópias periódicas desse arquivo com a aplicação fechada. Para versionamento,
-o banco está ignorado pelo Git para evitar publicar dados pessoais e gerar
-conflitos binários.
+Backups diários consistentes ficam em `C:\ProgramData\CrepaldiHandball\backups`.
+Não copie nem substitua o banco enquanto o servidor estiver escrevendo nele;
+use a rotina de backup fornecida.
