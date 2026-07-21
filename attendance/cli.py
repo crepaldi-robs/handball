@@ -39,8 +39,8 @@ def initialize(args: argparse.Namespace) -> int:
         if password != confirmation:
             print("As senhas não coincidem.")
             continue
-        if len(password) < 12:
-            print("Use pelo menos 12 caracteres.")
+        if not password:
+            print("A senha não pode ficar vazia.")
             continue
         break
 
@@ -66,9 +66,13 @@ def reset_password(args: argparse.Namespace) -> int:
     while True:
         password = getpass.getpass("Nova senha: ")
         confirmation = getpass.getpass("Confirme a senha: ")
-        if password == confirmation and len(password) >= 12:
-            break
-        print("As senhas devem coincidir e ter pelo menos 12 caracteres.")
+        if password != confirmation:
+            print("As senhas não coincidem.")
+            continue
+        if not password:
+            print("A senha não pode ficar vazia.")
+            continue
+        break
     data["password_hash"] = PasswordHasher().hash(password)
     data["secret_key"] = secrets.token_urlsafe(48)
     _write_config(config_path, data)

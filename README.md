@@ -27,9 +27,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\run.ps1
 ```
 
-O primeiro comando solicitará usuário e uma senha com pelo menos 12 caracteres.
-Acesse `http://127.0.0.1:8765`. A senha não é salva; somente seu hash Argon2id é
-gravado em `data\app-config.json`, arquivo ignorado pelo Git.
+O primeiro comando solicitará usuário e uma senha, que pode ter qualquer
+conteúdo não vazio. Acesse `http://127.0.0.1:8765`. A senha não é salva; somente
+seu hash Argon2id é gravado em `data\app-config.json`, arquivo ignorado pelo Git.
 
 ## Uso no iPhone
 

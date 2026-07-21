@@ -28,6 +28,22 @@ $LogRoot = Join-Path $ResolvedInstallRoot "logs"
 $ConfigPath = Join-Path $DataRoot "app-config.json"
 $DbPath = Join-Path $DataRoot "presencas.db"
 
+function Set-PrivateDirectoryAcl {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    # SIDs conhecidos tornam a ACL independente do idioma instalado no Windows.
+    # O prefixo * informa ao icacls que cada identidade é um SID numérico.
+    $SystemGrant = "*S-1-5-18:(OI)(CI)F"
+    $AdministratorsGrant = "*S-1-5-32-544:(OI)(CI)F"
+    & icacls.exe $Path /inheritance:r /grant:r $SystemGrant $AdministratorsGrant | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível proteger as permissões de $Path (icacls: $LASTEXITCODE)."
+    }
+}
+
 foreach ($directory in @($ResolvedInstallRoot, $AppRoot, $DataRoot, $BackupRoot, $LogRoot)) {
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
 }
@@ -73,8 +89,8 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
         --secure-cookie
 }
 
-& icacls.exe $DataRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
-& icacls.exe $BackupRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+Set-PrivateDirectoryAcl -Path $DataRoot
+Set-PrivateDirectoryAcl -Path $BackupRoot
 
 $Pwsh = (Get-Command pwsh -ErrorAction Stop).Source
 $ServerScript = Join-Path $AppRoot "scripts\run-server.ps1"
