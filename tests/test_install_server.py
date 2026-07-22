@@ -219,6 +219,8 @@ def test_updater_publishes_immutable_release_and_switches_only_the_pointer():
 def test_stable_ops_are_verified_and_only_bootstrapped_for_legacy_layout():
     script = read_script(UPDATE_SCRIPT)
 
+    assert "function Assert-SafeReleaseId" not in script
+    assert "[void](Assert-SafeReleaseId -ReleaseId $ReleaseId)" in script
     assert "function Install-OperationalBridge" in script
     assert "function Get-VerifiedOperationalRuntime" in script
     assert 'if ($PreviousRelease.Kind -ceq "legacy")' in script

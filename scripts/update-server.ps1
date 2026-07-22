@@ -37,24 +37,6 @@ function Enter-MaintenanceLock {
     }
 }
 
-function Assert-SafeReleaseId {
-    param([Parameter(Mandatory)][string]$Value)
-
-    if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
-        throw "ReleaseId inválido."
-    }
-    if ($Value.EndsWith(".") -or $Value.EndsWith(" ")) {
-        throw "ReleaseId não pode terminar em ponto ou espaço."
-    }
-    $baseName = $Value.Split(".")[0].ToUpperInvariant()
-    if (
-        $baseName -in @("CON", "PRN", "AUX", "NUL") -or
-        $baseName -match '^(COM|LPT)[1-9]$'
-    ) {
-        throw "ReleaseId reservado pelo Windows."
-    }
-}
-
 function Assert-DirectoryNotReparsePoint {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -1222,7 +1204,7 @@ try {
             $SourceCommitBefore.Substring(0, 12),
             [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
     }
-    Assert-SafeReleaseId -Value $ReleaseId
+    [void](Assert-SafeReleaseId -ReleaseId $ReleaseId)
     $FinalReleaseRoot = Join-Path $ReleasesRoot $ReleaseId
     if (Test-Path -LiteralPath $FinalReleaseRoot) {
         throw "Release imutável já existe: $FinalReleaseRoot"
