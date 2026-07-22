@@ -183,21 +183,87 @@ input:focus, select:focus, textarea:focus { border-color: var(--navy-700); box-s
 textarea { resize: vertical; }
 
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 34px; }
+.metrics.details-open { margin-bottom: 12px; }
 .metric {
   position: relative;
   overflow: hidden;
+  width: 100%;
   min-height: 108px;
   padding: 18px;
+  color: var(--ink);
+  text-align: left;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
+  transition: border-color .15s, box-shadow .15s, transform .15s;
 }
 .metric::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--navy-700); }
 .metric:nth-child(1)::before { background: var(--success); }
 .metric:nth-child(3)::before { background: var(--orange); }
 .metric:nth-child(4)::before { background: #7355a5; }
+.metric:hover { border-color: #aebbc5; transform: translateY(-1px); }
+.metric:focus-visible { outline: 3px solid rgba(28, 72, 106, .22); outline-offset: 2px; }
+.metric.is-active { border-color: var(--navy-700); box-shadow: 0 8px 24px rgba(11, 31, 51, .1); }
 .metric span { display: block; color: var(--muted); font-size: .76rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
 .metric strong { display: block; margin-top: 9px; font-size: 2rem; letter-spacing: -.04em; }
+.metric .metric-action {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  color: var(--navy-700);
+  font-size: .64rem;
+  letter-spacing: .04em;
+}
+.metric-details {
+  --metric-accent: var(--navy-700);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 34px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(11, 31, 51, .06);
+}
+.metric-details::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--metric-accent); }
+.metric-details[data-metric="confirmed"] { --metric-accent: var(--success); }
+.metric-details[data-metric="cancelled"] { --metric-accent: var(--orange); }
+.metric-details[data-metric="present"] { --metric-accent: #7355a5; }
+.metric-details-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.metric-details-heading h2 { margin-bottom: 0; }
+.metric-details-kicker { display: block; margin-bottom: 4px; color: var(--muted); font-size: .66rem; font-weight: 800; letter-spacing: .08em; }
+.metric-details-count { flex: 0 0 auto; color: var(--muted); font-size: .76rem; font-weight: 800; }
+.metric-name-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 8px;
+  margin: 15px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.metric-name-list li {
+  position: relative;
+  min-width: 0;
+  padding: 9px 10px 9px 29px;
+  border: 1px solid #e5eaee;
+  border-radius: 9px;
+  background: #f8fafb;
+  font-size: .84rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.metric-name-list li::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--metric-accent);
+  transform: translateY(-50%);
+}
+.metric-details-empty { margin: 14px 0 0; color: var(--muted); font-size: .84rem; }
 
 .section-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
 .section-toolbar p { margin-bottom: 0; font-size: .82rem; }
@@ -305,8 +371,11 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   .page-heading h1 { font-size: 2.3rem; }
   .date-control { min-width: 148px; }
   .metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 26px; }
+  .metrics.details-open { margin-bottom: 10px; }
   .metric { min-height: 90px; padding: 14px; }
   .metric strong { font-size: 1.7rem; }
+  .metric .metric-action { right: 13px; bottom: 13px; font-size: .6rem; }
+  .metric-details { margin-bottom: 26px; padding: 15px; }
   .section-toolbar { align-items: flex-start; flex-direction: column; }
   .toolbar-actions { width: 100%; justify-content: stretch; }
   .toolbar-actions .button { flex: 1; }

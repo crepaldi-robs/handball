@@ -18,6 +18,7 @@ const state = {
   vaultExists: false,
   conflicts: [],
   loadedViews: new Set(),
+  selectedMetric: null,
 };
 
 function localIsoDate(offsetDays = 0) {
@@ -301,15 +302,34 @@ function presenceText(value) {
   return "Não apurado";
 }
 
+const metricDefinitions = [
+  {
+    key: "confirmed",
+    label: "Confirmados",
+    matches: (record) => ["CONFIRMED_EARLY", "CONFIRMED_LATE"].includes(record.confirmation_status),
+  },
+  {
+    key: "pending",
+    label: "Pendentes",
+    matches: (record) => ["PENDING", "NO_RESPONSE"].includes(record.confirmation_status),
+  },
+  {
+    key: "cancelled",
+    label: "Desmarcaram",
+    matches: (record) => ["CANCELLED_EARLY", "CANCELLED_LATE"].includes(record.confirmation_status),
+  },
+  {
+    key: "present",
+    label: "Presentes",
+    matches: (record) => record.present === 1 || record.present === true,
+  },
+];
+
 function computeSummary(records) {
-  const confirmed = new Set(["CONFIRMED_EARLY", "CONFIRMED_LATE"]);
-  const cancelled = new Set(["CANCELLED_EARLY", "CANCELLED_LATE"]);
-  return {
-    confirmed: records.filter((r) => confirmed.has(r.confirmation_status)).length,
-    pending: records.filter((r) => ["PENDING", "NO_RESPONSE"].includes(r.confirmation_status)).length,
-    cancelled: records.filter((r) => cancelled.has(r.confirmation_status)).length,
-    present: records.filter((r) => r.present === 1 || r.present === true).length,
-  };
+  return Object.fromEntries(metricDefinitions.map((definition) => [
+    definition.key,
+    records.filter(definition.matches).length,
+  ]));
 }
 
 function namesBy(records, predicate) {
@@ -353,23 +373,69 @@ function buildCoachMessage() {
 
 function renderMetrics() {
   const summary = computeSummary(state.records);
-  const values = [
-    ["Confirmados", summary.confirmed],
-    ["Pendentes", summary.pending],
-    ["Desmarcaram", summary.cancelled],
-    ["Presentes", summary.present],
-  ];
   const container = $("#metrics");
-  container.replaceChildren(...values.map(([label, value]) => {
-    const card = document.createElement("div");
+  container.replaceChildren(...metricDefinitions.map((definition) => {
+    const expanded = state.selectedMetric === definition.key;
+    const value = summary[definition.key];
+    const card = document.createElement("button");
+    card.type = "button";
     card.className = "metric";
+    card.classList.toggle("is-active", expanded);
+    card.dataset.metric = definition.key;
+    card.setAttribute("aria-controls", "metric-details");
+    card.setAttribute("aria-expanded", String(expanded));
+    card.setAttribute(
+      "aria-label",
+      `${definition.label}: ${value}. ${expanded ? "Ocultar nomes" : "Mostrar nomes"}`,
+    );
     const name = document.createElement("span");
-    name.textContent = label;
+    name.textContent = definition.label;
     const number = document.createElement("strong");
     number.textContent = value;
-    card.append(name, number);
+    const action = document.createElement("span");
+    action.className = "metric-action";
+    action.textContent = expanded ? "Fechar" : "Ver nomes";
+    action.setAttribute("aria-hidden", "true");
+    card.addEventListener("click", () => {
+      state.selectedMetric = expanded ? null : definition.key;
+      renderMetrics();
+      $(`.metric[data-metric="${definition.key}"]`)?.focus();
+    });
+    card.append(name, number, action);
     return card;
   }));
+  renderMetricDetails();
+}
+
+function renderMetricDetails() {
+  const container = $("#metrics");
+  const panel = $("#metric-details");
+  const definition = metricDefinitions.find((item) => item.key === state.selectedMetric);
+  container.classList.toggle("details-open", Boolean(definition));
+
+  if (!definition) {
+    panel.hidden = true;
+    panel.removeAttribute("data-metric");
+    return;
+  }
+
+  const records = state.records.filter(definition.matches);
+  panel.hidden = false;
+  panel.dataset.metric = definition.key;
+  $("#metric-details-title").textContent = definition.label;
+  $("#metric-details-count").textContent = `${records.length} ${records.length === 1 ? "atleta" : "atletas"}`;
+
+  const list = $("#metric-details-list");
+  list.replaceChildren(...records.map((record) => {
+    const item = document.createElement("li");
+    item.textContent = record.name;
+    return item;
+  }));
+  list.classList.toggle("hidden", records.length === 0);
+
+  const empty = $("#metric-details-empty");
+  empty.textContent = "Nenhum atleta neste status.";
+  empty.classList.toggle("hidden", records.length > 0);
 }
 
 function recordConflict(memberId) {

@@ -68,6 +68,25 @@
 
         <div id="metrics" class="metrics" aria-label="Resumo da chamada"></div>
 
+        <section
+          id="metric-details"
+          class="metric-details"
+          role="region"
+          aria-labelledby="metric-details-title"
+          aria-live="polite"
+          hidden
+        >
+          <div class="metric-details-heading">
+            <div>
+              <span class="metric-details-kicker">ATLETAS NESTE STATUS</span>
+              <h2 id="metric-details-title"></h2>
+            </div>
+            <span id="metric-details-count" class="metric-details-count"></span>
+          </div>
+          <ul id="metric-details-list" class="metric-name-list"></ul>
+          <p id="metric-details-empty" class="metric-details-empty hidden"></p>
+        </section>
+
         <div class="section-toolbar">
           <div>
             <h2>Atletas</h2>

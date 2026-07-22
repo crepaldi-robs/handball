@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v2";
+const CACHE_NAME = "handball-shell-v3";
 const SHELL = [
   "/app",
   "/static/styles.css",
