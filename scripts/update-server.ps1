@@ -729,7 +729,9 @@ function Assert-StableScheduledTasks {
             throw "Ação da tarefa $($definition[0]) diverge do caminho estável."
         }
         if ($definition[0] -ceq "CrepaldiHandball") {
-            if ([TimeSpan]$task.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero) {
+            $executionTimeLimit = ConvertFrom-ScheduledTaskDuration `
+                -Value $task.Settings.ExecutionTimeLimit
+            if ($executionTimeLimit -ne [TimeSpan]::Zero) {
                 if (-not $AllowLegacyRepair) {
                     throw (
                         "Tarefa do servidor possui ExecutionTimeLimit; " +
@@ -748,7 +750,9 @@ function Assert-StableScheduledTasks {
                 $persisted = Get-ScheduledTask `
                     -TaskName $definition[0] `
                     -ErrorAction Stop
-                if ([TimeSpan]$persisted.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero) {
+                $persistedLimit = ConvertFrom-ScheduledTaskDuration `
+                    -Value $persisted.Settings.ExecutionTimeLimit
+                if ($persistedLimit -ne [TimeSpan]::Zero) {
                     throw "ExecutionTimeLimit infinito não foi persistido no servidor."
                 }
             }

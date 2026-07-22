@@ -3,6 +3,38 @@ Set-StrictMode -Version Latest
 $script:ReleaseManifestName = "release-manifest.json"
 $script:EnvironmentManifestName = "environment-files.json"
 
+function ConvertFrom-ScheduledTaskDuration {
+    param([Parameter(Mandatory)]$Value)
+
+    if ($Value -is [TimeSpan]) {
+        return [TimeSpan]$Value
+    }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        throw "Duração da tarefa agendada está vazia."
+    }
+
+    if ($text -match '^-?P') {
+        try {
+            return [Xml.XmlConvert]::ToTimeSpan($text)
+        }
+        catch {
+            throw "Duração ISO 8601 inválida na tarefa agendada: $text"
+        }
+    }
+
+    try {
+        return [TimeSpan]::Parse(
+            $text,
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch {
+        throw "Duração inválida na tarefa agendada: $text"
+    }
+}
+
 function Resolve-ExactInstallRoot {
     param([Parameter(Mandatory)][string]$Path)
 

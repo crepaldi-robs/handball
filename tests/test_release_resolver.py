@@ -129,6 +129,39 @@ def test_resolver_has_no_powershell_parser_errors():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected_total_hours"),
+    [
+        ("'PT72H'", "72"),
+        ("'PT0S'", "0"),
+        ("'3.00:00:00'", "72"),
+        ("[TimeSpan]::FromMinutes(90)", "1.5"),
+    ],
+)
+def test_scheduled_task_duration_accepts_cim_and_timespan_formats(
+    expression: str,
+    expected_total_hours: str,
+):
+    result = run_pwsh(
+        "$duration = ConvertFrom-ScheduledTaskDuration -Value "
+        f"({expression}); "
+        "$duration.TotalHours.ToString("
+        "[Globalization.CultureInfo]::InvariantCulture)"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == expected_total_hours
+
+
+def test_scheduled_task_duration_rejects_empty_and_invalid_values():
+    for expression in ("''", "'not-a-duration'", "'PTnot-valid'"):
+        result = run_pwsh(
+            "try { ConvertFrom-ScheduledTaskDuration -Value "
+            f"({expression}); exit 0 }} catch {{ exit 23 }}"
+        )
+        assert result.returncode == 23, result.stdout + result.stderr
+
+
 def test_formal_release_is_verified_without_executing_python():
     script = read_resolver()
 
