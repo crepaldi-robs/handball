@@ -18,6 +18,14 @@ nos treinos.
 9. Operações móveis precisam ser idempotentes e versionadas.
 10. Não expor a porta local diretamente nem misturar este projeto com `../site`.
 11. Configuração, hash de senha, banco e backups não entram no Git.
+12. Ler `docs/SITE-INTEGRATION-CONTRACT.md` antes de alterar hostname, rotas
+    públicas, autenticação, PWA, instalador, banco ou qualquer vínculo com o
+    portal. O único vínculo permitido com `/roberto/` é um link HTTPS comum.
+13. Atualização comum troca somente código e dependências: não executa DDL,
+    migration ou seed sobre banco existente. Mudança de esquema é manutenção
+    separada, explícita e previamente autorizada, sempre precedida de backup.
+14. Startup e backup de instalação existente devem falhar se o SQLite estiver
+    ausente ou incompatível; nunca criar silenciosamente uma base vazia.
 
 ## Verificação obrigatória
 
