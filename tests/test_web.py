@@ -4,25 +4,32 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 import pytest
 
-from attendance.auth import LoginLimiter
-from attendance.config import AppSettings
-from attendance.database import AttendanceRepository, DatabaseCompatibilityError
-from attendance.web import create_app
+from handball.application import create_app
+from handball.core.auth import LoginLimiter
+from handball.core.config import AppSettings
+from handball.database import (
+    AttendanceRepository,
+    DatabaseCompatibilityError,
+    DatabaseManager,
+)
 
 
 def make_client(tmp_path) -> TestClient:
     database_path = tmp_path / "web.db"
-    AttendanceRepository(database_path).bootstrap()
+    database_manager = DatabaseManager(
+        database_path,
+        backup_dir=tmp_path / "backups",
+    )
+    database_manager.bootstrap()
     settings = AppSettings(
-        db_path=database_path,
         admin_username="roberto",
         password_hash=PasswordHasher().hash("senha-de-teste-forte"),
         secret_key="s" * 64,
+        config_path=tmp_path / "app-config.json",
         cookie_secure=False,
-        backup_dir=tmp_path / "backups",
         release_id="test-release",
     )
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings, database_manager=database_manager))
 
 
 def login(client: TestClient) -> str:
@@ -54,7 +61,10 @@ def test_authentication_and_security_headers(tmp_path):
     ).status_code == 401
 
     login(client)
-    response = client.get("/app")
+    hub = client.get("/app")
+    assert hub.status_code == 200
+    assert "Hub Handebol" in hub.text
+    response = client.get("/app/presencas")
     assert response.status_code == 200
     assert "Registro de Presenças" in response.text
     assert 'id="metric-details"' in response.text
@@ -70,7 +80,7 @@ def test_readiness_reports_the_schema_version_read_from_database(
 ):
     client = make_client(tmp_path)
     monkeypatch.setattr(
-        AttendanceRepository,
+        DatabaseManager,
         "validate_existing",
         lambda _repository, **_kwargs: 7,
     )
@@ -87,7 +97,7 @@ def test_login_blocks_on_limit_and_releases_after_policy_window(
 ):
     clock = {"now": 1_000.0}
     limiter = LoginLimiter(monotonic=lambda: clock["now"])
-    monkeypatch.setattr("attendance.auth.LoginLimiter", lambda: limiter)
+    monkeypatch.setattr("handball.core.auth.LoginLimiter", lambda: limiter)
     client = make_client(tmp_path)
 
     for _ in range(4):
@@ -139,7 +149,7 @@ def test_login_alert_uses_changed_policy_values(tmp_path, monkeypatch):
         window_seconds=90,
         monotonic=lambda: clock["now"],
     )
-    monkeypatch.setattr("attendance.auth.LoginLimiter", lambda: limiter)
+    monkeypatch.setattr("handball.core.auth.LoginLimiter", lambda: limiter)
     client = make_client(tmp_path)
 
     for _ in range(2):
@@ -198,7 +208,8 @@ def test_pwa_assets_and_backup(tmp_path):
     worker = client.get("/sw.js")
     assert worker.status_code == 200
     assert worker.headers["service-worker-allowed"] == "/"
-    assert 'handball-shell-v3' in worker.text
+    assert 'handball-shell-v4' in worker.text
+    assert '"/app/presencas"' in worker.text
     app_script = client.get("/static/app.js")
     assert app_script.status_code == 200
     assert 'card.setAttribute("aria-controls", "metric-details")' in app_script.text
@@ -212,16 +223,19 @@ def test_pwa_assets_and_backup(tmp_path):
 def test_web_startup_refuses_to_recreate_missing_database(tmp_path):
     database_path = tmp_path / "missing.db"
     settings = AppSettings(
-        db_path=database_path,
         admin_username="roberto",
         password_hash=PasswordHasher().hash("senha-de-teste-forte"),
         secret_key="s" * 64,
+        config_path=tmp_path / "app-config.json",
         cookie_secure=False,
+    )
+    database_manager = DatabaseManager(
+        database_path,
         backup_dir=tmp_path / "backups",
     )
 
     with pytest.raises(DatabaseCompatibilityError, match="não encontrado"):
-        create_app(settings)
+        create_app(settings, database_manager=database_manager)
 
     assert not database_path.exists()
 
@@ -236,16 +250,19 @@ def test_maintenance_mode_blocks_all_business_routes_without_touching_database(
     maintenance_file = tmp_path / "maintenance-mode"
     maintenance_file.write_text("APP_ONLY\n", encoding="utf-8")
     settings = AppSettings(
-        db_path=database_path,
         admin_username="roberto",
         password_hash=PasswordHasher().hash("senha-de-teste-forte"),
         secret_key="s" * 64,
+        config_path=tmp_path / "app-config.json",
         cookie_secure=False,
-        backup_dir=tmp_path / "backups",
         release_id="maintenance-release",
         maintenance_file=maintenance_file,
     )
-    client = TestClient(create_app(settings))
+    database_manager = DatabaseManager(
+        database_path,
+        backup_dir=tmp_path / "backups",
+    )
+    client = TestClient(create_app(settings, database_manager=database_manager))
 
     assert client.get("/health").status_code == 200
     readiness = client.get("/ready")

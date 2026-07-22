@@ -1,0 +1,1 @@
+"""Hub autenticado da plataforma."""

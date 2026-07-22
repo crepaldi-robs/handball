@@ -35,7 +35,7 @@ Antes de concluir uma alteração:
 .\scripts\test.ps1
 ```
 
-Também execute `python -m compileall -q app.py attendance tests` e valide a PWA
+Também execute `python -m compileall -q app.py attendance handball tests` e valide a PWA
 em WebKit quando Node.js/Playwright estiverem disponíveis.
 
 ## Histórico Git

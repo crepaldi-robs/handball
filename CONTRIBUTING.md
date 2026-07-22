@@ -25,7 +25,7 @@ No PowerShell integrado do VSCode:
 
 ```powershell
 .\scripts\test.ps1
-.\.venv\Scripts\python.exe -m compileall -q app.py attendance tests
+.\.venv\Scripts\python.exe -m compileall -q app.py attendance handball tests
 git diff --check
 git status --short
 ```

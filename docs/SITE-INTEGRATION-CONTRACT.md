@@ -222,12 +222,14 @@ request ao handball para carregar ou funcionar.
 | Caminho | Responsabilidade |
 |---|---|
 | `app.py` | ponto de entrada, chama `create_app()` |
-| `attendance/config.py` | carrega caminhos, usuário, hash, secret, cookie, sessão e backup |
-| `attendance/auth.py` | Argon2id, sessão assinada, CSRF e limitador de login |
-| `attendance/database.py` | SQLite, esquema, transações, auditoria, sync e backup |
-| `attendance/models.py` | códigos de confirmação e elenco inicial |
-| `attendance/services.py` | resumos, mensagens e transformação para CSV |
-| `attendance/web.py` | FastAPI, middleware, páginas e API v1 |
+| `handball/application.py` | composição FastAPI, middleware e registro dos routers |
+| `handball/core/` | configuração, Argon2id, sessão, CSRF, rate limit e segurança |
+| `handball/database/` | única fronteira de SQLite, SQL, schema, transações, migrations e backup |
+| `handball/modules/hub/` | Hub Handebol autenticado em `/app` |
+| `handball/modules/presencas/` | regras, service, schemas, página e API v1 de presenças |
+| `handball/modules/estatisticas/` | esqueleto autenticado, sem persistência própria |
+| `handball/modules/calendario/` | esqueleto autenticado, sem persistência própria |
+| `attendance/` | fachada temporária sem implementação ou acesso ao banco |
 | `templates/` | HTML de login e aplicativo |
 | `static/` | CSS, JS, manifest, ícones e service worker |
 | `scripts/` | setup, execução, instalação, backup, senha e testes |
@@ -273,7 +275,10 @@ Superfície conhecida:
 | `GET /` | indireta | redireciona a `/app` ou `/login` |
 | `GET/POST /login` | credencial | cria sessão no POST válido |
 | `POST /logout` | não crítica | remove cookie e retorna ao login |
-| `GET /app` | sessão | shell da PWA |
+| `GET /app` | sessão | Hub Handebol |
+| `GET /app/presencas` | sessão | shell funcional da PWA de presenças |
+| `GET /app/estatisticas` | sessão | esqueleto em preparação |
+| `GET /app/calendario` | sessão | esqueleto em preparação |
 | `GET /api/v1/auth/session` | sessão | usuário e token CSRF |
 | `GET /api/v1/session` | sessão | chamada pela data |
 | `PUT /api/v1/sessions/{id}/records` | sessão + CSRF | sync versionado/idempotente |
@@ -325,7 +330,7 @@ ou servidor de desenvolvimento para o banco de produção em `C:\ProgramData`.
 
 ```powershell
 .\scripts\test.ps1
-.\.venv\Scripts\python.exe -m compileall -q app.py attendance tests
+.\.venv\Scripts\python.exe -m compileall -q app.py attendance handball tests
 git diff --check
 git status --short
 ```
@@ -438,7 +443,7 @@ release pela troca atômica de `state\active-release.json`. Ela não executa DDL
 seed nem alteração de conteúdo no SQLite existente. O startup apenas abre e
 valida a base; se o arquivo ou a estrutura esperada estiver ausente, falha sem
 criar uma base vazia. A criação é exclusiva do comando
-`attendance.cli init-database`, usado no bootstrap da primeira instalação.
+`handball.cli init-database`, usado no bootstrap da primeira instalação.
 
 `app\scripts` contém apenas launchers e o resolver de release em caminhos
 operacionais estáveis. `ops\database-guard.py` é independente do pacote
@@ -580,7 +585,7 @@ scripts/reset-password.ps1
 scripts/update-server.ps1
 scripts/migrate-database.ps1
 scripts/release-resolver.ps1
-scripts/database-guard.py
+handball/database/guard.py
 ```
 
 Os seis scripts PowerShell são instalados em `app\scripts`; o guard é instalado

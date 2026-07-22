@@ -8,28 +8,30 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Handball">
-  <title>Registro de Presenças</title>
+  <title>Presenças · Hub Handebol</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="identity">
+      <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
         <div class="mini-mark" aria-hidden="true">H</div>
         <div>
           <strong>Registro de Presenças</strong>
-          <span>Handebol</span>
+          <span>Hub Handebol</span>
         </div>
-      </div>
+      </a>
       <div class="top-actions">
+        <a class="text-button hub-text-link" href="/app">Hub</a>
         <button id="offline-lock-button" class="icon-button" type="button" title="Proteção offline" aria-label="Proteção offline">⌁</button>
         <span id="connection-badge" class="status-badge">Conectando…</span>
-        <form method="post" action="/logout">
-          <button class="text-button" type="submit">Sair</button>
+        <form method="post" action="/logout" data-platform-logout>
+          <button class="text-button logout-button" type="submit">Sair</button>
         </form>
       </div>
     </div>
@@ -38,6 +40,7 @@
   <main class="app-layout">
     <aside class="sidebar" aria-label="Navegação principal">
       <nav class="nav-list">
+        <a class="nav-item module-nav-link" href="/app"><span>⌂</span> Hub</a>
         <button class="nav-item active" data-view="call" type="button"><span>✓</span> Chamada</button>
         <button class="nav-item" data-view="summary" type="button"><span>≡</span> Resumo</button>
         <button class="nav-item online-only" data-view="history" type="button"><span>◷</span> Histórico</button>
@@ -152,6 +155,7 @@
   </main>
 
   <nav class="bottom-nav" aria-label="Navegação móvel">
+    <a href="/app"><span>⌂</span>Hub</a>
     <button class="active" data-view="call" type="button"><span>✓</span>Chamada</button>
     <button data-view="summary" type="button"><span>≡</span>Resumo</button>
     <button class="online-only" data-view="history" type="button"><span>◷</span>Histórico</button>

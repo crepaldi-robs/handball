@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from attendance.migrations import logical_fingerprint
+from handball.database.migrations import logical_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GUARD_SCRIPT = PROJECT_ROOT / "scripts" / "database-guard.py"
+GUARD_SCRIPT = PROJECT_ROOT / "handball" / "database" / "guard.py"
 STDLIB_IMPORTS = {
     "__future__",
     "argparse",

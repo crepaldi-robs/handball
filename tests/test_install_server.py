@@ -27,6 +27,7 @@ EXPECTED_RUNTIME_ITEMS = {
     "app.py",
     "requirements.txt",
     "attendance",
+    "handball",
     "templates",
     "static",
 }
@@ -38,7 +39,7 @@ EXPECTED_OPERATIONAL_MAPPINGS = {
     "scripts/update-server.ps1": "app/scripts/update-server.ps1",
     "scripts/migrate-database.ps1": "app/scripts/migrate-database.ps1",
     "scripts/release-resolver.ps1": "app/scripts/release-resolver.ps1",
-    "scripts/database-guard.py": "ops/database-guard.py",
+    "handball/database/guard.py": "ops/database-guard.py",
 }
 
 
@@ -122,8 +123,8 @@ def test_initial_install_is_bootstrap_only_and_creates_first_pointer():
     assert "$maximumAttempts = 900" in script
     assert "Instalação existente detectada" in script
     assert "o bootstrap não sobrescreve estado persistente" in script
-    assert "-m attendance.cli init `" in script
-    assert "-m attendance.cli init-database --config-path $ConfigPath" in script
+    assert "-m handball.cli init `" in script
+    assert "-m handball.cli init-database --config-path $ConfigPath" in script
     assert 'Join-Path $ReleasesRoot $ReleaseId' in script
     assert 'Join-Path $ReleaseRoot ".venv\\Scripts\\python.exe"' in script
     assert "payload_sha256 = $payloadHash" in script
@@ -132,7 +133,7 @@ def test_initial_install_is_bootstrap_only_and_creates_first_pointer():
     assert "environment_manifest_sha256 = $EnvironmentEvidence.ManifestSha256" in script
     assert "environment_sha256 = $EnvironmentEvidence.EnvironmentSha256" in script
     assert "Get-ReleaseSchemaCompatibility `" in script
-    assert "-m attendance.cli release-contract" in script
+    assert "-m handball.cli release-contract" in script
     assert 'install_kind = "initial"' in script
     assert "database_action = \"bootstrap\"" in script
     assert "[IO.Directory]::Move($ReleaseRoot, $FinalReleaseRoot)" in script
@@ -199,7 +200,7 @@ def test_updater_publishes_immutable_release_and_switches_only_the_pointer():
     assert '".stage-$ReleaseId-$([guid]::NewGuid().ToString(\'N\'))"' in script
     assert 'Join-Path $StagePath ".venv\\Scripts\\python.exe"' in script
     assert "-m pip check" in script
-    assert "-m compileall -q app.py attendance" in script
+    assert "-m compileall -q app.py attendance handball" in script
     assert "[IO.Directory]::Move($StagePath, $FinalReleaseRoot)" in script
     assert "Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256" in script
     assert "Set-ActiveReleasePointer `" in script

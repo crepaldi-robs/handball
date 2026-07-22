@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#0b1f33">
+  <title>{{ module.title }} · Hub Handebol</title>
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+</head>
+<body class="platform-body">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
+        <div class="mini-mark" aria-hidden="true">H</div>
+        <div><strong>Estatísticas</strong><span>Hub Handebol</span></div>
+      </a>
+      <div class="top-actions">
+        <a class="text-button" href="/app">Hub</a>
+        <form method="post" action="/logout" data-platform-logout>
+          <button class="text-button logout-button" type="submit">Sair</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <main class="module-shell skeleton-shell">
+    <a class="back-link" href="/app">← Voltar ao hub</a>
+    <section class="skeleton-panel" aria-labelledby="module-title">
+      <span class="module-icon module-icon-large" aria-hidden="true">↗</span>
+      <span class="module-status">{{ module.state_label }}</span>
+      <span class="eyebrow">MÓDULO</span>
+      <h1 id="module-title">{{ module.title }}</h1>
+      <p>{{ module.description }}</p>
+      <p class="skeleton-scope">Nenhuma tabela, dado fictício ou integração foi criada nesta etapa.</p>
+      <a class="button button-primary" href="/app">Escolher outro módulo</a>
+    </section>
+  </main>
+</body>
+</html>

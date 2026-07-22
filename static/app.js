@@ -133,15 +133,6 @@ async function dbPut(key, value) {
   });
 }
 
-async function dbClear() {
-  const db = await openOfflineDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction("secure", "readwrite").objectStore("secure").clear();
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-}
-
 async function deriveVaultKey(pin, salt) {
   const material = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
@@ -856,10 +847,6 @@ async function initialize() {
   state.vaultExists = Boolean(await dbGet("vault"));
   setConnectionBadge();
 
-  if ("serviceWorker" in navigator) {
-    try { await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch (_) { /* aplicação continua online */ }
-  }
-
   if (state.online) {
     try {
       const session = await api("/api/v1/auth/session");
@@ -903,17 +890,6 @@ document.addEventListener("DOMContentLoaded", () => {
     catch (_) { setAlert("Não foi possível copiar automaticamente.", "warning"); }
   });
   $("#member-form").addEventListener("submit", addMember);
-  $('form[action="/logout"]').addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await dbClear();
-    if ("serviceWorker" in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
-    }
-    const keys = await caches.keys();
-    await Promise.all(keys.map((key) => caches.delete(key)));
-    event.target.submit();
-  });
   window.addEventListener("online", () => handleConnectivity(true));
   window.addEventListener("offline", () => handleConnectivity(false));
   initialize();

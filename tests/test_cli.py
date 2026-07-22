@@ -8,7 +8,7 @@ from argparse import Namespace
 from argon2 import PasswordHasher
 import pytest
 
-from attendance.cli import (
+from handball.database.cli import (
     backup,
     database_plan,
     database_status,
@@ -20,8 +20,8 @@ from attendance.cli import (
     reset_password,
     verify_database,
 )
-from attendance.database import DatabaseCompatibilityError, AttendanceRepository
-from attendance.migrations import (
+from handball.database import DatabaseCompatibilityError, AttendanceRepository
+from handball.database.migrations import (
     FINGERPRINT_FORMAT,
     MAX_SUPPORTED_SCHEMA_VERSION,
     MIGRATION_V1_CHECKSUM,
@@ -37,7 +37,7 @@ def test_release_contract_is_read_only_and_exposes_schema_range(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "attendance.cli.AttendanceRepository",
+        "handball.database.cli.AttendanceRepository",
         lambda *_args, **_kwargs: pytest.fail(
             "release-contract não deve instanciar o repositório"
         ),

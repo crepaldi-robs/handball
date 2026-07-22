@@ -15,7 +15,7 @@ if (-not (Test-Path ".venv")) {
 & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
 
 if (-not (Test-Path "data\app-config.json")) {
-    & ".\.venv\Scripts\python.exe" -m attendance.cli init `
+    & ".\.venv\Scripts\python.exe" -m handball.cli init `
         --config-path "data\app-config.json" `
         --db-path "data\presencas.db" `
         --backup-dir "backups"
@@ -24,7 +24,7 @@ if (-not (Test-Path "data\app-config.json")) {
     }
 }
 
-& ".\.venv\Scripts\python.exe" -m attendance.cli init-database `
+& ".\.venv\Scripts\python.exe" -m handball.cli init-database `
     --config-path "data\app-config.json"
 if ($LASTEXITCODE -ne 0) {
     throw "Não foi possível preparar ou validar o banco local."

@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from attendance.database import (
+from handball.database import (
     DatabaseCompatibilityError,
     AttendanceRepository,
 )

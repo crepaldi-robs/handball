@@ -327,7 +327,7 @@ function Invoke-JsonCli {
     )
     Push-Location $ApplicationRoot
     try {
-        $output = @(& $Python -m attendance.cli $Command @Arguments 2>&1)
+        $output = @(& $Python -m handball.cli $Command @Arguments 2>&1)
         $exitCode = $LASTEXITCODE
         $text = (($output | ForEach-Object { "$_" }) -join "`n").Trim()
         if ($AllowedExitCodes -notcontains $exitCode) {

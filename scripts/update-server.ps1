@@ -494,7 +494,7 @@ function Install-OperationalBridge {
     # O runner é substituído por último: em qualquer crash anterior, o runner
     # histórico continua executável; depois dele, resolver e guard já existem.
     $orderedSources = @(
-        "scripts/database-guard.py",
+        "handball/database/guard.py",
         "scripts/release-resolver.ps1",
         "scripts/reset-password.ps1",
         "scripts/update-server.ps1",
@@ -874,7 +874,7 @@ function Invoke-CandidateCliText {
     )
     Push-Location $ApplicationRoot
     try {
-        $output = @(& $Python -m attendance.cli @Arguments 2>&1)
+        $output = @(& $Python -m handball.cli @Arguments 2>&1)
         $exitCode = $LASTEXITCODE
         $text = (($output | ForEach-Object { "$_" }) -join "`n").Trim()
         if ($exitCode -ne 0) {
@@ -1042,7 +1042,14 @@ if (-not (Test-Path -LiteralPath $ResolvedInstallRoot -PathType Container)) {
 }
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$RuntimeItems = @("app.py", "requirements.txt", "attendance", "templates", "static")
+$RuntimeItems = @(
+    "app.py",
+    "requirements.txt",
+    "attendance",
+    "handball",
+    "templates",
+    "static"
+)
 $OperationalMappings = [ordered]@{
     "scripts/run-server.ps1" = "app/scripts/run-server.ps1"
     "scripts/backup-server.ps1" = "app/scripts/backup-server.ps1"
@@ -1050,7 +1057,7 @@ $OperationalMappings = [ordered]@{
     "scripts/update-server.ps1" = "app/scripts/update-server.ps1"
     "scripts/migrate-database.ps1" = "app/scripts/migrate-database.ps1"
     "scripts/release-resolver.ps1" = "app/scripts/release-resolver.ps1"
-    "scripts/database-guard.py" = "ops/database-guard.py"
+    "handball/database/guard.py" = "ops/database-guard.py"
 }
 $AllSources = @($RuntimeItems + @($OperationalMappings.Keys))
 Assert-CleanTrackedSources -ProjectRoot $ProjectRoot -Items $AllSources
@@ -1236,7 +1243,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Dependências da candidata inconsistentes." }
     Push-Location $StagePath
     try {
-        & $CandidatePython -m compileall -q app.py attendance
+        & $CandidatePython -m compileall -q app.py attendance handball
         if ($LASTEXITCODE -ne 0) { throw "Compilação Python candidata falhou." }
     }
     finally {

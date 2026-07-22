@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-import attendance.migrations as migrations
-from attendance.database import AttendanceRepository
-from attendance.migrations import (
+import handball.database.migrations as migrations
+from handball.database import AttendanceRepository
+from handball.database.migrations import (
     DatabaseMigrator,
     DatabaseSchemaError,
     logical_fingerprint,

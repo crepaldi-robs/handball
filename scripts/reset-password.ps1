@@ -498,7 +498,7 @@ try {
         -MaintenanceFile $MaintenanceFile
     Push-Location $Release.ApplicationRoot
     try {
-        & $Release.PythonPath -m attendance.cli reset-password `
+        & $Release.PythonPath -m handball.cli reset-password `
             --config-path $ConfigPath
         if ($LASTEXITCODE -ne 0) {
             throw "A CLI não concluiu a redefinição de senha."

@@ -1,9 +1,9 @@
-# Registro Oficial de Presenças — PWA
+# Plataforma Handball — PWA modular
 
-Aplicação privada para administrar confirmações e presença real nos treinos de
-handebol. O backend FastAPI mantém o SQLite como fonte oficial; a interface
-responsiva funciona no computador e pode ser instalada na Tela de Início do
-iPhone.
+Aplicação privada modular para administrar o handebol. Um único backend
+FastAPI, uma sessão e um cookie atendem o hub e seus módulos. O SQLite continua
+como fonte oficial; a interface responsiva funciona no computador e pode ser
+instalada na Tela de Início do iPhone.
 
 ## Recursos
 
@@ -16,6 +16,19 @@ iPhone.
 - chamada offline cifrada por PIN no iPhone;
 - sincronização idempotente com detecção de conflitos;
 - PC sempre preservado como fonte de verdade em conflitos.
+
+## Módulos e rotas
+
+- `/app`: Hub Handebol;
+- `/app/presencas`: registro funcional de confirmações e presenças;
+- `/app/estatisticas`: módulo autenticado em preparação;
+- `/app/calendario`: módulo autenticado em preparação.
+
+Toda a implementação reside em `handball/`. Persistência, conexões,
+transações, SQL, schema, migrations e backups ficam exclusivamente em
+`handball/database/`; os módulos usam contratos e unidades de trabalho. A
+arquitetura e o processo de extensão estão em
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Preparar no Windows pelo VSCode
 
@@ -37,8 +50,9 @@ Depois da publicação em `https://handball.crepaldi.com.br`, abra o endereço n
 Safari, faça login e use **Compartilhar > Adicionar à Tela de Início**. No botão
 de proteção offline do cabeçalho, crie um PIN local de pelo menos seis dígitos.
 
-Somente chamada, confirmação e observações individuais funcionam offline. Elenco,
-histórico, auditoria, exportações, encerramento e reabertura exigem o servidor.
+Somente a chamada em `/app/presencas`, confirmação e observações individuais
+funcionam offline. Hub, estatísticas, calendário, elenco, histórico, auditoria,
+exportações, encerramento e reabertura exigem o servidor.
 Se um registro tiver mudado no PC, a edição offline não o sobrescreve.
 
 ## Servidor permanente e domínio
@@ -78,8 +92,9 @@ CORS, autenticação, cookie, cofre, service worker, banco ou release compartilh
 ```
 
 Os testes cobrem regras de domínio, auditoria, backup inclusive com WAL,
-autenticação, CSRF, sincronização idempotente, conflitos de versão e a garantia
-de que startup/update não recriam nem modificam implicitamente uma base existente.
+autenticação, CSRF, sincronização idempotente, conflitos de versão, fronteiras
+arquiteturais e a garantia de que startup/update não recriam nem modificam
+implicitamente uma base existente.
 
 ## Dados e recuperação
 
@@ -95,7 +110,7 @@ use a rotina de backup fornecida.
 
 O banco é estado permanente, não parte de uma release. Startup e backup abrem
 uma instalação existente em modo de validação e falham se o arquivo ou o esquema
-esperado estiver ausente; somente `attendance.cli init-database`, chamado na
+esperado estiver ausente; somente `handball.cli init-database`, chamado na
 primeira instalação, tem permissão para criar a base.
 
 Após uma instalação nova ou a primeira transição legada aceita, o layout separa

@@ -10,7 +10,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
-GUARD_SCRIPT = SCRIPTS_ROOT / "database-guard.py"
+GUARD_SCRIPT = PROJECT_ROOT / "handball" / "database" / "guard.py"
 BACKUP_SCRIPT = SCRIPTS_ROOT / "backup-server.ps1"
 RESET_SCRIPT = SCRIPTS_ROOT / "reset-password.ps1"
 MIGRATION_SCRIPT = SCRIPTS_ROOT / "migrate-database.ps1"
@@ -51,8 +51,8 @@ def test_every_operational_guard_call_is_isolated_from_site_packages():
         assert "& $Runtime.PythonPath $Runtime.GuardPath @Arguments 2>&1" not in script
 
     # As CLIs da aplicação continuam usando o ambiente do release.
-    assert "& $Release.PythonPath -m attendance.cli reset-password `" in reset
-    assert "$output = @(& $Python -m attendance.cli $Command @Arguments 2>&1)" in migration
+    assert "& $Release.PythonPath -m handball.cli reset-password `" in reset
+    assert "$output = @(& $Python -m handball.cli $Command @Arguments 2>&1)" in migration
 
 
 def test_backup_is_lock_first_release_only_and_path_bound():

@@ -10,6 +10,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 RUN_SCRIPT = SCRIPTS_ROOT / "run-server.ps1"
+SETUP_SCRIPT = SCRIPTS_ROOT / "setup.ps1"
 BACKUP_SCRIPT = SCRIPTS_ROOT / "backup-server.ps1"
 RESET_SCRIPT = SCRIPTS_ROOT / "reset-password.ps1"
 MIGRATION_SCRIPT = SCRIPTS_ROOT / "migrate-database.ps1"
@@ -29,6 +30,18 @@ def main_after_lock(script: str) -> str:
     marker = "$LockStream = Enter-MaintenanceLock"
     assert marker in script
     return script[script.index(marker) :]
+
+
+def test_application_cli_namespace_is_centralized_in_handball():
+    scripts = {
+        path.name: read_script(path)
+        for path in SCRIPTS_ROOT.glob("*.ps1")
+    }
+
+    for name, script in scripts.items():
+        assert "attendance.cli" not in script, name
+    assert "-m handball.cli init `" in scripts[SETUP_SCRIPT.name]
+    assert "-m handball.cli init-database `" in scripts[SETUP_SCRIPT.name]
 
 
 def test_backup_reset_and_migration_resolve_state_only_after_lock():
@@ -171,7 +184,7 @@ def test_migration_uses_guard_for_baseline_backup_and_recovery():
     assert "migration-cli-v$fromVersion-to-v$toVersion" in script
     assert "Get-GuardFingerprint" in script[script.index("catch {") :]
     assert "Nenhum restore automático foi feito" in script
-    assert "attendance.cli restore" not in script
+    assert "handball.cli restore" not in script
     assert "Copy-Item" not in script
 
     guard_backup = script.index("$guardBackupResult = Invoke-GuardJson")

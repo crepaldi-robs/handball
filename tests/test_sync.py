@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from attendance.database import AttendanceRepository
+from handball.database import AttendanceRepository
 
 
 def test_sync_is_idempotent_and_rejects_stale_version(tmp_path):

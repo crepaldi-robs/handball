@@ -217,7 +217,7 @@ function Get-ReleaseSchemaCompatibility {
 
     Push-Location $ApplicationRoot
     try {
-        $output = @(& $Python -m attendance.cli release-contract 2>&1)
+        $output = @(& $Python -m handball.cli release-contract 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -288,7 +288,14 @@ function Wait-ExpectedReadiness {
 Assert-Administrator
 $ResolvedInstallRoot = Resolve-ExactInstallRoot -Path $InstallRoot
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$RuntimeItems = @("app.py", "requirements.txt", "attendance", "templates", "static")
+$RuntimeItems = @(
+    "app.py",
+    "requirements.txt",
+    "attendance",
+    "handball",
+    "templates",
+    "static"
+)
 $OperationalMappings = [ordered]@{
     "scripts/run-server.ps1" = "app/scripts/run-server.ps1"
     "scripts/backup-server.ps1" = "app/scripts/backup-server.ps1"
@@ -296,7 +303,7 @@ $OperationalMappings = [ordered]@{
     "scripts/update-server.ps1" = "app/scripts/update-server.ps1"
     "scripts/migrate-database.ps1" = "app/scripts/migrate-database.ps1"
     "scripts/release-resolver.ps1" = "app/scripts/release-resolver.ps1"
-    "scripts/database-guard.py" = "ops/database-guard.py"
+    "handball/database/guard.py" = "ops/database-guard.py"
 }
 $AllSources = @($RuntimeItems + @($OperationalMappings.Keys))
 Assert-CleanTrackedSources -ProjectRoot $ProjectRoot -Items $AllSources
@@ -378,7 +385,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Dependências inconsistentes." }
     Push-Location $ReleaseRoot
     try {
-        & $Python -m compileall -q app.py attendance
+        & $Python -m compileall -q app.py attendance handball
         if ($LASTEXITCODE -ne 0) { throw "Compilação Python falhou." }
     }
     finally { Pop-Location }
@@ -391,13 +398,13 @@ try {
     $DbPath = Join-Path $DataRoot "presencas.db"
     Push-Location $ReleaseRoot
     try {
-        & $Python -m attendance.cli init `
+        & $Python -m handball.cli init `
             --config-path $ConfigPath `
             --db-path $DbPath `
             --backup-dir $BackupRoot `
             --secure-cookie
         if ($LASTEXITCODE -ne 0) { throw "Falha ao criar configuração inicial." }
-        & $Python -m attendance.cli init-database --config-path $ConfigPath
+        & $Python -m handball.cli init-database --config-path $ConfigPath
         if ($LASTEXITCODE -ne 0) { throw "Falha no bootstrap explícito do banco." }
     }
     finally { Pop-Location }

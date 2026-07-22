@@ -101,6 +101,12 @@ própria e não deve ser disfarçada como atualização de banco.
 O ponteiro escolhe qual release imutável será executada; ele não escolhe outro
 banco.
 
+O payload modular obrigatório inclui `handball/`, além de `app.py`,
+`requirements.txt`, templates, assets e a fachada transitória `attendance/`.
+SQL, conexões, schema e migrations pertencem exclusivamente a
+`handball/database/`. A presença de `handball/` é validada pelas allowlists do
+instalador e do updater antes da montagem de uma release.
+
 A garantia de neutralidade do SQLite é lógica: mesmo caminho configurado, mesmo
 schema e mesmo conteúdo/fingerprint. Parar o processo ou abrir SQLite pode alterar
 metadados físicos e a existência/consolidação de `-wal` e `-shm`; não se promete
