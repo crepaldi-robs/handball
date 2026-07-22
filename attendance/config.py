@@ -23,6 +23,8 @@ class AppSettings:
     cookie_secure: bool = False
     session_max_age_seconds: int = 12 * 60 * 60
     backup_dir: Path | None = None
+    release_id: str = "development"
+    maintenance_file: Path | None = None
 
     @classmethod
     def load(cls, root_dir: Path) -> "AppSettings":
@@ -79,4 +81,13 @@ class AppSettings:
                 )
             ),
             backup_dir=Path(backup_dir_value),
+            release_id=(
+                os.environ.get("ATTENDANCE_RELEASE_ID", "development").strip()
+                or "development"
+            )[:100],
+            maintenance_file=(
+                Path(os.environ["ATTENDANCE_MAINTENANCE_FILE"])
+                if os.environ.get("ATTENDANCE_MAINTENANCE_FILE")
+                else None
+            ),
         )

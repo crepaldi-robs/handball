@@ -19,6 +19,15 @@ if (-not (Test-Path "data\app-config.json")) {
         --config-path "data\app-config.json" `
         --db-path "data\presencas.db" `
         --backup-dir "backups"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível criar a configuração local."
+    }
+}
+
+& ".\.venv\Scripts\python.exe" -m attendance.cli init-database `
+    --config-path "data\app-config.json"
+if ($LASTEXITCODE -ne 0) {
+    throw "Não foi possível preparar ou validar o banco local."
 }
 
 Write-Host ""

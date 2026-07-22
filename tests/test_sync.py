@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sqlite3
+
 from attendance.database import AttendanceRepository
 
 
 def test_sync_is_idempotent_and_rejects_stale_version(tmp_path):
     repo = AttendanceRepository(tmp_path / "presencas.db")
-    repo.initialize()
+    repo.bootstrap()
     session = repo.get_or_create_session("2026-07-23")
     session_id = int(session["id"])
     record = repo.get_session_records(session_id)[0]
@@ -44,7 +46,7 @@ def test_sync_is_idempotent_and_rejects_stale_version(tmp_path):
 
 def test_backup_is_consistent(tmp_path):
     original = AttendanceRepository(tmp_path / "original.db")
-    original.initialize()
+    original.bootstrap()
     original.get_or_create_session("2026-07-24")
 
     backup_path = original.backup_to(tmp_path / "backups" / "copy.db")
@@ -54,9 +56,35 @@ def test_backup_is_consistent(tmp_path):
     assert restored.get_history()
 
 
+def test_backup_includes_commits_still_present_in_wal(tmp_path):
+    database_path = tmp_path / "wal-source.db"
+    original = AttendanceRepository(database_path)
+    original.bootstrap()
+
+    reader = sqlite3.connect(database_path)
+    try:
+        reader.execute("PRAGMA journal_mode = WAL")
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM team_members").fetchone()
+
+        session = original.get_or_create_session("2026-07-29")
+        wal_path = database_path.with_name(database_path.name + "-wal")
+        assert wal_path.is_file()
+        assert wal_path.stat().st_size > 0
+
+        backup_path = original.backup_to(tmp_path / "backups" / "wal-copy.db")
+    finally:
+        reader.rollback()
+        reader.close()
+
+    restored = AttendanceRepository(backup_path)
+    assert restored.get_session(int(session["id"]))["training_date"] == "2026-07-29"
+    assert restored.quick_check() == "ok"
+
+
 def test_offline_noop_still_advances_version_for_followup_operation(tmp_path):
     repo = AttendanceRepository(tmp_path / "sequence.db")
-    repo.initialize()
+    repo.bootstrap()
     session = repo.get_or_create_session("2026-07-26")
     session_id = int(session["id"])
     record = repo.get_session_records(session_id)[0]

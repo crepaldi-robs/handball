@@ -13,13 +13,14 @@ from fastapi.responses import (
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
+    JSONResponse,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from .auth import AuthManager, AuthSession
+from .auth import AuthManager, AuthSession, LoginLimitStatus
 from .config import AppSettings
 from .database import AttendanceRepository
 from .models import CONFIRMATION_LABELS
@@ -72,10 +73,38 @@ def _csv_response(dataframe: pd.DataFrame, filename: str) -> StreamingResponse:
     )
 
 
+def _format_duration(total_seconds: int) -> str:
+    total_seconds = max(0, total_seconds)
+    hours, remainder = divmod(total_seconds, 60 * 60)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    for value, singular, plural in (
+        (hours, "hora", "horas"),
+        (minutes, "minuto", "minutos"),
+        (seconds, "segundo", "segundos"),
+    ):
+        if value:
+            unit = singular if value == 1 else plural
+            parts.append(f"{value} {unit}")
+    if not parts:
+        return "0 segundos"
+    return " e ".join(parts)
+
+
+def _login_limit_message(status: LoginLimitStatus) -> str:
+    policy_duration = _format_duration(status.window_seconds)
+    remaining_duration = _format_duration(status.retry_after_seconds)
+    return (
+        f"Limite de {status.limit} tentativas atingido. "
+        "A política atual bloqueia novas tentativas por até "
+        f"{policy_duration}. Tente novamente em {remaining_duration}."
+    )
+
+
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     settings = settings or AppSettings.load(ROOT_DIR)
     repository = AttendanceRepository(settings.db_path)
-    repository.initialize()
+    repository.validate_existing()
     auth = AuthManager(settings)
     templates = Jinja2Templates(directory=ROOT_DIR / "templates")
 
@@ -96,7 +125,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
-        response: Response = await call_next(request)
+        maintenance_active = bool(
+            settings.maintenance_file and settings.maintenance_file.is_file()
+        )
+        if maintenance_active and request.url.path not in {"/health", "/ready"}:
+            response = JSONResponse(
+                status_code=503,
+                content={
+                    "status": "maintenance",
+                    "detail": "Atualização controlada em andamento.",
+                },
+                headers={"Retry-After": "30", "Cache-Control": "no-store"},
+            )
+        else:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -157,6 +199,16 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @application.get("/ready")
+    def readiness() -> dict[str, str | int]:
+        schema_version = repository.validate_existing()
+        return {
+            "status": "ok",
+            "database": "ready",
+            "schema_version": schema_version,
+            "release_id": settings.release_id,
+        }
+
     @application.get("/robots.txt", response_class=PlainTextResponse)
     def robots() -> str:
         return "User-agent: *\nDisallow: /\n"
@@ -194,15 +246,35 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         password: Annotated[str, Form()],
     ) -> Response:
         client_key = request.client.host if request.client else "unknown"
-        if not auth.limiter.allowed(client_key):
+        limit_status = auth.limiter.status(client_key)
+        if limit_status.blocked:
             return templates.TemplateResponse(
                 request,
                 "login.html",
-                {"error": "Muitas tentativas. Aguarde 15 minutos.", "username": username},
+                {
+                    "error": _login_limit_message(limit_status),
+                    "username": username,
+                },
                 status_code=429,
+                headers={
+                    "Retry-After": str(limit_status.retry_after_seconds),
+                },
             )
         if not auth.verify_credentials(username, password):
-            auth.limiter.fail(client_key)
+            limit_status = auth.limiter.fail(client_key)
+            if limit_status.blocked:
+                return templates.TemplateResponse(
+                    request,
+                    "login.html",
+                    {
+                        "error": _login_limit_message(limit_status),
+                        "username": username,
+                    },
+                    status_code=429,
+                    headers={
+                        "Retry-After": str(limit_status.retry_after_seconds),
+                    },
+                )
             return templates.TemplateResponse(
                 request,
                 "login.html",
@@ -366,7 +438,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     def download_backup(
         _: AuthSession = Depends(require_session),
     ) -> FileResponse:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup_path = repository.backup_to(
             (settings.backup_dir or ROOT_DIR / "backups")
             / f"presencas-{timestamp}.db"

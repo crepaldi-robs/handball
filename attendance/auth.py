@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import secrets
 import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,21 +21,62 @@ class AuthSession:
     csrf_token: str
 
 
+@dataclass(frozen=True)
+class LoginLimitStatus:
+    limit: int
+    window_seconds: int
+    attempts: int
+    blocked: bool
+    retry_after_seconds: int
+
+
 class LoginLimiter:
-    def __init__(self, limit: int = 5, window_seconds: int = 15 * 60) -> None:
+    def __init__(
+        self,
+        limit: int = 5,
+        window_seconds: int = 15 * 60,
+        monotonic: Callable[[], float] | None = None,
+    ) -> None:
+        if limit < 1:
+            raise ValueError("O limite de tentativas deve ser positivo.")
+        if window_seconds < 1:
+            raise ValueError("A janela de bloqueio deve ser positiva.")
         self.limit = limit
         self.window_seconds = window_seconds
+        self._monotonic = monotonic or time.monotonic
         self._attempts: dict[str, deque[float]] = defaultdict(deque)
 
-    def allowed(self, key: str) -> bool:
-        now = time.monotonic()
+    def _status(self, key: str, now: float) -> LoginLimitStatus:
         attempts = self._attempts[key]
-        while attempts and now - attempts[0] > self.window_seconds:
+        while attempts and now - attempts[0] >= self.window_seconds:
             attempts.popleft()
-        return len(attempts) < self.limit
 
-    def fail(self, key: str) -> None:
-        self._attempts[key].append(time.monotonic())
+        blocked = len(attempts) >= self.limit
+        retry_after_seconds = 0
+        if blocked:
+            retry_after_seconds = math.ceil(
+                self.window_seconds - (now - attempts[0])
+            )
+
+        return LoginLimitStatus(
+            limit=self.limit,
+            window_seconds=self.window_seconds,
+            attempts=len(attempts),
+            blocked=blocked,
+            retry_after_seconds=retry_after_seconds,
+        )
+
+    def status(self, key: str) -> LoginLimitStatus:
+        return self._status(key, self._monotonic())
+
+    def allowed(self, key: str) -> bool:
+        return not self.status(key).blocked
+
+    def fail(self, key: str) -> LoginLimitStatus:
+        now = self._monotonic()
+        self._status(key, now)
+        self._attempts[key].append(now)
+        return self._status(key, now)
 
     def clear(self, key: str) -> None:
         self._attempts.pop(key, None)

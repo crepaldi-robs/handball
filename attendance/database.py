@@ -2,16 +2,74 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from .migrations import (
+    LATEST_SCHEMA_VERSION,
+    DatabaseMigrator,
+    logical_fingerprint as migration_logical_fingerprint,
+)
 from .models import CONFIRMATION_LABELS, INITIAL_MEMBERS
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+SCHEMA_VERSION = LATEST_SCHEMA_VERSION
+
+REQUIRED_SCHEMA: dict[str, frozenset[str]] = {
+    "team_members": frozenset(
+        {"id", "name", "position", "active", "created_at", "updated_at"}
+    ),
+    "training_sessions": frozenset(
+        {
+            "id",
+            "training_date",
+            "notes",
+            "is_finalized",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "attendance_records": frozenset(
+        {
+            "id",
+            "session_id",
+            "member_id",
+            "confirmation_status",
+            "present",
+            "notes",
+            "version",
+            "updated_at",
+        }
+    ),
+    "attendance_audit_log": frozenset(
+        {
+            "id",
+            "session_id",
+            "member_id",
+            "old_confirmation_status",
+            "new_confirmation_status",
+            "old_present",
+            "new_present",
+            "old_notes",
+            "new_notes",
+            "changed_at",
+            "source",
+        }
+    ),
+    "sync_operations": frozenset(
+        {"operation_id", "request_hash", "response_json", "created_at"}
+    ),
+}
+
+
+class DatabaseCompatibilityError(RuntimeError):
+    """O banco persistente está ausente, corrompido ou incompatível."""
 
 
 def _now_iso() -> str:
@@ -24,19 +82,49 @@ def _date_iso(value: date | str) -> str:
     return date.fromisoformat(value).isoformat()
 
 
+def _fetchall(
+    conn: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> list[sqlite3.Row]:
+    cursor = conn.execute(sql, parameters)
+    try:
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+
+
+def _fetchone(
+    conn: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> sqlite3.Row | None:
+    cursor = conn.execute(sql, parameters)
+    try:
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+
+
 class AttendanceRepository:
     """Camada de persistência SQLite do registrador de presenças."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        """Abre uma conexão de leitura e escrita para operações de domínio.
+
+        Este método não deve ser usado para verificar se um banco de produção
+        existe: o SQLite criaria um arquivo vazio. Startup, backup e update usam
+        ``read_only_connection`` e falham se o arquivo persistente estiver ausente.
+        """
+
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA foreign_keys = ON").close()
+        conn.execute("PRAGMA busy_timeout = 30000").close()
         try:
             yield conn
             conn.commit()
@@ -45,96 +133,184 @@ class AttendanceRepository:
             raise
         finally:
             conn.close()
+            conn = None
 
-    def initialize(self) -> None:
-        with self.connection() as conn:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS team_members (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                    position TEXT NOT NULL,
-                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
+    @contextmanager
+    def read_only_connection(
+        self,
+        *,
+        immutable: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
+        """Abre o SQLite existente sem possibilidade de criar ou gravar nele."""
 
-                CREATE TABLE IF NOT EXISTS training_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    training_date TEXT NOT NULL UNIQUE,
-                    notes TEXT NOT NULL DEFAULT '',
-                    is_finalized INTEGER NOT NULL DEFAULT 0
-                        CHECK (is_finalized IN (0, 1)),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS attendance_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    member_id INTEGER NOT NULL,
-                    confirmation_status TEXT NOT NULL DEFAULT 'PENDING',
-                    present INTEGER NULL CHECK (present IN (0, 1) OR present IS NULL),
-                    notes TEXT NOT NULL DEFAULT '',
-                    version INTEGER NOT NULL DEFAULT 1,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE (session_id, member_id),
-                    FOREIGN KEY (session_id) REFERENCES training_sessions(id)
-                        ON DELETE CASCADE,
-                    FOREIGN KEY (member_id) REFERENCES team_members(id)
-                        ON DELETE RESTRICT
-                );
-
-                CREATE TABLE IF NOT EXISTS attendance_audit_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    member_id INTEGER NOT NULL,
-                    old_confirmation_status TEXT NULL,
-                    new_confirmation_status TEXT NULL,
-                    old_present INTEGER NULL,
-                    new_present INTEGER NULL,
-                    old_notes TEXT NULL,
-                    new_notes TEXT NULL,
-                    changed_at TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'ui',
-                    FOREIGN KEY (session_id) REFERENCES training_sessions(id)
-                        ON DELETE CASCADE,
-                    FOREIGN KEY (member_id) REFERENCES team_members(id)
-                        ON DELETE RESTRICT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_attendance_session
-                    ON attendance_records(session_id);
-
-                CREATE INDEX IF NOT EXISTS idx_audit_session_changed
-                    ON attendance_audit_log(session_id, changed_at);
-
-                CREATE INDEX IF NOT EXISTS idx_training_date
-                    ON training_sessions(training_date);
-
-                CREATE TABLE IF NOT EXISTS sync_operations (
-                    operation_id TEXT PRIMARY KEY,
-                    request_hash TEXT NOT NULL,
-                    response_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                """
+        if not self.db_path.is_file():
+            raise DatabaseCompatibilityError(
+                f"Banco persistente não encontrado: {self.db_path}. "
+                "A inicialização foi cancelada para evitar criar uma base vazia."
             )
 
-            record_columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(attendance_records)")
+        immutable_parameter = "&immutable=1" if immutable else ""
+        database_uri = (
+            f"{self.db_path.resolve().as_uri()}?mode=ro{immutable_parameter}"
+        )
+        try:
+            conn = sqlite3.connect(
+                database_uri,
+                uri=True,
+                timeout=30,
+                cached_statements=0,
+            )
+        except sqlite3.Error as exc:
+            raise DatabaseCompatibilityError(
+                f"Não foi possível abrir o banco persistente: {self.db_path}."
+            ) from exc
+
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON").close()
+        conn.execute("PRAGMA busy_timeout = 30000").close()
+        conn.execute("PRAGMA query_only = ON").close()
+        try:
+            yield conn
+        finally:
+            conn.close()
+            conn = None
+
+    def bootstrap(self) -> None:
+        """Cria a base somente no bootstrap; banco existente é apenas validado.
+
+        Atualizações e o startup web não chamam este método. Ele é a operação
+        explícita de primeira instalação e também serve aos testes isolados.
+        """
+
+        if self.db_path.exists():
+            self.validate_existing()
+            return
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate = self.db_path.with_name(
+            f".{self.db_path.name}.{uuid4().hex}.bootstrap.partial"
+        )
+        candidate_repository = AttendanceRepository(candidate)
+        try:
+            DatabaseMigrator(candidate).bootstrap_new(
+                app_version="1.0.0",
+                origin="initial-bootstrap",
+            )
+            candidate_repository.seed_initial_members()
+            candidate_repository.validate_existing(quick_check=True)
+
+            # O hard link publica o arquivo de forma atômica e sem sobrescrever
+            # um banco que outra instalação possa ter criado durante o preparo.
+            try:
+                os.link(candidate, self.db_path)
+            except FileExistsError:
+                self.validate_existing(quick_check=True)
+            else:
+                candidate.unlink()
+                self.validate_existing(quick_check=True)
+        finally:
+            for artifact in (
+                candidate,
+                Path(str(candidate) + "-journal"),
+                Path(str(candidate) + "-wal"),
+                Path(str(candidate) + "-shm"),
+            ):
+                artifact.unlink(missing_ok=True)
+
+    def validate_existing(
+        self,
+        *,
+        quick_check: bool = False,
+        immutable: bool = False,
+    ) -> int:
+        """Valida compatibilidade sem DDL, seed, migration ou criação de arquivo."""
+
+        with self.read_only_connection(immutable=immutable) as conn:
+            existing_tables = {
+                str(row["name"])
+                for row in _fetchall(
+                    conn,
+                    "SELECT name FROM sqlite_schema WHERE type = 'table'"
+                )
             }
-            if "version" not in record_columns:
-                conn.execute(
-                    "ALTER TABLE attendance_records "
-                    "ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+            missing_tables = sorted(set(REQUIRED_SCHEMA) - existing_tables)
+            if missing_tables:
+                raise DatabaseCompatibilityError(
+                    "Esquema incompatível; tabelas ausentes: "
+                    + ", ".join(missing_tables)
+                    + ". Nenhuma migration foi executada automaticamente."
                 )
 
-        self.seed_initial_members()
+            for table_name, required_columns in REQUIRED_SCHEMA.items():
+                columns = {
+                    str(row["name"])
+                    for row in _fetchall(
+                        conn,
+                        f'PRAGMA table_info("{table_name}")',
+                    )
+                }
+                missing_columns = sorted(required_columns - columns)
+                if missing_columns:
+                    raise DatabaseCompatibilityError(
+                        f"Esquema incompatível em {table_name}; colunas ausentes: "
+                        + ", ".join(missing_columns)
+                        + ". Nenhuma migration foi executada automaticamente."
+                    )
+
+            _fetchone(conn, "SELECT 1")
+            if quick_check:
+                self._require_quick_check_ok(conn)
+                violations = _fetchall(conn, "PRAGMA foreign_key_check")
+                if violations:
+                    raise DatabaseCompatibilityError(
+                        "PRAGMA foreign_key_check encontrou vínculos inválidos."
+                    )
+
+        migration_status = DatabaseMigrator(self.db_path).status()
+        if not migration_status.compatible:
+            detail = " ".join(migration_status.problems)
+            raise DatabaseCompatibilityError(
+                "Versão formal do esquema incompatível com esta aplicação."
+                + (f" {detail}" if detail else "")
+            )
+        return migration_status.current_version
+
+    @staticmethod
+    def _require_quick_check_ok(conn: sqlite3.Connection) -> None:
+        results = [str(row[0]) for row in _fetchall(conn, "PRAGMA quick_check")]
+        if results != ["ok"]:
+            detail = "; ".join(results) or "sem resultado"
+            raise DatabaseCompatibilityError(
+                f"PRAGMA quick_check reprovou o banco: {detail}"
+            )
+
+    def quick_check(self) -> str:
+        """Exige o resultado literal ``ok`` da verificação de integridade."""
+
+        with self.read_only_connection() as conn:
+            self._require_quick_check_ok(conn)
+        return "ok"
+
+    def _validate_physical_integrity(self, *, immutable: bool = False) -> None:
+        """Valida integridade física sem exigir o esquema da versão atual."""
+
+        with self.read_only_connection(immutable=immutable) as conn:
+            self._require_quick_check_ok(conn)
+            violations = _fetchall(conn, "PRAGMA foreign_key_check")
+            if violations:
+                raise DatabaseCompatibilityError(
+                    "PRAGMA foreign_key_check encontrou vínculos inválidos."
+                )
+
+    def logical_fingerprint(self) -> str:
+        """Resume esquema e conteúdo lógico sem expor os dados operacionais."""
+
+        self.validate_existing()
+        return migration_logical_fingerprint(self.db_path)
 
     def seed_initial_members(self) -> None:
+        """Semeia apenas o bootstrap sem sobrescrever decisões do usuário."""
+
         now = _now_iso()
         with self.connection() as conn:
             for name, position in INITIAL_MEMBERS:
@@ -142,9 +318,7 @@ class AttendanceRepository:
                     """
                     INSERT INTO team_members(name, position, active, created_at, updated_at)
                     VALUES (?, ?, 1, ?, ?)
-                    ON CONFLICT(name) DO UPDATE SET
-                        position = excluded.position,
-                        updated_at = excluded.updated_at
+                    ON CONFLICT(name) DO NOTHING
                     """,
                     (name, position, now, now),
                 )
@@ -742,16 +916,120 @@ class AttendanceRepository:
                 (cleaned_position, int(active), _now_iso(), member_id),
             )
 
-    def backup_to(self, destination: str | Path) -> Path:
-        """Cria uma cópia consistente do SQLite usando a API de backup."""
+    def backup_to(
+        self,
+        destination: str | Path,
+        *,
+        pre_migration: bool = False,
+        expected_fingerprint: str | None = None,
+    ) -> Path:
+        """Cria e valida uma cópia consistente sem modificar a origem.
+
+        O modo padrão continua exigindo compatibilidade integral com a aplicação.
+        ``pre_migration`` é uma exceção estreita: aceita somente um estado legado
+        reconhecido pelo migrador e exige a impressão lógica do plano aprovado.
+        """
 
         destination_path = Path(destination)
+        source_status = None
+        source_fingerprint = None
+        if pre_migration:
+            self._validate_physical_integrity()
+            source_status = DatabaseMigrator(self.db_path).status()
+            recognized_migration_source = (
+                not source_status.problems
+                and (
+                    source_status.state
+                    in {"legacy_current", "legacy_requires_migration"}
+                    or (
+                        source_status.state == "migration_required"
+                        and bool(source_status.pending_versions)
+                    )
+                )
+            )
+            if not recognized_migration_source:
+                raise DatabaseCompatibilityError(
+                    "Backup pré-migração recusado: a origem não corresponde "
+                    "a um estado legado ou plano de migração reconhecido."
+                )
+            if not expected_fingerprint:
+                raise DatabaseCompatibilityError(
+                    "Backup pré-migração exige a impressão lógica do plano."
+                )
+            source_fingerprint = migration_logical_fingerprint(self.db_path)
+            if source_fingerprint != expected_fingerprint:
+                raise DatabaseCompatibilityError(
+                    "Backup pré-migração recusado: o banco mudou depois do plano."
+                )
+        else:
+            self.validate_existing(quick_check=True)
+        if destination_path.exists():
+            raise FileExistsError(f"O destino do backup já existe: {destination_path}")
         destination_path.parent.mkdir(parents=True, exist_ok=True)
-        source = sqlite3.connect(self.db_path, timeout=30)
-        target = sqlite3.connect(destination_path)
+        temporary_path = destination_path.with_name(
+            f".{destination_path.name}.{uuid4().hex}.partial"
+        )
+
+        source_uri = f"{self.db_path.resolve().as_uri()}?mode=ro"
+        source: sqlite3.Connection | None = sqlite3.connect(
+            source_uri,
+            uri=True,
+            timeout=30,
+            cached_statements=0,
+        )
+        target: sqlite3.Connection | None = None
         try:
+            target = sqlite3.connect(temporary_path)
             source.backup(target)
-        finally:
+            journal_row = _fetchone(target, "PRAGMA journal_mode = DELETE")
+            journal_mode = str(journal_row[0] if journal_row else "").lower()
+            if journal_mode != "delete":
+                raise RuntimeError(
+                    "Não foi possível consolidar o backup em arquivo único."
+                )
             target.close()
+            target = None
             source.close()
+            source = None
+            backup_repository = AttendanceRepository(temporary_path)
+            if pre_migration:
+                backup_repository._validate_physical_integrity(immutable=True)
+                backup_status = DatabaseMigrator(temporary_path).status()
+                if (
+                    source_status is None
+                    or backup_status.state != source_status.state
+                    or backup_status.current_version != source_status.current_version
+                    or backup_status.versioned != source_status.versioned
+                    or backup_status.pending_versions != source_status.pending_versions
+                    or backup_status.problems != source_status.problems
+                ):
+                    raise DatabaseCompatibilityError(
+                        "O backup pré-migração não preservou o estado do esquema."
+                    )
+                backup_fingerprint = migration_logical_fingerprint(temporary_path)
+                if (
+                    source_fingerprint is None
+                    or backup_fingerprint != source_fingerprint
+                    or backup_fingerprint != expected_fingerprint
+                ):
+                    raise DatabaseCompatibilityError(
+                        "O backup pré-migração diverge logicamente da origem."
+                    )
+            else:
+                backup_repository.validate_existing(
+                    quick_check=True,
+                    immutable=True,
+                )
+            temporary_path.replace(destination_path)
+        except Exception:
+            if target is not None:
+                target.close()
+            if source is not None:
+                source.close()
+                source = None
+            temporary_path.unlink(missing_ok=True)
+            raise
+        finally:
+            if source is not None:
+                source.close()
         return destination_path
