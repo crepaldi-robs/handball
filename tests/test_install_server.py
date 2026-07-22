@@ -119,6 +119,7 @@ def test_payload_is_git_tracked_clean_and_bound_to_one_commit():
 def test_initial_install_is_bootstrap_only_and_creates_first_pointer():
     script = read_script(INSTALL_SCRIPT)
 
+    assert "$maximumAttempts = 900" in script
     assert "Instalação existente detectada" in script
     assert "o bootstrap não sobrescreve estado persistente" in script
     assert "-m attendance.cli init `" in script
@@ -241,6 +242,8 @@ def test_stable_ops_are_verified_and_only_bootstrapped_for_legacy_layout():
 def test_readiness_and_fingerprint_gate_acceptance_and_rollback():
     script = read_script(UPDATE_SCRIPT)
 
+    assert "[ValidateRange(1, 1200)][int]$MaximumAttempts = 40" in script
+    assert script.count("-MaximumAttempts 1200") == 2
     assert '[string]$ready.status -ceq "ok"' in script
     assert '[string]$ready.release_id -ceq $ExpectedReleaseId' in script
     assert "Wait-GatedReadiness `" in script

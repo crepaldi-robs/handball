@@ -975,11 +975,12 @@ function Wait-GatedReadiness {
     param(
         [Parameter(Mandatory)][string]$ExpectedReleaseId,
         [Parameter(Mandatory)][int]$Port,
-        [Diagnostics.Process]$Process = $null
+        [Diagnostics.Process]$Process = $null,
+        [ValidateRange(1, 1200)][int]$MaximumAttempts = 40
     )
 
     $lastResult = "sem resposta"
-    for ($attempt = 1; $attempt -le 40; $attempt++) {
+    for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt++) {
         if ($Process -and $Process.HasExited) {
             throw "Processo candidato encerrou com exit code $($Process.ExitCode)."
         }
@@ -1471,7 +1472,10 @@ try {
     $PointerSwitched = $true
 
     Start-ScheduledTask -TaskName "CrepaldiHandball"
-    Wait-GatedReadiness -ExpectedReleaseId $ReleaseId -Port 8765
+    Wait-GatedReadiness `
+        -ExpectedReleaseId $ReleaseId `
+        -Port 8765 `
+        -MaximumAttempts 1200
     $afterOfficial = Invoke-GuardJson `
         -Runtime $GuardRuntime `
         -Arguments @(
@@ -1578,7 +1582,8 @@ catch {
             Start-ScheduledTask -TaskName "CrepaldiHandball"
             Wait-GatedReadiness `
                 -ExpectedReleaseId $PreviousRelease.ReleaseId `
-                -Port 8765
+                -Port 8765 `
+                -MaximumAttempts 1200
             $restored = Invoke-GuardJson `
                 -Runtime $GuardRuntime `
                 -Arguments @(

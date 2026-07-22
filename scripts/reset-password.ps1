@@ -366,7 +366,8 @@ function Stop-HandballServer {
 function Wait-ExpectedReadiness {
     param([Parameter(Mandatory)][string]$ExpectedReleaseId)
     $lastResult = "sem resposta"
-    for ($attempt = 1; $attempt -le 30; $attempt++) {
+    $maximumAttempts = 900
+    for ($attempt = 1; $attempt -le $maximumAttempts; $attempt++) {
         try {
             $response = Invoke-RestMethod `
                 -Uri "http://127.0.0.1:8765/ready" `

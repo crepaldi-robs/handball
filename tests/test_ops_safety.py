@@ -142,6 +142,7 @@ def test_migration_is_lock_first_explicit_backup_gated_and_fail_closed():
     script = _read(MIGRATION_SCRIPT)
     _main_lock_precedes_release_and_config(script)
 
+    assert "$maximumAttempts = 900" in script
     assert '$Release.Kind -cne "release"' in script
     assert "[switch]$Apply" in script
     assert '"database-plan"' in script

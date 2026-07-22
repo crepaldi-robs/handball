@@ -106,6 +106,7 @@ def test_backup_uses_only_guard_and_validates_published_regular_file():
 def test_reset_marker_has_owner_and_failure_keeps_service_closed():
     script = read_script(RESET_SCRIPT)
 
+    assert "$maximumAttempts = 900" in script
     assert "[IO.FileMode]::CreateNew" in script
     assert '-Operation "PASSWORD_RESET"' in script
     assert "owner_token = $Token" in script
