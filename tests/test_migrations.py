@@ -138,8 +138,9 @@ def test_bootstrap_creates_formally_versioned_current_schema(tmp_path):
     status = DatabaseMigrator(database_path).status()
     verification = verify_database(database_path)
 
-    assert status.state == "current"
-    assert status.current_version == status.latest_version == 1
+    assert status.state == "migration_required"
+    assert status.current_version == 1
+    assert status.latest_version == 2
     assert status.versioned and status.compatible
     assert verification["quick_check"] == "ok"
     assert verification["foreign_key_check"] == []
@@ -164,7 +165,7 @@ def test_adopting_current_legacy_database_only_adds_version_metadata(tmp_path):
 
     assert before_status.state == "legacy_current"
     assert not before_status.versioned
-    assert result.state == "current"
+    assert result.state == "migration_required"
     assert result.versioned and result.compatible
     assert after == before
     assert next(row for row in after["team_members"] if row[0] == member["id"])[2:4] == (
@@ -233,7 +234,7 @@ def test_ea5404b_legacy_is_canonical_and_adds_version_and_sync_without_data_loss
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.state == "current"
+    assert result.state == "migration_required"
     with sqlite3.connect(database_path) as conn:
         assert conn.execute("SELECT * FROM team_members").fetchone() == before["member"]
         assert (

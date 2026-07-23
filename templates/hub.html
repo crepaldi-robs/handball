@@ -21,13 +21,14 @@
       <a class="identity" href="/app" aria-label="Hub Handebol">
         <div class="mini-mark" aria-hidden="true">H</div>
         <div>
-          <strong>Hub Handebol</strong>
+          <strong>{{ organization.display_name }}</strong>
           <span>Plataforma privada</span>
         </div>
       </a>
       <div class="top-actions">
-        <span class="user-label" aria-label="Usuário autenticado">{{ username }}</span>
+        <span class="user-label" aria-label="Usuário autenticado">{{ display_name }} · {{ roles|join(' + ') }}</span>
         <form method="post" action="/logout" data-platform-logout>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="text-button logout-button" type="submit">Sair</button>
         </form>
       </div>
@@ -42,7 +43,7 @@
     </section>
 
     <section class="module-grid" aria-label="Módulos da plataforma">
-      <a class="module-card module-card-available" href="/app/presencas">
+      {% if can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
         <span class="module-icon" aria-hidden="true">✓</span>
         <span class="module-status module-status-available">Disponível</span>
         <span class="module-card-copy">
@@ -50,9 +51,23 @@
           <span>Confirmações, chamada, histórico, elenco e auditoria.</span>
         </span>
         <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
-      </a>
+      </a>{% endif %}
 
-      <a class="module-card" href="/app/estatisticas">
+      {% if can_report %}<a class="module-card module-card-available" href="/app/meu-relatorio">
+        <span class="module-icon" aria-hidden="true">◎</span>
+        <span class="module-status module-status-available">Disponível</span>
+        <span class="module-card-copy"><strong>Meu relatório</strong><span>Suas confirmações, presenças e evolução mensal.</span></span>
+        <span class="module-card-action" aria-hidden="true">Abrir relatório <b>→</b></span>
+      </a>{% endif %}
+
+      {% if can_admin %}<a class="module-card module-card-available" href="/app/admin/usuarios">
+        <span class="module-icon" aria-hidden="true">⚙</span>
+        <span class="module-status module-status-available">DEV</span>
+        <span class="module-card-copy"><strong>Usuários</strong><span>Contas, papéis, credenciais e sessões.</span></span>
+        <span class="module-card-action" aria-hidden="true">Administrar <b>→</b></span>
+      </a>{% endif %}
+
+      {% if can_attendance %}<a class="module-card" href="/app/estatisticas">
         <span class="module-icon" aria-hidden="true">↗</span>
         <span class="module-status">Em preparação</span>
         <span class="module-card-copy">
@@ -60,9 +75,9 @@
           <span>Indicadores esportivos e leitura de desempenho da equipe.</span>
         </span>
         <span class="module-card-action" aria-hidden="true">Ver módulo <b>→</b></span>
-      </a>
+      </a>{% endif %}
 
-      <a class="module-card" href="/app/calendario">
+      {% if can_attendance %}<a class="module-card" href="/app/calendario">
         <span class="module-icon" aria-hidden="true">□</span>
         <span class="module-status">Em preparação</span>
         <span class="module-card-copy">
@@ -70,7 +85,7 @@
           <span>Organização futura de treinos, jogos e compromissos.</span>
         </span>
         <span class="module-card-action" aria-hidden="true">Ver módulo <b>→</b></span>
-      </a>
+      </a>{% endif %}
     </section>
 
     <p class="platform-note">Servidor particular · uma sessão e um logout para todos os módulos</p>

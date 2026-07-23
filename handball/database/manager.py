@@ -160,8 +160,8 @@ class DatabaseManager:
 
         return AttendanceRepository(self)
 
-    def bootstrap(self) -> None:
-        self.attendance_repository().bootstrap()
+    def bootstrap(self, *, legacy_admin: tuple[str, str] | None = None) -> None:
+        self.attendance_repository().bootstrap(legacy_admin=legacy_admin)
 
     def validate_existing(
         self,

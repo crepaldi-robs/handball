@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 1
+LATEST_SCHEMA_VERSION = 2
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 1
+MAX_SUPPORTED_SCHEMA_VERSION = 2
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -357,6 +357,41 @@ MIGRATION_V1_CHECKSUM = _migration_checksum(
     canonical_contract=_canonical_schema_contract(),
 )
 KNOWN_MIGRATIONS = {1: (MIGRATION_V1_NAME, MIGRATION_V1_CHECKSUM)}
+
+SCHEMA_V2_STATEMENTS = (
+    "CREATE TABLE people (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, display_name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN(0,1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER UNIQUE, username TEXT NOT NULL COLLATE NOCASE UNIQUE, password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN(0,1)), must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN(0,1)), credential_version INTEGER NOT NULL DEFAULT 1, last_login_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE RESTRICT)",
+    "CREATE TABLE teams (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, slug TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN(0,1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    "CREATE TABLE seasons (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, label TEXT NOT NULL, starts_on TEXT, ends_on TEXT, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN(0,1)), UNIQUE(team_id,label), FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT)",
+    "CREATE TABLE team_memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL, team_id INTEGER NOT NULL, season_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', valid_from TEXT, valid_to TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(person_id,team_id,season_id), FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE RESTRICT, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(season_id) REFERENCES seasons(id) ON DELETE RESTRICT)",
+    "CREATE TABLE membership_roles (membership_id INTEGER NOT NULL, role_code TEXT NOT NULL CHECK(role_code IN('CT','PLAYER')), PRIMARY KEY(membership_id,role_code), FOREIGN KEY(membership_id) REFERENCES team_memberships(id) ON DELETE CASCADE)",
+    "CREATE TABLE system_roles (user_id INTEGER NOT NULL, role_code TEXT NOT NULL CHECK(role_code IN('DEV','CT','PLAYER')), PRIMARY KEY(user_id,role_code), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)",
+    "CREATE TABLE player_user_links (team_member_id INTEGER NOT NULL UNIQUE, person_id INTEGER NOT NULL UNIQUE, user_id INTEGER UNIQUE, PRIMARY KEY(team_member_id), FOREIGN KEY(team_member_id) REFERENCES team_members(id) ON DELETE RESTRICT, FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE RESTRICT, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE auth_sessions (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, csrf_token TEXT NOT NULL, credential_version INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT, user_agent_hash TEXT, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)",
+    "ALTER TABLE attendance_audit_log ADD COLUMN actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+    "ALTER TABLE attendance_audit_log ADD COLUMN action TEXT",
+    "ALTER TABLE attendance_audit_log ADD COLUMN target_id TEXT",
+    "ALTER TABLE attendance_audit_log ADD COLUMN operation_id TEXT",
+    "CREATE TABLE security_audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER, occurred_at TEXT NOT NULL, action TEXT NOT NULL, entity TEXT NOT NULL, target_id TEXT, origin TEXT NOT NULL, before_json TEXT, after_json TEXT, request_id TEXT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL)",
+    "CREATE INDEX idx_auth_sessions_user ON auth_sessions(user_id, revoked_at)",
+    "CREATE INDEX idx_security_audit_occurred ON security_audit_events(occurred_at)",
+)
+MIGRATION_V2_NAME = "hm_ime_users_authorization"
+MIGRATION_V2_CHECKSUM = _migration_checksum(2, MIGRATION_V2_NAME, SCHEMA_V2_STATEMENTS, conditional_steps=(), canonical_contract={"organization":"HM_IME","season":"2026.2","roles":["DEV","CT","PLAYER"]})
+KNOWN_MIGRATIONS[2] = (MIGRATION_V2_NAME, MIGRATION_V2_CHECKSUM)
+
+V2_REQUIRED_COLUMNS = {
+    "people": {"id", "full_name", "display_name", "active", "created_at", "updated_at"},
+    "users": {"id", "person_id", "username", "password_hash", "active", "must_change_password", "credential_version", "last_login_at", "created_at", "updated_at"},
+    "teams": {"id", "code", "slug", "display_name", "active", "created_at", "updated_at"},
+    "seasons": {"id", "team_id", "label", "starts_on", "ends_on", "active"},
+    "team_memberships": {"id", "person_id", "team_id", "season_id", "status", "valid_from", "valid_to", "created_at", "updated_at"},
+    "membership_roles": {"membership_id", "role_code"},
+    "system_roles": {"user_id", "role_code"},
+    "player_user_links": {"team_member_id", "person_id", "user_id"},
+    "auth_sessions": {"id", "user_id", "token_hash", "csrf_token", "credential_version", "created_at", "expires_at", "revoked_at", "last_seen_at", "user_agent_hash"},
+    "security_audit_events": {"id", "actor_user_id", "occurred_at", "action", "entity", "target_id", "origin", "before_json", "after_json", "request_id"},
+}
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -805,7 +840,26 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
             "PRAGMA user_version diverge do histórico schema_migrations."
         )
     if current_version >= 1:
-        problems.extend(_schema_problems(conn))
+        base_problems = _schema_problems(conn)
+        if current_version >= 2:
+            base_problems = [problem for problem in base_problems if not (
+                "attendance_audit_log" in problem and (
+                    "Colunas inesperadas" in problem or "Chaves estrangeiras divergentes" in problem
+                )
+            )]
+            required_v2 = {"people", "users", "teams", "seasons", "team_memberships", "membership_roles", "system_roles", "player_user_links", "auth_sessions", "security_audit_events"}
+            missing_v2 = required_v2 - tables
+            base_problems.extend(f"Tabela HM-IME obrigatória ausente: {table}." for table in sorted(missing_v2))
+            for table, required_columns in V2_REQUIRED_COLUMNS.items():
+                if table in tables:
+                    missing_columns = required_columns - _columns(conn, table)
+                    if missing_columns:
+                        base_problems.append(
+                            f"Colunas HM-IME ausentes em {table}: "
+                            + ", ".join(sorted(missing_columns))
+                            + "."
+                        )
+        problems.extend(base_problems)
     compatible = (
         not problems
         and MIN_SUPPORTED_SCHEMA_VERSION
@@ -856,6 +910,38 @@ def _apply_schema_v1(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
     if "version" not in _columns(conn, "attendance_records"):
         conn.execute(SCHEMA_V1_ADD_VERSION_SQL)
+
+
+def _apply_schema_v2(conn: sqlite3.Connection, *, legacy_admin: tuple[str, str]) -> None:
+    for statement in SCHEMA_V2_STATEMENTS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).casefold():
+                raise
+    now = _now_iso()
+    conn.execute("INSERT INTO teams(code,slug,display_name,active,created_at,updated_at) VALUES('HM_IME','hm-ime','HM-IME',1,?,?) ON CONFLICT(code) DO NOTHING", (now, now))
+    team_id = conn.execute("SELECT id FROM teams WHERE code='HM_IME'").fetchone()[0]
+    conn.execute("INSERT INTO seasons(team_id,label,starts_on,ends_on,active) VALUES(?,'2026.2',NULL,NULL,1) ON CONFLICT(team_id,label) DO NOTHING", (team_id,))
+    season_id = conn.execute("SELECT id FROM seasons WHERE team_id=? AND label='2026.2'", (team_id,)).fetchone()[0]
+    for member in conn.execute("SELECT id,name FROM team_members").fetchall():
+        conn.execute("INSERT INTO people(full_name,display_name,active,created_at,updated_at) VALUES(?,?,1,?,?)", (member["name"], member["name"], now, now))
+        person_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute("INSERT INTO player_user_links(team_member_id,person_id,user_id) VALUES(?,?,NULL)", (member["id"], person_id))
+        conn.execute("INSERT INTO team_memberships(person_id,team_id,season_id,status,valid_from,valid_to,created_at,updated_at) VALUES(?,?,?,'ACTIVE',NULL,NULL,?,?)", (person_id, team_id, season_id, now, now))
+        membership_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute("INSERT INTO membership_roles(membership_id,role_code) VALUES(?,'PLAYER')", (membership_id,))
+    username, password_hash = (value.strip() for value in legacy_admin)
+    if not username or not password_hash:
+        raise DatabaseSchemaError("A migração v2 requer username e hash administrativos válidos.")
+    conn.execute("INSERT INTO people(full_name,display_name,active,created_at,updated_at) VALUES('Bob','Bob',1,?,?)", (now,now))
+    person_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute("INSERT INTO users(person_id,username,password_hash,active,must_change_password,credential_version,created_at,updated_at) VALUES(?,?,?,?,0,1,?,?)", (person_id, username.casefold(), password_hash, 1, now, now))
+    user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute("INSERT INTO system_roles(user_id,role_code) VALUES(?,'DEV'),(?,'CT')", (user_id,user_id))
+    conn.execute("INSERT INTO team_memberships(person_id,team_id,season_id,status,valid_from,valid_to,created_at,updated_at) VALUES(?,?,?,'ACTIVE',NULL,NULL,?,?)", (person_id, team_id, season_id, now, now))
+    membership_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute("INSERT INTO membership_roles(membership_id,role_code) VALUES(?,'CT')", (membership_id,))
 
 
 def migration_manifest(status: SchemaStatus) -> list[dict[str, object]]:
@@ -914,6 +1000,11 @@ def _record_schema_v1(
         ),
     )
     conn.execute("PRAGMA user_version = 1").close()
+
+
+def _record_schema_v2(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute("INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)", (2,MIGRATION_V2_NAME,MIGRATION_V2_CHECKSUM,_now_iso(),app_version,origin))
+    conn.execute("PRAGMA user_version = 2").close()
 
 
 def _verify_transaction_integrity(conn: sqlite3.Connection) -> None:
@@ -975,6 +1066,7 @@ class DatabaseMigrator:
         app_version: str = "unknown",
         origin: str = "database-migrate",
         expected_fingerprint: str | None = None,
+        legacy_admin: tuple[str, str] | None = None,
     ) -> SchemaStatus:
         if not self.db_path.is_file():
             raise DatabaseSchemaError(
@@ -1020,6 +1112,9 @@ class DatabaseMigrator:
                     app_version=app_version,
                     origin=origin,
                 )
+            if before.current_version < 2 and legacy_admin:
+                _apply_schema_v2(conn, legacy_admin=legacy_admin)
+                _record_schema_v2(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1042,6 +1137,7 @@ class DatabaseMigrator:
         *,
         app_version: str = "unknown",
         origin: str = "initial-bootstrap",
+        legacy_admin: tuple[str, str] | None = None,
     ) -> SchemaStatus:
         """Cria um candidato novo; nunca abre, reaproveita ou altera um existente."""
 
@@ -1080,6 +1176,9 @@ class DatabaseMigrator:
                 app_version=app_version,
                 origin=origin,
             )
+            if legacy_admin:
+                _apply_schema_v2(conn, legacy_admin=legacy_admin)
+                _record_schema_v2(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

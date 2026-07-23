@@ -10,6 +10,7 @@ class SyncOperation(BaseModel):
     confirmation_status: str
     present: bool | None = None
     notes: str = Field(default="", max_length=1000)
+    creator_user_id: int | None = Field(default=None, ge=1)
 
 
 class SyncBatch(BaseModel):

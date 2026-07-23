@@ -120,7 +120,10 @@ def test_one_logout_invalidates_the_shared_session_from_every_module(tmp_path, p
     login(client)
     assert client.get(page).status_code == 200
 
-    response = client.post("/logout", follow_redirects=False)
+    csrf = client.get("/api/v1/auth/session").json()["csrf_token"]
+    response = client.post(
+        "/logout", data={"csrf_token": csrf}, follow_redirects=False
+    )
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
@@ -143,7 +146,7 @@ def test_shared_cookie_retains_security_contract(tmp_path):
     assert "Path=/" in cookie
 
 
-def test_pwa_v4_limits_offline_navigation_to_hub_and_attendance(tmp_path):
+def test_pwa_v5_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     client, _ = make_client(tmp_path)
     login(client)
 
@@ -152,7 +155,7 @@ def test_pwa_v4_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v4"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v5"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert 'pathname === "/app/estatisticas"' in worker
@@ -160,5 +163,5 @@ def test_pwa_v4_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     assert 'pathname.startsWith("/roberto/")' in worker
     assert 'pathname.startsWith("/api/")' in worker
     assert "data-platform-logout" in client.get("/app").text
-    assert "clearOfflineVault" in platform
-    assert "registration.unregister()" in platform
+    assert "lockOfflineRuntime" in platform
+    assert "handball:lock-offline" in platform

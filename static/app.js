@@ -8,6 +8,9 @@ const decoder = new TextDecoder();
 const state = {
   csrf: "",
   username: "",
+  userId: Number(document.body.dataset.userId || 0),
+  teamId: Number(document.body.dataset.teamId || 0),
+  permissions: new Set(),
   online: navigator.onLine,
   currentDate: "",
   payload: null,
@@ -108,11 +111,15 @@ function base64ToBytes(value) {
 
 function openOfflineDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("handball-offline-v1", 1);
+    const request = indexedDB.open("handball-offline-v2", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("secure");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+function vaultStorageKey() {
+  return `vault:${state.userId}:${state.teamId}:2`;
 }
 
 async function dbGet(key) {
@@ -146,13 +153,15 @@ async function deriveVaultKey(pin, salt) {
 
 async function saveVault() {
   if (!state.vaultKey || !state.vaultData) return;
-  const current = await dbGet("vault");
+  const current = await dbGet(vaultStorageKey());
   if (!current?.salt) throw new Error("Cofre offline não inicializado.");
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = encoder.encode(JSON.stringify(state.vaultData));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, state.vaultKey, plaintext);
-  await dbPut("vault", {
-    version: 1,
+  await dbPut(vaultStorageKey(), {
+    version: 2,
+    user_id: state.userId,
+    team_id: state.teamId,
     salt: current.salt,
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
@@ -162,14 +171,14 @@ async function saveVault() {
 async function createVault(pin) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   state.vaultKey = await deriveVaultKey(pin, salt);
-  state.vaultData = { version: 1, sessions: {}, queue: [], conflicts: [] };
-  await dbPut("vault", { version: 1, salt: bytesToBase64(salt), iv: "", ciphertext: "" });
+  state.vaultData = { version: 2, user_id: state.userId, team_id: state.teamId, sessions: {}, queue: [], conflicts: [] };
+  await dbPut(vaultStorageKey(), { version: 2, user_id: state.userId, team_id: state.teamId, salt: bytesToBase64(salt), iv: "", ciphertext: "" });
   await saveVault();
   state.vaultExists = true;
 }
 
 async function unlockVault(pin) {
-  const stored = await dbGet("vault");
+  const stored = await dbGet(vaultStorageKey());
   if (!stored?.ciphertext) throw new Error("O modo offline ainda não foi configurado.");
   const key = await deriveVaultKey(pin, base64ToBytes(stored.salt));
   try {
@@ -179,6 +188,9 @@ async function unlockVault(pin) {
       base64ToBytes(stored.ciphertext),
     );
     state.vaultData = JSON.parse(decoder.decode(plaintext));
+    if (state.vaultData.version !== 2 || state.vaultData.user_id !== state.userId || state.vaultData.team_id !== state.teamId) {
+      throw new Error("O cofre pertence a outro usuário ou time.");
+    }
     state.vaultKey = key;
     state.vaultExists = true;
   } catch (_) {
@@ -580,10 +592,15 @@ function buildOperation(record, offline) {
     present: Boolean(record.present),
     notes: record.notes || "",
     offline,
+    creator_user_id: state.userId,
   };
 }
 
 async function saveChanges() {
+  if (!state.permissions.has("attendance.write") && state.userId !== 0) {
+    setAlert("Sua conta não possui permissão para alterar chamadas.", "error", 0);
+    return;
+  }
   if (!state.dirty.size) {
     setAlert("Não há alterações para salvar.", "warning");
     return;
@@ -597,6 +614,7 @@ async function saveChanges() {
     }
     operations.forEach((operation) => {
       state.vaultData.queue.push({
+        creator_user_id: state.userId,
         date: state.currentDate,
         session_id: state.payload.session.id,
         operation,
@@ -688,7 +706,7 @@ async function resolveConflict(conflict, reapply) {
       offline: !state.online,
     };
     if (state.vaultData) {
-      state.vaultData.queue.push({ date: conflict.date, session_id: conflict.server.session_id, operation });
+      state.vaultData.queue.push({ creator_user_id: state.userId, date: conflict.date, session_id: conflict.server.session_id, operation });
     } else {
       try {
         const response = await api(`/api/v1/sessions/${conflict.server.session_id}/records`, {
@@ -829,6 +847,9 @@ async function handleConnectivity(online) {
       const session = await api("/api/v1/auth/session");
       state.csrf = session.csrf_token;
       state.username = session.username;
+      state.userId = Number(session.user_id);
+      state.teamId = Number(session.team_ids[0] || 0);
+      state.permissions = new Set(session.permissions || []);
       if (state.vaultKey) await syncQueue();
       else await loadSession(state.currentDate);
     } catch (error) {
@@ -844,7 +865,7 @@ async function handleConnectivity(online) {
 async function initialize() {
   state.currentDate = localIsoDate(1);
   $("#training-date").value = state.currentDate;
-  state.vaultExists = Boolean(await dbGet("vault"));
+  state.vaultExists = Boolean(await dbGet(vaultStorageKey()));
   setConnectionBadge();
 
   if (state.online) {
@@ -852,6 +873,10 @@ async function initialize() {
       const session = await api("/api/v1/auth/session");
       state.csrf = session.csrf_token;
       state.username = session.username;
+      state.userId = Number(session.user_id);
+      state.teamId = Number(session.team_ids[0] || 0);
+      state.permissions = new Set(session.permissions || []);
+      state.vaultExists = Boolean(await dbGet(vaultStorageKey()));
       await loadSession(state.currentDate);
       if (state.vaultExists && !state.vaultKey) await askOfflinePin("unlock");
     } catch (error) {
@@ -869,6 +894,16 @@ async function initialize() {
 document.addEventListener("DOMContentLoaded", () => {
   $("#offline-form").addEventListener("submit", handleOfflineDialogSubmit);
   $("#offline-cancel").addEventListener("click", cancelOfflineDialog);
+  $("#offline-delete").addEventListener("click", async () => {
+    const db = await openOfflineDb();
+    await new Promise((resolve, reject) => {
+      const request = db.transaction("secure", "readwrite").objectStore("secure").delete(vaultStorageKey());
+      request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
+    });
+    state.vaultKey = null; state.vaultData = null; state.vaultExists = false;
+    $("#offline-dialog").close();
+    setAlert("Dados offline deste usuário removidos.", "warning");
+  });
   $("#offline-lock-button").addEventListener("click", async () => {
     if (state.vaultKey) {
       state.vaultKey = null;
@@ -893,4 +928,9 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("online", () => handleConnectivity(true));
   window.addEventListener("offline", () => handleConnectivity(false));
   initialize();
+});
+
+window.addEventListener("handball:lock-offline", () => {
+  state.vaultKey = null;
+  state.vaultData = null;
 });

@@ -24,9 +24,16 @@ class AttendanceService:
         self._unit_of_work_factory = unit_of_work_factory
         self._backup_provider = backup_provider
 
-    def session_payload(self, training_date: date) -> dict[str, Any]:
+    def session_payload(
+        self,
+        training_date: date,
+        *,
+        actor_user_id: int | None = None,
+    ) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
-            training = unit_of_work.attendance.get_or_create_session(training_date)
+            training = unit_of_work.attendance.get_or_create_session(
+                training_date, actor_user_id=actor_user_id
+            )
             records = unit_of_work.attendance.get_session_records(int(training["id"]))
         summary = summarize_records(records)
         return {
@@ -54,6 +61,7 @@ class AttendanceService:
         operations: Iterable[dict[str, Any]],
         *,
         offline: bool,
+        actor_user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         source = "pwa-offline" if offline else "pwa-online"
         with self._unit_of_work_factory() as unit_of_work:
@@ -61,26 +69,28 @@ class AttendanceService:
                 session_id,
                 operations,
                 source=source,
+                actor_user_id=actor_user_id,
             )
 
-    def finalize_session(self, session_id: int) -> dict[str, Any]:
+    def finalize_session(self, session_id: int, *, actor_user_id: int | None = None) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
             changed = unit_of_work.attendance.finalize_session(
                 session_id,
                 source="pwa-finalize",
+                actor_user_id=actor_user_id,
             )
             training = unit_of_work.attendance.get_session(session_id)
         return {"changed": changed, "session": training}
 
-    def reopen_session(self, session_id: int) -> dict[str, Any]:
+    def reopen_session(self, session_id: int, *, actor_user_id: int | None = None) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
-            unit_of_work.attendance.reopen_session(session_id)
+            unit_of_work.attendance.reopen_session(session_id, source="pwa-reopen", actor_user_id=actor_user_id)
             training = unit_of_work.attendance.get_session(session_id)
         return {"session": training}
 
-    def update_session_notes(self, session_id: int, notes: str) -> dict[str, Any]:
+    def update_session_notes(self, session_id: int, notes: str, *, actor_user_id: int | None = None) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
-            unit_of_work.attendance.update_session_notes(session_id, notes)
+            unit_of_work.attendance.update_session_notes(session_id, notes, source="pwa-notes", actor_user_id=actor_user_id)
             training = unit_of_work.attendance.get_session(session_id)
         return {"session": training}
 
@@ -96,9 +106,9 @@ class AttendanceService:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             return unit_of_work.attendance.list_members(include_inactive=True)
 
-    def add_member(self, name: str, position: str) -> list[dict[str, Any]]:
+    def add_member(self, name: str, position: str, *, actor_user_id: int | None = None) -> list[dict[str, Any]]:
         with self._unit_of_work_factory() as unit_of_work:
-            unit_of_work.attendance.add_member(name, position)
+            unit_of_work.attendance.add_member(name, position, actor_user_id=actor_user_id)
             return unit_of_work.attendance.list_members(include_inactive=True)
 
     def update_member(
@@ -107,12 +117,14 @@ class AttendanceService:
         *,
         position: str,
         active: bool,
+        actor_user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         with self._unit_of_work_factory() as unit_of_work:
             unit_of_work.attendance.update_member(
                 member_id,
                 position=position,
                 active=active,
+                actor_user_id=actor_user_id,
             )
             return unit_of_work.attendance.list_members(include_inactive=True)
 

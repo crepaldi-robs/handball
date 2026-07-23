@@ -16,6 +16,7 @@ class UnitOfWork:
         self._read_only = bool(read_only)
         self._connection: Any | None = None
         self._attendance: AttendanceRepository | None = None
+        self._identity: Any | None = None
         self._completed = False
 
     def __enter__(self) -> UnitOfWork:
@@ -56,6 +57,13 @@ class UnitOfWork:
             )
         return self._attendance
 
+    @property
+    def identity(self) -> Any:
+        if self._identity is None:
+            from .repositories.identity import IdentityRepository
+            self._identity = IdentityRepository(self.connection, read_only=self._read_only)
+        return self._identity
+
     def commit(self) -> None:
         if self._read_only:
             raise RuntimeError("Unidade de trabalho somente leitura não faz commit.")
@@ -90,6 +98,7 @@ class UnitOfWork:
                 self._completed = True
         finally:
             self._attendance = None
+            self._identity = None
             self._connection.close()
             self._connection = None
         return False

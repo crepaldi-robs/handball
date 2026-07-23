@@ -21,6 +21,7 @@
       <div class="top-actions">
         <a class="text-button" href="/app">Hub</a>
         <form method="post" action="/logout" data-platform-logout>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button class="text-button logout-button" type="submit">Sair</button>
         </form>
       </div>

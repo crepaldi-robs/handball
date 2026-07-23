@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import secrets
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from argon2 import PasswordHasher
@@ -16,12 +18,39 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .config import AppSettings
+from .authorization import AccessContext, Permission, ROLE_PERMISSIONS
 
 
 @dataclass(frozen=True)
 class AuthSession:
+    user_id: int
+    person_id: int | None
+    session_id: str
     username: str
+    display_name: str
     csrf_token: str
+    team_ids: frozenset[int]
+    system_roles: frozenset[str]
+    team_roles: frozenset[str]
+    permissions: frozenset[Permission]
+    linked_player_id: int | None
+    must_change_password: bool = False
+
+    def to_access_context(self) -> AccessContext:
+        return AccessContext(
+            user_id=self.user_id,
+            person_id=self.person_id,
+            session_id=self.session_id,
+            username=self.username,
+            display_name=self.display_name,
+            team_ids=self.team_ids,
+            system_roles=self.system_roles,
+            team_roles=self.team_roles,
+            permissions=self.permissions,
+            linked_player_id=self.linked_player_id,
+            csrf_token=self.csrf_token,
+            must_change_password=self.must_change_password,
+        )
 
 
 @dataclass(frozen=True)
@@ -87,7 +116,7 @@ class LoginLimiter:
 class AuthManager:
     cookie_name = "handball_session"
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(self, settings: AppSettings, unit_of_work_factory: Any | None = None) -> None:
         self.settings = settings
         self.password_hasher = PasswordHasher()
         self.serializer = URLSafeTimedSerializer(
@@ -95,19 +124,72 @@ class AuthManager:
             salt="handball-session-v1",
         )
         self.limiter = LoginLimiter()
+        self.unit_of_work_factory = unit_of_work_factory
 
-    def verify_credentials(self, username: str, password: str) -> bool:
+    def verify_credentials(self, username: str, password: str) -> int | None:
+        if self.unit_of_work_factory is not None:
+            with self.unit_of_work_factory() as unit_of_work:
+                has_schema = unit_of_work.identity.has_user_schema()
+                user = unit_of_work.identity.get_user_by_username(username)
+                if user and bool(user["active"]):
+                    try:
+                        if self.password_hasher.verify(str(user["password_hash"]), password):
+                            unit_of_work.identity.mark_login(int(user["id"]))
+                            return int(user["id"])
+                    except (VerifyMismatchError, InvalidHashError):
+                        pass
+                # Release-ponte: fallback só existe enquanto o banco ainda é v1.
+                if not has_schema and secrets.compare_digest(username.strip(), self.settings.admin_username):
+                    try:
+                        return 0 if self.password_hasher.verify(self.settings.password_hash, password) else None
+                    except (VerifyMismatchError, InvalidHashError):
+                        return None
+                return None
         if not secrets.compare_digest(username.strip(), self.settings.admin_username):
-            return False
+            return None
         try:
-            return self.password_hasher.verify(self.settings.password_hash, password)
+            return 0 if self.password_hasher.verify(self.settings.password_hash, password) else None
         except (VerifyMismatchError, InvalidHashError):
-            return False
+            return None
 
-    def create_token(self) -> tuple[str, AuthSession]:
+    def create_token(self, user_id: int, *, user_agent: str = "") -> tuple[str, AuthSession]:
+        csrf_token = secrets.token_urlsafe(32)
+        if self.unit_of_work_factory is not None and user_id != 0:
+            with self.unit_of_work_factory() as unit_of_work:
+                user = unit_of_work.identity.get_user(user_id)
+                if user is None:
+                    raise ValueError("Conta inexistente.")
+                token, session_id = unit_of_work.identity.create_session(
+                    user_id,
+                    (datetime.now(UTC) + timedelta(seconds=self.settings.session_max_age_seconds)).isoformat(timespec="seconds"),
+                    csrf_token,
+                    user_agent_hash=(
+                        hashlib.sha256(user_agent.encode("utf-8")).hexdigest()
+                        if user_agent else None
+                    ),
+                )
+                data = unit_of_work.identity.access_context_data(token, touch=False)
+            if data is None:
+                raise ValueError("Sessão não pôde ser materializada.")
+            return token, self._session_from_data(data)
+        legacy_roles = frozenset({"DEV", "CT"})
+        legacy_permissions = frozenset(
+            permission
+            for role in legacy_roles
+            for permission in ROLE_PERMISSIONS[role]
+        )
         session = AuthSession(
+            user_id=0,
+            person_id=None,
+            session_id="legacy",
             username=self.settings.admin_username,
-            csrf_token=secrets.token_urlsafe(32),
+            display_name="Bob",
+            csrf_token=csrf_token,
+            team_ids=frozenset(),
+            system_roles=legacy_roles,
+            team_roles=frozenset(),
+            permissions=legacy_permissions,
+            linked_player_id=None,
         )
         token = self.serializer.dumps(
             {"sub": session.username, "csrf": session.csrf_token}
@@ -117,6 +199,11 @@ class AuthManager:
     def read_token(self, token: str | None) -> AuthSession | None:
         if not token:
             return None
+        if self.unit_of_work_factory is not None:
+            with self.unit_of_work_factory() as unit_of_work:
+                data = unit_of_work.identity.access_context_data(token)
+            if data:
+                return self._session_from_data(data)
         try:
             payload: dict[str, Any] = self.serializer.loads(
                 token,
@@ -129,12 +216,47 @@ class AuthManager:
         csrf = str(payload.get("csrf") or "")
         if not csrf:
             return None
-        return AuthSession(username=self.settings.admin_username, csrf_token=csrf)
+        legacy_roles = frozenset({"DEV", "CT"})
+        return AuthSession(
+            user_id=0,
+            person_id=None,
+            session_id="legacy",
+            username=self.settings.admin_username,
+            display_name="Bob",
+            csrf_token=csrf,
+            team_ids=frozenset(),
+            system_roles=legacy_roles,
+            team_roles=frozenset(),
+            permissions=frozenset(
+                permission for role in legacy_roles for permission in ROLE_PERMISSIONS[role]
+            ),
+            linked_player_id=None,
+        )
+
+    @staticmethod
+    def _session_from_data(data: dict[str, Any]) -> AuthSession:
+        return AuthSession(
+            user_id=int(data["user_id"]),
+            person_id=int(data["person_id"]) if data.get("person_id") is not None else None,
+            session_id=str(data["session_id"]),
+            username=str(data["username"]),
+            display_name=str(data.get("display_name") or data.get("full_name") or data["username"]),
+            csrf_token=str(data["csrf_token"]),
+            team_ids=frozenset(int(value) for value in data["team_ids"]),
+            system_roles=frozenset(str(value) for value in data["system_roles"]),
+            team_roles=frozenset(str(value) for value in data["team_roles"]),
+            permissions=frozenset(Permission(value) for value in data["permissions"]),
+            linked_player_id=(int(data["linked_player_id"]) if data.get("linked_player_id") is not None else None),
+            must_change_password=bool(data.get("must_change_password")),
+        )
 
 
 def session_from_request(request: Request) -> AuthSession | None:
     auth: AuthManager = request.app.state.auth
-    return auth.read_token(request.cookies.get(auth.cookie_name))
+    session = auth.read_token(request.cookies.get(auth.cookie_name))
+    if session is not None:
+        request.state.access_context = session.to_access_context()
+    return session
 
 
 def require_session(request: Request) -> AuthSession:
@@ -213,7 +335,8 @@ def create_auth_router(
                 status_code=429,
                 headers={"Retry-After": str(limit_status.retry_after_seconds)},
             )
-        if not auth.verify_credentials(username, password):
+        user_id = auth.verify_credentials(username, password)
+        if user_id is None:
             limit_status = auth.limiter.fail(client_key)
             if limit_status.blocked:
                 return templates.TemplateResponse(
@@ -234,7 +357,10 @@ def create_auth_router(
             )
 
         auth.limiter.clear(client_key)
-        token, _ = auth.create_token()
+        token, _ = auth.create_token(
+            user_id,
+            user_agent=request.headers.get("user-agent", "")[:500],
+        )
         response = RedirectResponse("/app", status_code=303)
         response.set_cookie(
             auth.cookie_name,
@@ -248,8 +374,18 @@ def create_auth_router(
         return response
 
     @router.post("/logout")
-    def logout(request: Request) -> RedirectResponse:
+    def logout(
+        request: Request,
+        csrf_token: Annotated[str, Form()] = "",
+    ) -> RedirectResponse:
         auth: AuthManager = request.app.state.auth
+        token = request.cookies.get(auth.cookie_name)
+        session = auth.read_token(token)
+        if session is not None and not secrets.compare_digest(csrf_token, session.csrf_token):
+            raise HTTPException(status_code=403, detail="Token CSRF inválido.")
+        if token and auth.unit_of_work_factory is not None:
+            with auth.unit_of_work_factory() as unit_of_work:
+                unit_of_work.identity.revoke_session_token(token)
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(auth.cookie_name, path="/")
         return response

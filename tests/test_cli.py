@@ -192,14 +192,13 @@ def test_database_plan_requires_bootstrap_for_missing_database(tmp_path, capsys)
     assert plan["fingerprint_format"] == FINGERPRINT_FORMAT
     assert plan["logical_fingerprint"] is None
     assert plan["problems"]
-    assert plan["migration_manifest"] == [
-        {
-            "version": 1,
-            "name": MIGRATION_V1_NAME,
-            "checksum_sha256": MIGRATION_V1_CHECKSUM,
-            "action": "bootstrap-required",
-        }
-    ]
+    assert plan["migration_manifest"][0] == {
+        "version": 1,
+        "name": MIGRATION_V1_NAME,
+        "checksum_sha256": MIGRATION_V1_CHECKSUM,
+        "action": "bootstrap-required",
+    }
+    assert plan["migration_manifest"][1]["version"] == 2
     assert not database_path.exists()
     assert not database_path.parent.exists()
 
@@ -246,6 +245,8 @@ def test_database_migration_requires_confirmed_plan_and_verified_backup(
             {
                 "db_path": str(database_path),
                 "backup_dir": str(backup_dir),
+                "admin_username": "bob",
+                "password_hash": PasswordHasher().hash("senha-bob"),
             }
         ),
         encoding="utf-8",
@@ -254,14 +255,13 @@ def test_database_migration_requires_confirmed_plan_and_verified_backup(
     assert database_plan(Namespace(config_path=config_path)) == 0
     plan = json.loads(capsys.readouterr().out)
     assert plan["action"] == "adopt-baseline"
-    assert plan["migration_manifest"] == [
-        {
-            "version": 1,
-            "name": MIGRATION_V1_NAME,
-            "checksum_sha256": MIGRATION_V1_CHECKSUM,
-            "action": "adopt-baseline",
-        }
-    ]
+    assert plan["migration_manifest"][0] == {
+        "version": 1,
+        "name": MIGRATION_V1_NAME,
+        "checksum_sha256": MIGRATION_V1_CHECKSUM,
+        "action": "adopt-baseline",
+    }
+    assert plan["migration_manifest"][1]["version"] == 2
     canonical_plan = dict(plan)
     plan_sha256 = canonical_plan.pop("plan_sha256")
     assert plan_sha256 == hashlib.sha256(
@@ -290,7 +290,7 @@ def test_database_migration_requires_confirmed_plan_and_verified_backup(
     result = json.loads(capsys.readouterr().out)
 
     assert result["status"] == "applied"
-    assert result["schema"]["current_version"] == 1
+    assert result["schema"]["current_version"] == 2
     assert result["verification"]["quick_check"] == "ok"
     assert result["verification"]["foreign_key_check"] == []
     assert backup_path.is_file()
@@ -317,6 +317,8 @@ def test_database_migration_backs_up_recognized_legacy_before_column_upgrade(
             {
                 "db_path": str(database_path),
                 "backup_dir": str(backup_dir),
+                "admin_username": "bob",
+                "password_hash": PasswordHasher().hash("senha-bob"),
             }
         ),
         encoding="utf-8",

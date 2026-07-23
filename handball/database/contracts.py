@@ -77,6 +77,8 @@ class AttendanceRepositoryContract(Protocol):
     def get_or_create_session(
         self,
         training_date: date | str,
+        *,
+        actor_user_id: int | None = None,
     ) -> dict[str, Any]: ...
 
     def ensure_attendance_records(self, session_id: int) -> None: ...
@@ -91,6 +93,7 @@ class AttendanceRepositoryContract(Protocol):
         updates: Iterable[Mapping[str, Any]],
         *,
         source: str = "ui",
+        actor_user_id: int | None = None,
     ) -> int: ...
 
     def sync_records(
@@ -99,13 +102,14 @@ class AttendanceRepositoryContract(Protocol):
         operations: Iterable[Mapping[str, Any]],
         *,
         source: str = "pwa",
+        actor_user_id: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
-    def finalize_session(self, session_id: int, *, source: str = "ui") -> int: ...
+    def finalize_session(self, session_id: int, *, source: str = "ui", actor_user_id: int | None = None) -> int: ...
 
-    def reopen_session(self, session_id: int) -> None: ...
+    def reopen_session(self, session_id: int, *, source: str = "ui", actor_user_id: int | None = None) -> None: ...
 
-    def update_session_notes(self, session_id: int, notes: str) -> None: ...
+    def update_session_notes(self, session_id: int, notes: str, *, source: str = "ui", actor_user_id: int | None = None) -> None: ...
 
     def get_history(self) -> list[dict[str, Any]]: ...
 
@@ -117,7 +121,7 @@ class AttendanceRepositoryContract(Protocol):
         include_inactive: bool = True,
     ) -> list[dict[str, Any]]: ...
 
-    def add_member(self, name: str, position: str) -> None: ...
+    def add_member(self, name: str, position: str, *, actor_user_id: int | None = None) -> None: ...
 
     def update_member(
         self,
@@ -125,6 +129,7 @@ class AttendanceRepositoryContract(Protocol):
         *,
         position: str,
         active: bool,
+        actor_user_id: int | None = None,
     ) -> None: ...
 
 
@@ -156,6 +161,9 @@ class BackupProvider(Protocol):
 class UnitOfWorkContract(Protocol):
     @property
     def attendance(self) -> AttendanceRepositoryContract: ...
+
+    @property
+    def identity(self) -> Any: ...
 
     def commit(self) -> None: ...
 

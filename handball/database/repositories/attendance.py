@@ -142,6 +142,67 @@ class AttendanceRepository:
         with self._manager.write_connection() as connection:
             yield connection
 
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?", (table,)
+        ).fetchone() is not None
+
+    @staticmethod
+    def _attach_audit_actor(
+        conn: sqlite3.Connection,
+        audit_id: int,
+        *,
+        actor_user_id: int | None,
+        action: str,
+        target_id: str,
+        operation_id: str | None = None,
+    ) -> None:
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(attendance_audit_log)")
+        }
+        if "actor_user_id" in columns:
+            conn.execute(
+                """UPDATE attendance_audit_log
+                   SET actor_user_id=?,action=?,target_id=?,operation_id=?
+                   WHERE id=?""",
+                (actor_user_id, action, target_id, operation_id, audit_id),
+            )
+
+    @staticmethod
+    def _security_audit(
+        conn: sqlite3.Connection,
+        *,
+        actor_user_id: int | None,
+        action: str,
+        entity: str,
+        target_id: str,
+        source: str,
+        before_json: str | None = None,
+        after_json: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        if not AttendanceRepository._table_exists(conn, "security_audit_events"):
+            return
+        conn.execute(
+            """INSERT INTO security_audit_events(
+                   actor_user_id,occurred_at,action,entity,target_id,origin,
+                   before_json,after_json,request_id
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                actor_user_id,
+                _now_iso(),
+                action,
+                entity,
+                target_id,
+                source,
+                before_json,
+                after_json,
+                request_id,
+            ),
+        )
+
     @contextmanager
     def read_only_connection(
         self,
@@ -153,7 +214,7 @@ class AttendanceRepository:
         with self._manager.read_only_connection(immutable=immutable) as connection:
             yield connection
 
-    def bootstrap(self) -> None:
+    def bootstrap(self, *, legacy_admin: tuple[str, str] | None = None) -> None:
         """Cria a base somente no bootstrap; banco existente é apenas validado.
 
         Atualizações e o startup web não chamam este método. Ele é a operação
@@ -173,6 +234,7 @@ class AttendanceRepository:
             DatabaseMigrator(candidate).bootstrap_new(
                 app_version="1.0.0",
                 origin="initial-bootstrap",
+                legacy_admin=legacy_admin,
             )
             candidate_repository.seed_initial_members()
             candidate_repository.validate_existing(quick_check=True)
@@ -301,11 +363,20 @@ class AttendanceRepository:
                     (name, position, now, now),
                 )
 
-    def get_or_create_session(self, training_date: date | str) -> dict[str, Any]:
+    def get_or_create_session(
+        self,
+        training_date: date | str,
+        *,
+        actor_user_id: int | None = None,
+    ) -> dict[str, Any]:
         training_date_iso = _date_iso(training_date)
         now = _now_iso()
 
         with self.connection() as conn:
+            existing = conn.execute(
+                "SELECT id FROM training_sessions WHERE training_date = ?",
+                (training_date_iso,),
+            ).fetchone()
             conn.execute(
                 """
                 INSERT INTO training_sessions(
@@ -323,7 +394,39 @@ class AttendanceRepository:
             if row is None:
                 raise RuntimeError("Não foi possível criar ou carregar o treino.")
             session = dict(row)
+            records_before = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM attendance_records WHERE session_id=?",
+                    (session["id"],),
+                ).fetchone()[0]
+            )
             self._ensure_attendance_records(conn, int(session["id"]), now=now)
+            records_after = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM attendance_records WHERE session_id=?",
+                    (session["id"],),
+                ).fetchone()[0]
+            )
+            if existing is None:
+                self._security_audit(
+                    conn,
+                    actor_user_id=actor_user_id,
+                    action="training_session.create",
+                    entity="training_session",
+                    target_id=str(session["id"]),
+                    source="attendance",
+                    after_json=json.dumps({"training_date": training_date_iso}, sort_keys=True),
+                )
+            elif records_after > records_before:
+                self._security_audit(
+                    conn,
+                    actor_user_id=actor_user_id,
+                    action="attendance_records.materialize",
+                    entity="training_session",
+                    target_id=str(session["id"]),
+                    source="attendance",
+                    after_json=json.dumps({"created_records": records_after - records_before}, sort_keys=True),
+                )
         return session
 
     def ensure_attendance_records(self, session_id: int) -> None:
@@ -401,6 +504,7 @@ class AttendanceRepository:
         updates: Iterable[dict[str, Any]],
         *,
         source: str = "ui",
+        actor_user_id: int | None = None,
     ) -> int:
         valid_statuses = VALID_CONFIRMATION_STATUSES
         changed = 0
@@ -478,7 +582,7 @@ class AttendanceRepository:
                         member_id,
                     ),
                 )
-                conn.execute(
+                audit_cursor = conn.execute(
                     """
                     INSERT INTO attendance_audit_log(
                         session_id, member_id,
@@ -502,6 +606,13 @@ class AttendanceRepository:
                         source,
                     ),
                 )
+                self._attach_audit_actor(
+                    conn,
+                    int(audit_cursor.lastrowid),
+                    actor_user_id=actor_user_id,
+                    action="attendance.update",
+                    target_id=f"{session_id}:{member_id}",
+                )
                 changed += 1
 
             conn.execute(
@@ -512,7 +623,6 @@ class AttendanceRepository:
                 """,
                 (now, session_id),
             )
-
         return changed
 
     def sync_records(
@@ -521,6 +631,7 @@ class AttendanceRepository:
         operations: Iterable[dict[str, Any]],
         *,
         source: str = "pwa",
+        actor_user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Aplica operações idempotentes com controle otimista de versão."""
 
@@ -545,6 +656,11 @@ class AttendanceRepository:
                     "confirmation_status": str(operation["confirmation_status"]),
                     "present": operation.get("present"),
                     "notes": str(operation.get("notes") or "").strip(),
+                    "creator_user_id": (
+                        int(operation["creator_user_id"])
+                        if operation.get("creator_user_id") is not None
+                        else None
+                    ),
                 }
                 if normalized["confirmation_status"] not in valid_statuses:
                     raise ValueError(
@@ -640,7 +756,7 @@ class AttendanceRepository:
                                 normalized["member_id"],
                             ),
                         )
-                        conn.execute(
+                        audit_cursor = conn.execute(
                             """
                             INSERT INTO attendance_audit_log(
                                 session_id, member_id,
@@ -663,6 +779,14 @@ class AttendanceRepository:
                                 now,
                                 source,
                             ),
+                        )
+                        self._attach_audit_actor(
+                            conn,
+                            int(audit_cursor.lastrowid),
+                            actor_user_id=actor_user_id,
+                            action="attendance.sync",
+                            target_id=f"{session_id}:{normalized['member_id']}",
+                            operation_id=str(normalized["operation_id"]),
                         )
                     else:
                         # Mesmo um no-op aceito consome uma versão. Isso mantém
@@ -724,7 +848,13 @@ class AttendanceRepository:
 
         return results
 
-    def finalize_session(self, session_id: int, *, source: str = "ui") -> int:
+    def finalize_session(
+        self,
+        session_id: int,
+        *,
+        source: str = "ui",
+        actor_user_id: int | None = None,
+    ) -> int:
         now = _now_iso()
         changed = 0
 
@@ -747,7 +877,7 @@ class AttendanceRepository:
                     """,
                     (now, session_id, int(row["member_id"])),
                 )
-                conn.execute(
+                audit_cursor = conn.execute(
                     """
                     INSERT INTO attendance_audit_log(
                         session_id, member_id,
@@ -769,6 +899,13 @@ class AttendanceRepository:
                         source,
                     ),
                 )
+                self._attach_audit_actor(
+                    conn,
+                    int(audit_cursor.lastrowid),
+                    actor_user_id=actor_user_id,
+                    action="attendance.finalize",
+                    target_id=f"{session_id}:{int(row['member_id'])}",
+                )
                 changed += 1
 
             conn.execute(
@@ -779,10 +916,24 @@ class AttendanceRepository:
                 """,
                 (now, session_id),
             )
+            self._security_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="training.finalize",
+                entity="training_session",
+                target_id=str(session_id),
+                source=source,
+            )
 
         return changed
 
-    def reopen_session(self, session_id: int) -> None:
+    def reopen_session(
+        self,
+        session_id: int,
+        *,
+        source: str = "ui",
+        actor_user_id: int | None = None,
+    ) -> None:
         now = _now_iso()
         with self.connection() as conn:
             conn.execute(
@@ -793,10 +944,28 @@ class AttendanceRepository:
                 """,
                 (now, session_id),
             )
+            self._security_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="training.reopen",
+                entity="training_session",
+                target_id=str(session_id),
+                source=source,
+            )
 
-    def update_session_notes(self, session_id: int, notes: str) -> None:
+    def update_session_notes(
+        self,
+        session_id: int,
+        notes: str,
+        *,
+        source: str = "ui",
+        actor_user_id: int | None = None,
+    ) -> None:
         now = _now_iso()
         with self.connection() as conn:
+            before = conn.execute(
+                "SELECT notes FROM training_sessions WHERE id=?", (session_id,)
+            ).fetchone()
             conn.execute(
                 """
                 UPDATE training_sessions
@@ -804,6 +973,16 @@ class AttendanceRepository:
                 WHERE id = ?
                 """,
                 (notes.strip(), now, session_id),
+            )
+            self._security_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="training.notes.update",
+                entity="training_session",
+                target_id=str(session_id),
+                source=source,
+                before_json=json.dumps({"notes": before[0] if before else None}, ensure_ascii=False),
+                after_json=json.dumps({"notes": notes.strip()}, ensure_ascii=False),
             )
 
     def get_history(self) -> list[dict[str, Any]]:
@@ -830,8 +1009,22 @@ class AttendanceRepository:
 
     def get_audit_log(self, limit: int = 500) -> list[dict[str, Any]]:
         with self.connection() as conn:
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(attendance_audit_log)")
+            }
+            actor_projection = (
+                ", log.actor_user_id, log.action, log.target_id, log.operation_id, u.username actor_username"
+                if "actor_user_id" in columns
+                else ", NULL actor_user_id, NULL action, NULL target_id, NULL operation_id, NULL actor_username"
+            )
+            actor_join = (
+                "LEFT JOIN users u ON u.id=log.actor_user_id"
+                if "actor_user_id" in columns
+                else ""
+            )
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     log.changed_at,
                     ts.training_date,
@@ -844,9 +1037,11 @@ class AttendanceRepository:
                     log.old_notes,
                     log.new_notes,
                     log.source
+                    {actor_projection}
                 FROM attendance_audit_log log
                 JOIN training_sessions ts ON ts.id = log.session_id
                 JOIN team_members tm ON tm.id = log.member_id
+                {actor_join}
                 ORDER BY log.changed_at DESC
                 LIMIT ?
                 """,
@@ -865,7 +1060,13 @@ class AttendanceRepository:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
-    def add_member(self, name: str, position: str) -> None:
+    def add_member(
+        self,
+        name: str,
+        position: str,
+        *,
+        actor_user_id: int | None = None,
+    ) -> None:
         cleaned_name = name.strip()
         cleaned_position = position.strip().upper()
         if not cleaned_name or not cleaned_position:
@@ -873,7 +1074,7 @@ class AttendanceRepository:
 
         now = _now_iso()
         with self.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO team_members(
                     name, position, active, created_at, updated_at
@@ -886,13 +1087,35 @@ class AttendanceRepository:
                 """,
                 (cleaned_name, cleaned_position, now, now),
             )
+            member = conn.execute(
+                "SELECT id FROM team_members WHERE name=? COLLATE NOCASE", (cleaned_name,)
+            ).fetchone()
+            self._security_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="member.create_or_reactivate",
+                entity="team_member",
+                target_id=str(member[0] if member else cursor.lastrowid),
+                source="ui",
+                after_json=json.dumps({"name": cleaned_name, "position": cleaned_position}, ensure_ascii=False),
+            )
 
-    def update_member(self, member_id: int, *, position: str, active: bool) -> None:
+    def update_member(
+        self,
+        member_id: int,
+        *,
+        position: str,
+        active: bool,
+        actor_user_id: int | None = None,
+    ) -> None:
         cleaned_position = position.strip().upper()
         if not cleaned_position:
             raise ValueError("A posição não pode ficar vazia.")
 
         with self.connection() as conn:
+            before = conn.execute(
+                "SELECT position,active FROM team_members WHERE id=?", (member_id,)
+            ).fetchone()
             conn.execute(
                 """
                 UPDATE team_members
@@ -900,6 +1123,16 @@ class AttendanceRepository:
                 WHERE id = ?
                 """,
                 (cleaned_position, int(active), _now_iso(), member_id),
+            )
+            self._security_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="member.update",
+                entity="team_member",
+                target_id=str(member_id),
+                source="ui",
+                before_json=json.dumps(dict(before) if before else None, ensure_ascii=False),
+                after_json=json.dumps({"position": cleaned_position, "active": bool(active)}, ensure_ascii=False),
             )
 
     def backup_to(

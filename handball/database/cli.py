@@ -131,7 +131,11 @@ def initialize_database(args: argparse.Namespace) -> int:
 
     _, data = _load_config(args.config_path)
     repository = _repository_from_config(data)
-    repository.bootstrap()
+    username = str(data.get("admin_username") or "").strip()
+    password_hash = str(data.get("password_hash") or "").strip()
+    repository.bootstrap(
+        legacy_admin=(username, password_hash) if username and password_hash else None
+    )
     print(repository.db_path.resolve())
     return 0
 
@@ -164,6 +168,19 @@ def _migration_plan(data: dict[str, object]) -> dict[str, object]:
         action = "adopt-baseline"
     elif status.pending_versions:
         action = "migrate"
+    problems = list(status.problems)
+    if (
+        2 in status.pending_versions
+        and repository.db_path.is_file()
+        and (
+            not str(data.get("admin_username") or "").strip()
+            or not str(data.get("password_hash") or "").strip()
+        )
+    ):
+        problems.append(
+            "A migração v2 requer admin_username e password_hash na configuração."
+        )
+        action = "blocked"
     payload: dict[str, object] = {
         "action": action,
         "database_path": status.database_path,
@@ -174,7 +191,7 @@ def _migration_plan(data: dict[str, object]) -> dict[str, object]:
         "compatible_with_application": status.compatible,
         "fingerprint_format": FINGERPRINT_FORMAT,
         "logical_fingerprint": fingerprint,
-        "problems": list(status.problems),
+        "problems": problems,
         "migration_manifest": migration_manifest(status),
     }
     canonical = json.dumps(
@@ -249,10 +266,13 @@ def migrate_database(args: argparse.Namespace) -> int:
     )
     backup_sha256 = hashlib.sha256(backup.read_bytes()).hexdigest()
     migrator = DatabaseMigrator(repository.db_path)
+    username = str(data.get("admin_username") or "").strip()
+    password_hash = str(data.get("password_hash") or "").strip()
     result = migrator.apply_pending(
         app_version=args.app_version,
         origin="migrate-database.ps1",
         expected_fingerprint=args.expected_fingerprint,
+        legacy_admin=(username, password_hash) if username and password_hash else None,
     )
     verification = inspect_database(repository.db_path)
     if not verification["ok"]:

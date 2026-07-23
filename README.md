@@ -12,7 +12,9 @@ instalada na Tela de Início do iPhone.
 - observações individuais e gerais;
 - mensagem pronta para o técnico;
 - histórico, elenco, auditoria, CSV e backup SQLite;
-- login administrativo, CSRF, rate limit e cookies seguros;
+- contas pessoais com papéis `DEV`, `CT` e `PLAYER`;
+- sessões revogáveis, CSRF, rate limit e cookies seguros;
+- relatório individual de presença com escopo aplicado no backend;
 - chamada offline cifrada por PIN no iPhone;
 - sincronização idempotente com detecção de conflitos;
 - PC sempre preservado como fonte de verdade em conflitos.
@@ -21,6 +23,8 @@ instalada na Tela de Início do iPhone.
 
 - `/app`: Hub Handebol;
 - `/app/presencas`: registro funcional de confirmações e presenças;
+- `/app/meu-relatorio`: projeção individual para jogadores;
+- `/app/admin/usuarios`: administração mínima exclusiva de DEV;
 - `/app/estatisticas`: módulo autenticado em preparação;
 - `/app/calendario`: módulo autenticado em preparação.
 
@@ -29,6 +33,9 @@ transações, SQL, schema, migrations e backups ficam exclusivamente em
 `handball/database/`; os módulos usam contratos e unidades de trabalho. A
 arquitetura e o processo de extensão estão em
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+O modelo de identidade, a matriz de permissões e o procedimento da migração
+v2 estão em
+[docs/HM-IME-USUARIOS-E-AUTORIZACAO.md](docs/HM-IME-USUARIOS-E-AUTORIZACAO.md).
 
 ## Preparar no Windows pelo VSCode
 

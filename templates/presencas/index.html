@@ -16,14 +16,14 @@
   <script src="/static/platform.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
-<body>
+<body data-user-id="{{ session.user_id }}" data-team-id="{{ session.team_ids|list|first or 0 }}" data-vault-format="2">
   <header class="topbar">
     <div class="topbar-inner">
       <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
         <div class="mini-mark" aria-hidden="true">H</div>
         <div>
           <strong>Registro de Presenças</strong>
-          <span>Hub Handebol</span>
+          <span>{{ organization.display_name }} · {{ session.display_name }} · {{ (session.system_roles | list)|join(' + ') }}</span>
         </div>
       </a>
       <div class="top-actions">
@@ -31,6 +31,7 @@
         <button id="offline-lock-button" class="icon-button" type="button" title="Proteção offline" aria-label="Proteção offline">⌁</button>
         <span id="connection-badge" class="status-badge">Conectando…</span>
         <form method="post" action="/logout" data-platform-logout>
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
           <button class="text-button logout-button" type="submit">Sair</button>
         </form>
       </div>
@@ -174,6 +175,7 @@
       <div id="offline-error" class="alert alert-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button id="offline-cancel" class="button" type="button">Cancelar</button>
+        <button id="offline-delete" class="button button-danger" type="button">Remover dados locais</button>
         <button class="button button-primary" type="submit">Continuar</button>
       </div>
     </form>

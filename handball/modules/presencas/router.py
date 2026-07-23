@@ -19,6 +19,8 @@ from handball.core.auth import (
     require_write_session,
     session_from_request,
 )
+from handball.core.authorization import AccessContext, Permission, require_permission
+from handball.core.organization import ORGANIZATION
 
 from .domain import history_to_dataframe
 from .schemas import MemberCreate, MemberUpdate, SessionNotes, SyncBatch
@@ -52,36 +54,56 @@ def create_router(
         session = session_from_request(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
+        if Permission.ATTENDANCE_READ_TEAM not in session.permissions:
+            raise HTTPException(status_code=403)
         return templates.TemplateResponse(
             request,
             "presencas/index.html",
-            {"username": session.username},
+            {"username": session.username, "session": session, "organization": ORGANIZATION},
         )
 
     @router.get("/api/v1/auth/session")
     def auth_session(
         session: AuthSession = Depends(require_session),
-    ) -> dict[str, str]:
-        return {"username": session.username, "csrf_token": session.csrf_token}
+    ) -> dict[str, Any]:
+        return {
+            "user_id": session.user_id,
+            "username": session.username,
+            "display_name": session.display_name,
+            "csrf_token": session.csrf_token,
+            "roles": sorted(session.system_roles | session.team_roles),
+            "permissions": sorted(str(value) for value in session.permissions),
+            "team_ids": sorted(session.team_ids),
+            "linked_player_id": session.linked_player_id,
+        }
 
     @router.get("/api/v1/session")
     def get_session(
         training_date: str,
-        _: AuthSession = Depends(require_session),
+        context: AccessContext = Depends(require_permission(Permission.ATTENDANCE_READ_TEAM)),
     ) -> dict[str, Any]:
-        return service.session_payload(_parse_date(training_date))
+        return service.session_payload(
+            _parse_date(training_date), actor_user_id=context.user_id
+        )
 
     @router.put("/api/v1/sessions/{session_id}/records")
     def sync_session_records(
         session_id: int,
         batch: SyncBatch,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
+        if Permission.ATTENDANCE_WRITE not in context.permissions:
+            raise HTTPException(status_code=403)
+        if batch.offline and any(
+            item.creator_user_id != context.user_id for item in batch.operations
+        ):
+            raise HTTPException(status_code=403, detail="Fila offline pertence a outro usuário.")
         try:
             results = service.sync_records(
                 session_id,
                 [item.model_dump() for item in batch.operations],
                 offline=batch.offline,
+                actor_user_id=context.user_id or None,
             )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -90,47 +112,55 @@ def create_router(
     @router.post("/api/v1/sessions/{session_id}/finalize")
     def finalize_session(
         session_id: int,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
-        return service.finalize_session(session_id)
+        if Permission.ATTENDANCE_FINALIZE not in context.permissions:
+            raise HTTPException(status_code=403)
+        return service.finalize_session(session_id, actor_user_id=context.user_id or None)
 
     @router.post("/api/v1/sessions/{session_id}/reopen")
     def reopen_session(
         session_id: int,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
-        return service.reopen_session(session_id)
+        if Permission.ATTENDANCE_REOPEN not in context.permissions:
+            raise HTTPException(status_code=403)
+        return service.reopen_session(session_id, actor_user_id=context.user_id or None)
 
     @router.put("/api/v1/sessions/{session_id}/notes")
     def update_session_notes(
         session_id: int,
         body: SessionNotes,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
-        return service.update_session_notes(session_id, body.notes)
+        if Permission.ATTENDANCE_WRITE not in context.permissions:
+            raise HTTPException(status_code=403)
+        return service.update_session_notes(session_id, body.notes, actor_user_id=context.user_id or None)
 
     @router.get("/api/v1/history")
-    def history(_: AuthSession = Depends(require_session)) -> dict[str, Any]:
+    def history(_: AccessContext = Depends(require_permission(Permission.ATTENDANCE_READ_TEAM))) -> dict[str, Any]:
         return {"items": service.history()}
 
     @router.get("/api/v1/audit")
     def audit(
         limit: int = 500,
-        _: AuthSession = Depends(require_session),
+        _: AccessContext = Depends(require_permission(Permission.AUDIT_READ_SPORT)),
     ) -> dict[str, Any]:
         return {"items": service.audit(limit=min(max(limit, 1), 1000))}
 
     @router.get("/api/v1/members")
-    def members(_: AuthSession = Depends(require_session)) -> dict[str, Any]:
+    def members(_: AccessContext = Depends(require_permission(Permission.MEMBERS_READ_TEAM))) -> dict[str, Any]:
         return {"items": service.members()}
 
     @router.post("/api/v1/members")
     def add_member(
         body: MemberCreate,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
         try:
-            return {"items": service.add_member(body.name, body.position)}
+            if Permission.MEMBERS_MANAGE not in context.permissions:
+                raise HTTPException(status_code=403)
+            return {"items": service.add_member(body.name, body.position, actor_user_id=context.user_id or None)}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -138,14 +168,17 @@ def create_router(
     def update_member(
         member_id: int,
         body: MemberUpdate,
-        _: AuthSession = Depends(require_write_session),
+        context: AuthSession = Depends(require_write_session),
     ) -> dict[str, Any]:
         try:
+            if Permission.MEMBERS_MANAGE not in context.permissions:
+                raise HTTPException(status_code=403)
             return {
                 "items": service.update_member(
                     member_id,
                     position=body.position,
                     active=body.active,
+                    actor_user_id=context.user_id or None,
                 )
             }
         except ValueError as exc:
@@ -154,7 +187,7 @@ def create_router(
     @router.get("/api/v1/exports/session/{session_id}.csv")
     def export_session(
         session_id: int,
-        _: AuthSession = Depends(require_session),
+        _: AccessContext = Depends(require_permission(Permission.EXPORT_READ_TEAM)),
     ) -> StreamingResponse:
         training, rows = service.session_export_rows(session_id)
         return _csv_response(
@@ -164,7 +197,7 @@ def create_router(
 
     @router.get("/api/v1/exports/history.csv")
     def export_history(
-        _: AuthSession = Depends(require_session),
+        _: AccessContext = Depends(require_permission(Permission.EXPORT_READ_TEAM)),
     ) -> StreamingResponse:
         return _csv_response(
             history_to_dataframe(service.history()),
@@ -173,7 +206,7 @@ def create_router(
 
     @router.get("/api/v1/backup")
     def download_backup(
-        _: AuthSession = Depends(require_session),
+        _: AccessContext = Depends(require_permission(Permission.BACKUP_DOWNLOAD)),
     ) -> StreamingResponse:
         artifact = service.create_backup_download()
         return StreamingResponse(

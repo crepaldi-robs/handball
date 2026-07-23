@@ -20,6 +20,8 @@ from handball.modules.estatisticas.service import StatisticsService
 from handball.modules.hub.router import create_router as create_hub_router
 from handball.modules.presencas.router import create_router as create_attendance_router
 from handball.modules.presencas.service import AttendanceService
+from handball.modules.usuarios.router import create_router as create_users_router
+from handball.modules.usuarios.service import IdentityService
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -38,15 +40,17 @@ def create_app(
         config_path=settings.config_path,
     )
     database_manager.validate_existing()
-    auth_manager = auth_manager or AuthManager(settings)
+    unit_of_work_factory = UnitOfWorkFactory(database_manager)
+    auth_manager = auth_manager or AuthManager(settings, unit_of_work_factory)
     templates = Jinja2Templates(directory=ROOT_DIR / "templates")
 
     attendance_service = AttendanceService(
-        UnitOfWorkFactory(database_manager),
+        unit_of_work_factory,
         database_manager,
     )
     statistics_service = StatisticsService()
     calendar_service = CalendarService()
+    identity_service = IdentityService(unit_of_work_factory)
 
     application = FastAPI(
         title="Hub Handebol",
@@ -104,4 +108,5 @@ def create_app(
     application.include_router(create_attendance_router(attendance_service, templates))
     application.include_router(create_statistics_router(statistics_service, templates))
     application.include_router(create_calendar_router(calendar_service, templates))
+    application.include_router(create_users_router(identity_service, templates))
     return application
