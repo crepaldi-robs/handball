@@ -62,6 +62,7 @@ class CalendarRepository:
         self,
         team_ids: Iterable[int],
         *,
+        season_id: int | None = None,
         season_label: str | None = None,
     ) -> list[dict[str, Any]]:
         allowed = _ids(team_ids)
@@ -70,7 +71,10 @@ class CalendarRepository:
         placeholders = _placeholders(allowed)
         parameters: list[Any] = list(allowed)
         season_clause = ""
-        if season_label:
+        if season_id is not None:
+            season_clause = " AND e.season_id=?"
+            parameters.append(int(season_id))
+        elif season_label:
             season_clause = " AND s.label=?"
             parameters.append(season_label)
         rows = self.connection.execute(

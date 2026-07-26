@@ -18,6 +18,7 @@ class UnitOfWork:
         self._attendance: AttendanceRepository | None = None
         self._identity: Any | None = None
         self._calendar: Any | None = None
+        self._sql_explorer: Any | None = None
         self._completed = False
 
     def __enter__(self) -> UnitOfWork:
@@ -76,6 +77,14 @@ class UnitOfWork:
             )
         return self._calendar
 
+    @property
+    def sql_explorer(self) -> Any:
+        if self._sql_explorer is None:
+            from .repositories.sql_explorer import SqlExplorerRepository
+
+            self._sql_explorer = SqlExplorerRepository(self.connection)
+        return self._sql_explorer
+
     def commit(self) -> None:
         if self._read_only:
             raise RuntimeError("Unidade de trabalho somente leitura não faz commit.")
@@ -112,6 +121,7 @@ class UnitOfWork:
             self._attendance = None
             self._identity = None
             self._calendar = None
+            self._sql_explorer = None
             self._connection.close()
             self._connection = None
         return False

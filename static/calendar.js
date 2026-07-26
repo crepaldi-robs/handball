@@ -183,10 +183,9 @@ if (root) {
   }
 
   async function loadCalendar() {
-    clearMessage();
     const params = new URLSearchParams({
       team_id: teamSelect.value,
-      season_label: seasonSelect.value || activeSeason,
+      season_id: seasonSelect.value,
     });
     try {
       state.calendar = await request(`/api/v1/calendar?${params}`);
@@ -298,11 +297,11 @@ if (root) {
       clearMessage();
       const id = document.querySelector("#calendar-event-id").value;
       try {
-        await request(id ? `/api/v1/calendar/events/${id}` : "/api/v1/calendar/events", {
+        const saved = await request(id ? `/api/v1/calendar/events/${id}` : "/api/v1/calendar/events", {
           method: id ? "PUT" : "POST",
           body: JSON.stringify(eventPayload()),
         });
-        showMessage(id ? "Evento atualizado." : "Evento criado.");
+        showMessage(id ? `Evento atualizado (ID ${saved.id}).` : `Evento criado (ID ${saved.id}).`);
         resetEditor();
         await loadCalendar();
       } catch (error) {

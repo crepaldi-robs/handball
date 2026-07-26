@@ -143,6 +143,7 @@ class CalendarRepositoryContract(Protocol):
         self,
         team_ids: Iterable[int],
         *,
+        season_id: int | None = None,
         season_label: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
@@ -220,6 +221,9 @@ class UnitOfWorkContract(Protocol):
 
     @property
     def calendar(self) -> CalendarRepositoryContract: ...
+
+    @property
+    def sql_explorer(self) -> Any: ...
 
     def commit(self) -> None: ...
 

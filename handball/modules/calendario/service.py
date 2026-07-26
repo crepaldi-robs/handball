@@ -68,14 +68,19 @@ class CalendarService:
         context: AccessContext,
         *,
         team_id: int | None = None,
-        season_label: str = ACTIVE_SEASON_LABEL,
+        season_id: int | None = None,
+        season_label: str | None = None,
     ) -> dict[str, Any]:
         self._require(context, Permission.CALENDAR_READ_TEAM)
         allowed = self._team_ids(context, team_id)
+        effective_season_label = (
+            None if season_id is not None else season_label or ACTIVE_SEASON_LABEL
+        )
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             events = unit_of_work.calendar.list_events(
                 allowed,
-                season_label=season_label,
+                season_id=season_id,
+                season_label=effective_season_label,
             )
             justifications = (
                 unit_of_work.calendar.list_justifications(
@@ -110,7 +115,8 @@ class CalendarService:
             item["own_justification"] = own_by_event.get(int(event["id"]))
             groups[period].append(item)
         return {
-            "season_label": season_label,
+            "season_id": season_id,
+            "season_label": effective_season_label or ACTIVE_SEASON_LABEL,
             "generated_at": now.isoformat(timespec="seconds"),
             "items": events,
             "groups": groups,

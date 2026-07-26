@@ -86,6 +86,13 @@
         </span>
         <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
       </a>{% endif %}
+
+      {% if can_sql_explorer %}<a class="module-card module-card-available" href="/app/consultas">
+        <span class="module-icon" aria-hidden="true">⌕</span>
+        <span class="module-status module-status-available">Interno</span>
+        <span class="module-card-copy"><strong>Consultas SQL</strong><span>Catálogo, consultas de leitura, plano e exportação.</span></span>
+        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+      </a>{% endif %}
     </section>
 
     <p class="platform-note">Servidor particular · uma sessão e um logout para todos os módulos</p>

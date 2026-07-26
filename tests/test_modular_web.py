@@ -52,6 +52,7 @@ def login(client: TestClient):
         "/app/presencas",
         "/app/estatisticas",
         "/app/calendario",
+        "/app/consultas",
     ),
 )
 def test_every_application_page_redirects_anonymous_users(tmp_path, path):
@@ -74,6 +75,7 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     assert 'href="/app/presencas"' in response.text
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
+    assert 'href="/app/consultas"' in response.text
     assert "Disponível" in response.text
     assert response.text.count("Em preparação") == 1
     assert 'form method="post" action="/logout" data-platform-logout' in response.text
@@ -112,6 +114,7 @@ def test_authenticated_skeletons_are_read_only_and_share_navigation(
         "/app/presencas",
         "/app/estatisticas",
         "/app/calendario",
+        "/app/consultas",
     ),
 )
 def test_one_logout_invalidates_the_shared_session_from_every_module(tmp_path, page):
@@ -154,11 +157,12 @@ def test_pwa_v5_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v5"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v6"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert 'pathname === "/app/estatisticas"' in worker
     assert 'pathname === "/app/calendario"' in worker
+    assert 'pathname === "/app/consultas"' in worker
     assert 'pathname.startsWith("/roberto/")' in worker
     assert 'pathname.startsWith("/api/")' in worker
     assert "data-platform-logout" in client.get("/app").text

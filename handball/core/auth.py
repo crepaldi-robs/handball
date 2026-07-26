@@ -196,12 +196,17 @@ class AuthManager:
         )
         return token, session
 
-    def read_token(self, token: str | None) -> AuthSession | None:
+    def read_token(
+        self,
+        token: str | None,
+        *,
+        touch: bool = True,
+    ) -> AuthSession | None:
         if not token:
             return None
         if self.unit_of_work_factory is not None:
-            with self.unit_of_work_factory() as unit_of_work:
-                data = unit_of_work.identity.access_context_data(token)
+            with self.unit_of_work_factory(read_only=not touch) as unit_of_work:
+                data = unit_of_work.identity.access_context_data(token, touch=touch)
             if data:
                 return self._session_from_data(data)
         try:
@@ -251,9 +256,13 @@ class AuthManager:
         )
 
 
-def session_from_request(request: Request) -> AuthSession | None:
+def session_from_request(
+    request: Request,
+    *,
+    touch: bool = True,
+) -> AuthSession | None:
     auth: AuthManager = request.app.state.auth
-    session = auth.read_token(request.cookies.get(auth.cookie_name))
+    session = auth.read_token(request.cookies.get(auth.cookie_name), touch=touch)
     if session is not None:
         request.state.access_context = session.to_access_context()
     return session

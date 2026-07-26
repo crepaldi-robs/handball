@@ -84,12 +84,14 @@ def create_router(
             Depends(require_permission(Permission.CALENDAR_READ_TEAM)),
         ],
         team_id: int | None = None,
-        season_label: str = ACTIVE_SEASON_LABEL,
+        season_id: int | None = None,
+        season_label: str | None = None,
     ) -> dict[str, Any]:
         try:
             return service.calendar(
                 context,
                 team_id=team_id,
+                season_id=season_id,
                 season_label=season_label,
             )
         except Exception as exc:

@@ -578,6 +578,18 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .calendar-card-main .calendar-link-note { margin-top: 9px; color: var(--success); font-size: .78rem; font-weight: 700; }
 .calendar-justification { grid-column: 1 / -1; padding-top: 14px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
 .calendar-empty { margin: 0; padding: 22px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: rgba(255,255,255,.55); }
+.sql-layout { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(0, 2fr); gap: 18px; margin-top: 22px; }
+.sql-catalog, .sql-workbench { padding: 20px; }
+.sql-catalog h2 { margin-top: 0; font-size: 1rem; }
+.sql-relation { display: block; width: 100%; margin: 7px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); text-align: left; cursor: pointer; }
+.sql-relation:disabled { color: var(--muted); cursor: not-allowed; }
+.sql-workbench label { display: block; margin-bottom: 7px; font-weight: 800; }
+.sql-workbench textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); border-radius: 8px; font: .9rem/1.4 ui-monospace, Consolas, monospace; }
+.sql-note { color: var(--muted); font-size: .85rem; }
+.sql-results { overflow: auto; margin-top: 18px; }
+.sql-results table { min-width: 100%; border-collapse: collapse; font-size: .82rem; }
+.sql-results th, .sql-results td { border: 1px solid var(--line); padding: 7px; text-align: left; vertical-align: top; white-space: nowrap; }
+.sql-results th { background: #eaf0f4; }
 
 @media (max-width: 900px) {
   .calendar-heading { align-items: stretch; flex-direction: column; }
@@ -588,6 +600,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 
 @media (max-width: 600px) {
   .calendar-shell { width: min(100% - 28px, 720px); }
+  .sql-layout { grid-template-columns: 1fr; }
   .calendar-filters, .calendar-form, .calendar-card, .calendar-justification { grid-template-columns: 1fr; }
   .calendar-notes, .calendar-justification { grid-column: 1; }
   .calendar-card > .button { justify-self: start; }

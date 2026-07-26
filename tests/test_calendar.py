@@ -195,6 +195,45 @@ def test_past_present_future_restrictions_and_calendar_page(
     assert "/static/calendar.js" in page.text
 
 
+def test_calendar_reads_the_selected_season_id_and_keeps_the_active_label(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    created = client.post(
+        "/api/v1/calendar/events",
+        json=_event(
+            team_id,
+            season_id,
+            starts_at="2026-07-28T19:30:00-03:00",
+            ends_at="2026-07-28T21:30:00-03:00",
+        ),
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201
+
+    selected = client.get(
+        f"/api/v1/calendar?team_id={team_id}&season_id={season_id}"
+    )
+    assert selected.status_code == 200
+    payload = selected.json()
+    assert payload["season_id"] == season_id
+    assert payload["season_label"] == "2026.2"
+    assert [item["id"] for item in payload["groups"]["future"]] == [
+        created.json()["id"]
+    ]
+
+
+def test_calendar_client_uses_season_id_and_preserves_success_feedback() -> None:
+    source = (Path(__file__).parents[1] / "static" / "calendar.js").read_text(
+        encoding="utf-8"
+    )
+    assert "season_id: seasonSelect.value" in source
+    assert "Evento criado (ID ${saved.id})." in source
+    assert "async function loadCalendar() {\n    const params" in source
+
+
 def test_player_sees_team_events_and_only_writes_own_justification(
     tmp_path: Path,
 ) -> None:

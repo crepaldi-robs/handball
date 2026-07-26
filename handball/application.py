@@ -13,6 +13,8 @@ from handball.core.security import install_security_middleware
 from handball.database import DatabaseManager, UnitOfWorkFactory
 from handball.modules.calendario.router import create_router as create_calendar_router
 from handball.modules.calendario.service import CalendarService
+from handball.modules.consultas.router import create_router as create_sql_explorer_router
+from handball.modules.consultas.service import SqlExplorerService
 from handball.modules.estatisticas.router import (
     create_router as create_statistics_router,
 )
@@ -50,6 +52,7 @@ def create_app(
     )
     statistics_service = StatisticsService()
     calendar_service = CalendarService(unit_of_work_factory)
+    sql_explorer_service = SqlExplorerService(unit_of_work_factory)
     identity_service = IdentityService(unit_of_work_factory)
 
     application = FastAPI(
@@ -108,5 +111,6 @@ def create_app(
     application.include_router(create_attendance_router(attendance_service, templates))
     application.include_router(create_statistics_router(statistics_service, templates))
     application.include_router(create_calendar_router(calendar_service, templates))
+    application.include_router(create_sql_explorer_router(sql_explorer_service, templates))
     application.include_router(create_users_router(identity_service, templates))
     return application

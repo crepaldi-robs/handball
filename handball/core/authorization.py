@@ -26,6 +26,7 @@ class Permission(StrEnum):
     CALENDAR_READ_TEAM = "calendar.read.team"
     CALENDAR_MANAGE = "calendar.manage"
     CALENDAR_JUSTIFICATION_SELF = "calendar.justification.self"
+    SQL_EXPLORE = "sql.explore"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
@@ -35,7 +36,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
                      Permission.MEMBERS_READ_TEAM, Permission.MEMBERS_MANAGE,
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
                      Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
-                     Permission.CALENDAR_MANAGE}),
+                     Permission.CALENDAR_MANAGE, Permission.SQL_EXPLORE}),
     "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.REPORTS_READ_SELF,
                          Permission.CALENDAR_READ_TEAM,
                          Permission.CALENDAR_JUSTIFICATION_SELF}),
@@ -81,6 +82,32 @@ def require_permission(permission: Permission) -> Callable[[Request], AccessCont
         if permission not in context.permissions:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return context
+    return dependency
+
+
+def require_read_only_permission(
+    permission: Permission,
+) -> Callable[[Request], AccessContext]:
+    """Autentica uma consulta sem atualizar last_seen_at da sessão."""
+
+    def dependency(request: Request) -> AccessContext:
+        context = getattr(request.state, "access_context", None)
+        if context is None:
+            from .auth import session_from_request
+
+            session_from_request(request, touch=False)
+            context = getattr(request.state, "access_context", None)
+        if context is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        if context.must_change_password:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Troca de senha obrigatória antes de continuar.",
+            )
+        if permission not in context.permissions:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        return context
+
     return dependency
 
 

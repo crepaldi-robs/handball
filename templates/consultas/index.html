@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#0b1f33">
+  <title>Consultas SQL · Hub Handebol</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+  <script src="/static/sql-explorer.js" defer></script>
+</head>
+<body class="platform-body" data-sql-explorer data-csrf-token="{{ session.csrf_token }}">
+  <header class="topbar"><div class="topbar-inner">
+    <a class="identity" href="/app"><div class="mini-mark" aria-hidden="true">H</div><div><strong>Consultas SQL</strong><span>Ambiente interno</span></div></a>
+    <div class="top-actions"><a class="text-button" href="/app">Hub</a><form method="post" action="/logout" data-platform-logout><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><button class="text-button logout-button" type="submit">Sair</button></form></div>
+  </div></header>
+  <main class="module-shell sql-shell">
+    <a class="back-link" href="/app">← Voltar ao hub</a>
+    <section class="calendar-heading"><div><span class="eyebrow">SOMENTE LEITURA</span><h1>Explorador SQL</h1><p>Catálogo gerado da base operacional. Consultas são limitadas a SELECT/WITH; tabelas sensíveis permanecem restritas.</p></div></section>
+    <div id="sql-message" class="alert" role="status" hidden></div>
+    <section class="sql-layout">
+      <aside class="panel sql-catalog"><h2>Catálogo</h2><div id="sql-relations" aria-live="polite"></div></aside>
+      <section class="panel sql-workbench"><label for="sql-editor">Consulta</label><textarea id="sql-editor" rows="10" spellcheck="false">SELECT * FROM calendar_events LIMIT 100</textarea><div class="calendar-form-actions"><button id="sql-run" class="button button-primary" type="button">Executar</button><button id="sql-explain" class="button" type="button">Plano</button><button id="sql-csv" class="button" type="button">CSV completo</button><button id="sql-xlsx" class="button" type="button">Excel completo</button></div><p class="sql-note">A tabela mostra uma prévia de até 200 linhas por página; a exportação usa o resultado completo.</p><div id="sql-results" class="sql-results"></div></section>
+    </section>
+  </main>
+</body>
+</html>

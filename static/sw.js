@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v5";
+const CACHE_NAME = "handball-shell-v6";
 const SHELL = [
   "/app",
   "/app/presencas",
@@ -24,6 +24,8 @@ function isNetworkOnly(pathname) {
     || pathname.startsWith("/app/estatisticas/")
     || pathname === "/app/calendario"
     || pathname.startsWith("/app/calendario/")
+    || pathname === "/app/consultas"
+    || pathname.startsWith("/app/consultas/")
     || pathname === "/roberto"
     || pathname.startsWith("/roberto/")
     || pathname.startsWith("/api/");
