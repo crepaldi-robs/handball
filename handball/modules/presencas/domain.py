@@ -95,6 +95,176 @@ def _names(items: list[dict[str, Any]] | list[str]) -> str:
     )
 
 
+def _names_with_pos(records: list[dict[str, Any]]) -> str:
+    if not records:
+        return "nenhum"
+    return ", ".join(
+        f"{r['name']} ({r['position']})" if r.get("position") else r["name"]
+        for r in records
+    )
+
+
+def classify_position_categories(position: str) -> list[str]:
+    pos_upper = (position or "").upper().strip()
+    if not pos_upper:
+        return ["Outros / Não informada"]
+
+    categories = []
+    tokens = [
+        t.strip()
+        for t in pos_upper.replace("/", " ")
+        .replace("-", " ")
+        .replace(",", " ")
+        .split()
+        if t.strip()
+    ]
+
+    # 1. Goleiros
+    if any(
+        t in ["GOL", "GK", "GOLEIRO", "GOLEIRA", "GOLEIROS"] or "GOLEIR" in t
+        for t in tokens
+    ):
+        categories.append("Goleiros")
+
+    # 2. Pontas
+    if any(
+        t
+        in [
+            "PE",
+            "PD",
+            "PONTA",
+            "PONTAS",
+            "EXTREMO",
+            "EXTREMOS",
+            "WING",
+            "WINGS",
+        ]
+        or "PONTA" in t
+        for t in tokens
+    ):
+        categories.append("Pontas")
+
+    # 3. Meias / Armadores
+    if any(
+        t
+        in [
+            "ME",
+            "MD",
+            "C",
+            "AE",
+            "AD",
+            "MEIA",
+            "MEIAS",
+            "ARMADOR",
+            "ARMADORES",
+            "CENTRAL",
+            "CENTRAIS",
+            "BACK",
+            "BACKS",
+        ]
+        or "ARMAD" in t
+        or "MEIA" in t
+        for t in tokens
+    ):
+        categories.append("Meias / Armadores")
+
+    # 4. Pivôs
+    if any(
+        t in ["PV", "PIV", "PIVÔ", "PIVO", "PIVOTS", "PIVOT"] or "PIV" in t
+        for t in tokens
+    ):
+        categories.append("Pivôs")
+
+    if not categories:
+        categories.append("Outros / Não informada")
+
+    return categories
+
+
+def build_tactical_insights(
+    goleiros: list[dict[str, Any]],
+    pontas: list[dict[str, Any]],
+    meias: list[dict[str, Any]],
+    pivos: list[dict[str, Any]],
+    total_confirmed: int,
+) -> list[str]:
+    insights = []
+
+    # 1. Goleiros (Foco Especial)
+    if len(goleiros) == 0:
+        insights.append(
+            "🚨 GOLEIROS (0): Nenhum goleiro confirmado! Urgente convocar goleiro convidado para o treino."
+        )
+    elif len(goleiros) == 1:
+        names_str = _names(goleiros)
+        insights.append(
+            f"⚠️ GOLEIROS (1): Apenas 1 goleiro confirmado ({names_str}). Recomenda-se chamar 1 goleiro convidado para garantir rotatividade nos arremessos."
+        )
+    else:
+        insights.append(
+            f"✅ GOLEIROS ({len(goleiros)}): Boa cobertura de goleiros para revezamento e trabalho coletivo."
+        )
+
+    # 2. Meias / Armadores
+    if len(meias) == 0:
+        insights.append(
+            "🚨 ARMAÇÃO (0): Nenhum meia/armador confirmado! Treino tático comprometido. Cobrar confirmação urgente dos armadores."
+        )
+    elif len(meias) == 1:
+        names_str = _names(meias)
+        insights.append(
+            f"⚠️ ARMAÇÃO (1): Apenas 1 meia/armador confirmado ({names_str})! Repensar o treino tático de armação ou pedir confirmação urgente aos meias pendentes."
+        )
+    else:
+        insights.append(
+            f"✅ ARMAÇÃO ({len(meias)}): {len(meias)} meias/armadores disponíveis para condução tática."
+        )
+
+    # 3. Pontas
+    if len(pontas) >= 4 or (total_confirmed <= 8 and len(pontas) >= 3):
+        insights.append(
+            f"⚡ PONTAS ({len(pontas)}): Alto volume de pontas confirmados! Excelente oportunidade para focar em rotinas de finalização de ponta, transição rápida e contra-ataques."
+        )
+    elif len(pontas) <= 1 and total_confirmed >= 6:
+        insights.append(
+            f"⚠️ PONTAS ({len(pontas)}): Poucos pontas confirmados. Adaptar trabalhos de ponta ou combinar com meias/pivôs."
+        )
+    elif len(pontas) > 0:
+        insights.append(
+            f"✅ PONTAS ({len(pontas)}): {len(pontas)} ponta(s) confirmado(s)."
+        )
+
+    # 4. Pivôs
+    if len(pivos) == 0 and total_confirmed >= 6:
+        insights.append(
+            "⚠️ PIVÔS (0): Nenhum pivô confirmado. Adaptar jogadas de bloqueio e 2 vs 2 na linha de 6 metros."
+        )
+    elif len(pivos) > 0:
+        insights.append(
+            f"✅ PIVÔS ({len(pivos)}): {len(pivos)} pivô(s) confirmado(s)."
+        )
+
+    # 5. Tamanho do Elenco / Planejamento Geral
+    if total_confirmed == 0:
+        insights.append(
+            "ℹ️ ELENCO (0): Nenhum atleta confirmado até o momento. Cobrar confirmações do grupo."
+        )
+    elif total_confirmed < 8:
+        insights.append(
+            f"ℹ️ ELENCO REDUZIDO ({total_confirmed} atletas): Recomendado focar em técnica individual, fundamentos, arremessos e físico."
+        )
+    elif total_confirmed < 12:
+        insights.append(
+            f"ℹ️ ELENCO INTERMEDIÁRIO ({total_confirmed} atletas): Treino tático setorial ideal (meio-quadra / 4x4 / 5x5)."
+        )
+    else:
+        insights.append(
+            f"ℹ️ ELENCO CHEIO ({total_confirmed} atletas): Condição ideal para coletivo 6x6 e simulado de jogo."
+        )
+
+    return insights
+
+
 def build_coach_message(
     training_date: date,
     records: list[dict[str, Any]],
@@ -103,38 +273,66 @@ def build_coach_message(
 ) -> str:
     summary = summarize_records(records)
     status = summary["by_status"]
+    confirmed_records = summary["confirmed"]
+
+    goleiros, pontas, meias, pivos, outros = [], [], [], [], []
+    for r in confirmed_records:
+        cats = classify_position_categories(r.get("position", ""))
+        if "Goleiros" in cats:
+            goleiros.append(r)
+        if "Pontas" in cats:
+            pontas.append(r)
+        if "Meias / Armadores" in cats:
+            meias.append(r)
+        if "Pivôs" in cats:
+            pivos.append(r)
+        if "Outros / Não informada" in cats:
+            outros.append(r)
+
+    date_str = (
+        training_date.strftime("%d/%m/%Y")
+        if isinstance(training_date, date)
+        else str(training_date)
+    )
+
     lines = [
-        f"Treino de {training_date.strftime('%d/%m/%Y')}",
+        f"📋 RELATÓRIO PRÉ-TREINO — {date_str}",
         "",
-        f"Confirmados: {len(summary['confirmed'])}",
-        f"• Mais de 24h: {_names(status['CONFIRMED_EARLY'])}",
-        f"• Dentro de 24h: {_names(status['CONFIRMED_LATE'])}",
+        "📊 RESUMO DE CONFIRMAÇÃO",
+        f"• Confirmados ({len(confirmed_records)}):",
+        f"  - Antecipados (>24h): {_names(status['CONFIRMED_EARLY'])}",
+        f"  - Em cima da hora (<24h): {_names(status['CONFIRMED_LATE'])}",
         "",
-        f"Pendentes/sem resposta: {len(summary['pending'])}",
-        f"• Pendentes: {_names(status['PENDING'])}",
-        f"• Sem resposta: {_names(status['NO_RESPONSE'])}",
+        f"• Pendentes / Sem resposta ({len(summary['pending'])}):",
+        f"  - Pendentes: {_names(status['PENDING'])}",
+        f"  - Sem resposta: {_names(status['NO_RESPONSE'])}",
         "",
-        f"Desmarcaram: {len(summary['cancelled'])}",
-        f"• Mais de 24h: {_names(status['CANCELLED_EARLY'])}",
-        f"• Dentro de 24h: {_names(status['CANCELLED_LATE'])}",
+        f"• Desmarcaram / Ausentes previstos ({len(summary['cancelled'])}):",
+        f"  - Antecipados (>24h): {_names(status['CANCELLED_EARLY'])}",
+        f"  - Em cima da hora (<24h): {_names(status['CANCELLED_LATE'])}",
+        "",
+        f"📌 ANÁLISE DE ELENCO CONFIRMADO POR POSIÇÃO ({len(confirmed_records)} atletas)",
+        f"• 🧤 Goleiros ({len(goleiros)}): {_names_with_pos(goleiros)}",
+        f"• ⚡ Pontas ({len(pontas)}): {_names_with_pos(pontas)}",
+        f"• 🎯 Meias / Armadores ({len(meias)}): {_names_with_pos(meias)}",
+        f"• 🤾 Pivôs ({len(pivos)}): {_names_with_pos(pivos)}",
     ]
-    if is_finalized:
-        lines.extend(
-            [
-                "",
-                f"Presença real: {len(summary['present'])} presentes",
-                f"• Presentes: {_names(summary['present'])}",
-                f"• Ausentes: {_names(summary['absent'])}",
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                "",
-                "Presença real: chamada ainda não encerrada.",
-                f"• Presentes já marcados: {_names(summary['present'])}",
-            ]
-        )
+    if outros:
+        lines.append(f"• 📋 Outros ({len(outros)}): {_names_with_pos(outros)}")
+
+    lines.extend(
+        [
+            "",
+            "💡 INSIGHTS E RECOMENDAÇÕES PARA O TREINO",
+        ]
+    )
+
+    insights = build_tactical_insights(
+        goleiros, pontas, meias, pivos, len(confirmed_records)
+    )
+    for ins in insights:
+        lines.append(f"• {ins}")
+
     return "\n".join(lines)
 
 

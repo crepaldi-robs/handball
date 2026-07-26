@@ -340,37 +340,144 @@ function namesBy(records, predicate) {
   return values.length ? values.join(", ") : "nenhum";
 }
 
+function classifyPositionCategories(position) {
+  const posUpper = String(position || "").toUpperCase().trim();
+  if (!posUpper) return ["Outros / Não informada"];
+
+  const categories = [];
+  const tokens = posUpper.replace(/[\/,\-]/g, " ").split(/\s+/).filter(Boolean);
+
+  // 1. Goleiros
+  if (tokens.some((t) => ["GOL", "GK", "GOLEIRO", "GOLEIRA", "GOLEIROS"].includes(t) || t.includes("GOLEIR"))) {
+    categories.push("Goleiros");
+  }
+
+  // 2. Pontas
+  if (tokens.some((t) => ["PE", "PD", "PONTA", "PONTAS", "EXTREMO", "EXTREMOS", "WING", "WINGS"].includes(t) || t.includes("PONTA"))) {
+    categories.push("Pontas");
+  }
+
+  // 3. Meias / Armadores
+  if (tokens.some((t) => ["ME", "MD", "C", "AE", "AD", "MEIA", "MEIAS", "ARMADOR", "ARMADORES", "CENTRAL", "CENTRAIS", "BACK", "BACKS"].includes(t) || t.includes("ARMAD") || t.includes("MEIA"))) {
+    categories.push("Meias / Armadores");
+  }
+
+  // 4. Pivôs
+  if (tokens.some((t) => ["PV", "PIV", "PIVÔ", "PIVO", "PIVOTS", "PIVOT"].includes(t) || t.includes("PIV"))) {
+    categories.push("Pivôs");
+  }
+
+  if (!categories.length) {
+    categories.push("Outros / Não informada");
+  }
+
+  return categories;
+}
+
+function namesWithPos(records) {
+  if (!records || !records.length) return "nenhum";
+  return records.map((r) => r.position ? `${r.name} (${r.position})` : r.name).join(", ");
+}
+
+function buildTacticalInsights(goleiros, pontas, meias, pivos, totalConfirmed) {
+  const insights = [];
+
+  // 1. Goleiros
+  if (goleiros.length === 0) {
+    insights.push("🚨 GOLEIROS (0): Nenhum goleiro confirmado! Urgente convocar goleiro convidado para o treino.");
+  } else if (goleiros.length === 1) {
+    const namesStr = namesBy(goleiros, () => true);
+    insights.push(`⚠️ GOLEIROS (1): Apenas 1 goleiro confirmado (${namesStr}). Recomenda-se chamar 1 goleiro convidado para garantir rotatividade nos arremessos.`);
+  } else {
+    insights.push(`✅ GOLEIROS (${goleiros.length}): Boa cobertura de goleiros para revezamento e trabalho coletivo.`);
+  }
+
+  // 2. Meias / Armadores
+  if (meias.length === 0) {
+    insights.push("🚨 ARMAÇÃO (0): Nenhum meia/armador confirmado! Treino tático comprometido. Cobrar confirmação urgente dos armadores.");
+  } else if (meias.length === 1) {
+    const namesStr = namesBy(meias, () => true);
+    insights.push(`⚠️ ARMAÇÃO (1): Apenas 1 meia/armador confirmado (${namesStr})! Repensar o treino tático de armação ou pedir confirmação urgente aos meias pendentes.`);
+  } else {
+    insights.push(`✅ ARMAÇÃO (${meias.length}): ${meias.length} meias/armadores disponíveis para condução tática.`);
+  }
+
+  // 3. Pontas
+  if (pontas.length >= 4 || (totalConfirmed <= 8 && pontas.length >= 3)) {
+    insights.push(`⚡ PONTAS (${pontas.length}): Alto volume de pontas confirmados! Excelente oportunidade para focar em rotinas de finalização de ponta, transição rápida e contra-ataques.`);
+  } else if (pontas.length <= 1 && totalConfirmed >= 6) {
+    insights.push(`⚠️ PONTAS (${pontas.length}): Poucos pontas confirmados. Adaptar trabalhos de ponta ou combinar com meias/pivôs.`);
+  } else if (pontas.length > 0) {
+    insights.push(`✅ PONTAS (${pontas.length}): ${pontas.length} ponta(s) confirmado(s).`);
+  }
+
+  // 4. Pivôs
+  if (pivos.length === 0 && totalConfirmed >= 6) {
+    insights.push("⚠️ PIVÔS (0): Nenhum pivô confirmado. Adaptar jogadas de bloqueio e 2 vs 2 na linha de 6 metros.");
+  } else if (pivos.length > 0) {
+    insights.push(`✅ PIVÔS (${pivos.length}): ${pivos.length} pivô(s) confirmado(s).`);
+  }
+
+  // 5. Elenco Geral
+  if (totalConfirmed === 0) {
+    insights.push("ℹ️ ELENCO (0): Nenhum atleta confirmado até o momento. Cobrar confirmações do grupo.");
+  } else if (totalConfirmed < 8) {
+    insights.push(`ℹ️ ELENCO REDUZIDO (${totalConfirmed} atletas): Recomendado focar em técnica individual, fundamentos, arremessos e físico.`);
+  } else if (totalConfirmed < 12) {
+    insights.push(`ℹ️ ELENCO INTERMEDIÁRIO (${totalConfirmed} atletas): Treino tático setorial ideal (meio-quadra / 4x4 / 5x5).`);
+  } else {
+    insights.push(`ℹ️ ELENCO CHEIO (${totalConfirmed} atletas): Condição ideal para coletivo 6x6 e simulado de jogo.`);
+  }
+
+  return insights;
+}
+
 function buildCoachMessage() {
   const records = state.records;
-  const count = computeSummary(records);
+  const confirmedRecords = records.filter((r) => ["CONFIRMED_EARLY", "CONFIRMED_LATE"].includes(r.confirmation_status));
+  const pendingRecords = records.filter((r) => ["PENDING", "NO_RESPONSE"].includes(r.confirmation_status));
+  const cancelledRecords = records.filter((r) => ["CANCELLED_EARLY", "CANCELLED_LATE"].includes(r.confirmation_status));
+
+  const goleiros = [], pontas = [], meias = [], pivos = [], outros = [];
+  confirmedRecords.forEach((r) => {
+    const cats = classifyPositionCategories(r.position);
+    if (cats.includes("Goleiros")) goleiros.push(r);
+    if (cats.includes("Pontas")) pontas.push(r);
+    if (cats.includes("Meias / Armadores")) meias.push(r);
+    if (cats.includes("Pivôs")) pivos.push(r);
+    if (cats.includes("Outros / Não informada")) outros.push(r);
+  });
+
   const lines = [
-    `Treino de ${formatDate(state.currentDate)}`,
+    `📋 RELATÓRIO PRÉ-TREINO — ${formatDate(state.currentDate)}`,
     "",
-    `Confirmados: ${count.confirmed}`,
-    `• Mais de 24h: ${namesBy(records, (r) => r.confirmation_status === "CONFIRMED_EARLY")}`,
-    `• Dentro de 24h: ${namesBy(records, (r) => r.confirmation_status === "CONFIRMED_LATE")}`,
+    "📊 RESUMO DE CONFIRMAÇÃO",
+    `• Confirmados (${confirmedRecords.length}):`,
+    `  - Antecipados (>24h): ${namesBy(records, (r) => r.confirmation_status === "CONFIRMED_EARLY")}`,
+    `  - Em cima da hora (<24h): ${namesBy(records, (r) => r.confirmation_status === "CONFIRMED_LATE")}`,
     "",
-    `Pendentes/sem resposta: ${count.pending}`,
-    `• Pendentes: ${namesBy(records, (r) => r.confirmation_status === "PENDING")}`,
-    `• Sem resposta: ${namesBy(records, (r) => r.confirmation_status === "NO_RESPONSE")}`,
+    `• Pendentes / Sem resposta (${pendingRecords.length}):`,
+    `  - Pendentes: ${namesBy(records, (r) => r.confirmation_status === "PENDING")}`,
+    `  - Sem resposta: ${namesBy(records, (r) => r.confirmation_status === "NO_RESPONSE")}`,
     "",
-    `Desmarcaram: ${count.cancelled}`,
-    `• Mais de 24h: ${namesBy(records, (r) => r.confirmation_status === "CANCELLED_EARLY")}`,
-    `• Dentro de 24h: ${namesBy(records, (r) => r.confirmation_status === "CANCELLED_LATE")}`,
+    `• Desmarcaram / Ausentes previstos (${cancelledRecords.length}):`,
+    `  - Antecipados (>24h): ${namesBy(records, (r) => r.confirmation_status === "CANCELLED_EARLY")}`,
+    `  - Em cima da hora (<24h): ${namesBy(records, (r) => r.confirmation_status === "CANCELLED_LATE")}`,
     "",
+    `📌 ANÁLISE DE ELENCO CONFIRMADO POR POSIÇÃO (${confirmedRecords.length} atletas)`,
+    `• 🧤 Goleiros (${goleiros.length}): ${namesWithPos(goleiros)}`,
+    `• ⚡ Pontas (${pontas.length}): ${namesWithPos(pontas)}`,
+    `• 🎯 Meias / Armadores (${meias.length}): ${namesWithPos(meias)}`,
+    `• 🤾 Pivôs (${pivos.length}): ${namesWithPos(pivos)}`,
   ];
-  if (state.payload?.session?.is_finalized) {
-    lines.push(
-      `Presença real: ${count.present} presentes`,
-      `• Presentes: ${namesBy(records, (r) => r.present === 1 || r.present === true)}`,
-      `• Ausentes: ${namesBy(records, (r) => r.present === 0 || r.present === false)}`,
-    );
-  } else {
-    lines.push(
-      "Presença real: chamada ainda não encerrada.",
-      `• Presentes já marcados: ${namesBy(records, (r) => r.present === 1 || r.present === true)}`,
-    );
+  if (outros.length) {
+    lines.push(`• 📋 Outros (${outros.length}): ${namesWithPos(outros)}`);
   }
+
+  lines.push("", "💡 INSIGHTS E RECOMENDAÇÕES PARA O TREINO");
+  const insights = buildTacticalInsights(goleiros, pontas, meias, pivos, confirmedRecords.length);
+  insights.forEach((ins) => lines.push(`• ${ins}`));
+
   return lines.join("\n");
 }
 
