@@ -55,6 +55,85 @@ class AttendanceService:
             "confirmation_labels": CONFIRMATION_LABELS,
         }
 
+    @staticmethod
+    def _payload(
+        training: dict[str, Any],
+        records: list[dict[str, Any]],
+        *,
+        calendar_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        summary = summarize_records(records)
+        return {
+            "session": training,
+            "calendar_event": calendar_event,
+            "records": records,
+            "summary": {
+                "confirmed": len(summary["confirmed"]),
+                "pending": len(summary["pending"]),
+                "cancelled": len(summary["cancelled"]),
+                "present": len(summary["present"]),
+                "absent": len(summary["absent"]),
+                "unknown_presence": len(summary["unknown_presence"]),
+            },
+            "coach_message": build_coach_message(
+                date.fromisoformat(str(training["training_date"])),
+                records,
+                is_finalized=bool(training["is_finalized"]),
+            ),
+            "confirmation_labels": CONFIRMATION_LABELS,
+        }
+
+    def calendar_trainings(
+        self,
+        *,
+        team_ids: Iterable[int],
+        season_id: int | None,
+    ) -> list[dict[str, Any]]:
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.calendar.list_training_events(
+                team_ids,
+                season_id=season_id,
+            )
+
+    def open_calendar_training(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        with self._unit_of_work_factory() as unit_of_work:
+            linked = unit_of_work.calendar.get_or_create_attendance_session(
+                event_id,
+                team_ids=team_ids,
+                actor_user_id=actor_user_id,
+            )
+            records = unit_of_work.attendance.get_session_records(
+                int(linked["session"]["id"])
+            )
+        return self._payload(
+            linked["session"],
+            records,
+            calendar_event=linked["event"],
+        )
+
+    def calendar_session_payload(
+        self,
+        session_id: int,
+        *,
+        team_ids: Iterable[int],
+    ) -> dict[str, Any]:
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            training = unit_of_work.attendance.get_session(session_id)
+            calendar_event = unit_of_work.calendar.get_training_event_for_session(
+                session_id,
+                team_ids,
+            )
+            if calendar_event is None:
+                raise KeyError("Chamada sem vínculo com um treino autorizado.")
+            records = unit_of_work.attendance.get_session_records(session_id)
+        return self._payload(training, records, calendar_event=calendar_event)
+
     def sync_records(
         self,
         session_id: int,

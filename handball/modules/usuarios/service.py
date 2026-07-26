@@ -48,13 +48,14 @@ class IdentityService:
 
     def own_report(self, context: AccessContext) -> dict[str, Any]:
         rows = self.own_attendance(context)
-        eligible = len(rows)
-        confirmations = sum(row["confirmation_status"] != "PENDING" for row in rows)
-        present = sum(row["present"] == 1 for row in rows)
-        absent = sum(row["present"] == 0 for row in rows)
-        pending = sum(row["present"] is None for row in rows)
+        eligible_rows = [row for row in rows if row.get("is_eligible", 1)]
+        eligible = len(eligible_rows)
+        confirmations = sum(row["confirmation_status"] != "PENDING" for row in eligible_rows)
+        present = sum(row["present"] == 1 for row in eligible_rows)
+        absent = sum(row["present"] == 0 for row in eligible_rows)
+        pending = sum(row["present"] is None for row in eligible_rows)
         monthly: dict[str, dict[str, int]] = defaultdict(lambda: {"eligible": 0, "present": 0})
-        for row in rows:
+        for row in eligible_rows:
             month = str(row["training_date"])[:7]
             monthly[month]["eligible"] += 1
             monthly[month]["present"] += int(row["present"] == 1)

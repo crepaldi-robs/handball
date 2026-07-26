@@ -64,10 +64,11 @@
             <h1 id="call-title">Chamada</h1>
             <p id="session-state" class="muted">Carregando informações…</p>
           </div>
-          <label class="date-control">
-            <span>Data do treino</span>
-            <input id="training-date" type="date">
-          </label>
+          <div class="date-control training-picker">
+            <label for="calendar-training"><span>Treino do calendário</span></label>
+            <select id="calendar-training" aria-label="Treino do calendário"></select>
+            <button id="open-calendar-training" class="button button-primary" type="button">Abrir chamada</button>
+          </div>
         </div>
 
         <div id="metrics" class="metrics" aria-label="Resumo da chamada"></div>

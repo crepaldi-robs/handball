@@ -170,35 +170,12 @@ def test_login_alert_uses_changed_policy_values(tmp_path, monkeypatch):
     assert "Tente novamente em 1 minuto e 30 segundos." in blocked.text
 
 
-def test_session_sync_requires_csrf_and_returns_conflict(tmp_path):
+def test_legacy_session_endpoint_does_not_create_arbitrary_training(tmp_path):
     client = make_client(tmp_path)
-    csrf = login(client)
-    payload = client.get("/api/v1/session?training_date=2026-07-25").json()
-    record = payload["records"][0]
-    endpoint = f"/api/v1/sessions/{payload['session']['id']}/records"
-    body = {
-        "operations": [
-            {
-                "operation_id": "web-operation-0001",
-                "member_id": record["member_id"],
-                "base_version": record["version"],
-                "confirmation_status": "CONFIRMED_LATE",
-                "present": True,
-                "notes": "Pelo navegador",
-            }
-        ],
-        "offline": False,
-    }
-
-    assert client.put(endpoint, json=body).status_code == 403
-    accepted = client.put(endpoint, json=body, headers={"X-CSRF-Token": csrf})
-    assert accepted.status_code == 200
-    assert accepted.json()["results"][0]["status"] == "accepted"
-
-    body["operations"][0]["operation_id"] = "web-operation-0002"
-    body["operations"][0]["notes"] = "Versão antiga"
-    conflict = client.put(endpoint, json=body, headers={"X-CSRF-Token": csrf})
-    assert conflict.json()["results"][0]["status"] == "conflict"
+    login(client)
+    response = client.get("/api/v1/session?training_date=2026-07-25")
+    assert response.status_code == 410
+    assert "calendário" in response.json()["detail"]
 
 
 def test_pwa_assets_and_backup(tmp_path):
@@ -208,7 +185,7 @@ def test_pwa_assets_and_backup(tmp_path):
     worker = client.get("/sw.js")
     assert worker.status_code == 200
     assert worker.headers["service-worker-allowed"] == "/"
-    assert 'handball-shell-v6' in worker.text
+    assert 'handball-shell-v7' in worker.text
     assert '"/app/presencas"' in worker.text
     app_script = client.get("/static/app.js")
     assert app_script.status_code == 200

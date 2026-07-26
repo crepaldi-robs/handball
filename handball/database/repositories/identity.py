@@ -412,10 +412,14 @@ class IdentityRepository:
     def own_attendance(self, user_id: int) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """SELECT ts.training_date,ts.is_finalized,ar.confirmation_status,
-                      ar.present,ar.updated_at
+                      ar.present,ar.updated_at,ce.id calendar_event_id,
+                      ce.status calendar_status,
+                      CASE WHEN ce.status IN ('CANCELLED','RESCHEDULED') THEN 0
+                           ELSE 1 END AS is_eligible
                FROM player_user_links pul
                JOIN attendance_records ar ON ar.member_id=pul.team_member_id
                JOIN training_sessions ts ON ts.id=ar.session_id
+               LEFT JOIN calendar_events ce ON ce.attendance_session_id=ts.id
                WHERE pul.user_id=? ORDER BY ts.training_date DESC""",
             (user_id,),
         ).fetchall()

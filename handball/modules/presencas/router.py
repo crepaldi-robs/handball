@@ -82,9 +82,58 @@ def create_router(
         training_date: str,
         context: AccessContext = Depends(require_permission(Permission.ATTENDANCE_READ_TEAM)),
     ) -> dict[str, Any]:
-        return service.session_payload(
-            _parse_date(training_date), actor_user_id=context.user_id
+        del training_date, context
+        raise HTTPException(
+            status_code=410,
+            detail="A chamada agora deve ser aberta a partir de um treino do calendário.",
         )
+
+    @router.get("/api/v1/attendance/trainings")
+    def calendar_trainings(
+        season_id: int | None = None,
+        context: AccessContext = Depends(
+            require_permission(Permission.ATTENDANCE_READ_TEAM)
+        ),
+    ) -> dict[str, Any]:
+        return {
+            "items": service.calendar_trainings(
+                team_ids=context.team_ids,
+                season_id=season_id,
+            )
+        }
+
+    @router.post("/api/v1/attendance/trainings/{event_id}/session")
+    def open_calendar_training(
+        event_id: int,
+        context: AuthSession = Depends(require_write_session),
+    ) -> dict[str, Any]:
+        if Permission.ATTENDANCE_WRITE not in context.permissions:
+            raise HTTPException(status_code=403)
+        try:
+            return service.open_calendar_training(
+                event_id,
+                team_ids=context.team_ids,
+                actor_user_id=context.user_id or 0,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/api/v1/sessions/{session_id}")
+    def calendar_session(
+        session_id: int,
+        context: AccessContext = Depends(
+            require_permission(Permission.ATTENDANCE_READ_TEAM)
+        ),
+    ) -> dict[str, Any]:
+        try:
+            return service.calendar_session_payload(
+                session_id,
+                team_ids=context.team_ids,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.put("/api/v1/sessions/{session_id}/records")
     def sync_session_records(

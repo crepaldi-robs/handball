@@ -92,6 +92,30 @@ def logout(client: TestClient) -> None:
     client.post("/logout", data={"csrf_token": csrf}, follow_redirects=False)
 
 
+def open_calendar_training(client: TestClient, csrf: str, training_date: str) -> dict[str, object]:
+    options = client.get("/api/v1/calendar/options").json()
+    team = options["teams"][0]
+    season = next(item for item in options["seasons"] if item["label"] == "2026.2")
+    created = client.post(
+        "/api/v1/calendar/events",
+        json={
+            "team_id": team["id"], "season_id": season["id"],
+            "event_type": "TRAINING", "status": "PLANNED",
+            "starts_at": f"{training_date}T19:30:00-03:00",
+            "ends_at": f"{training_date}T21:30:00-03:00",
+            "location": "CEPEUSP", "notes": "Teste", "restriction_kind": None,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201, created.text
+    opened = client.post(
+        f"/api/v1/attendance/trainings/{created.json()['id']}/session",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert opened.status_code == 200, opened.text
+    return opened.json()
+
+
 def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
     assert Permission.USERS_MANAGE in ROLE_PERMISSIONS["DEV"]
     assert Permission.ATTENDANCE_READ_TEAM not in ROLE_PERMISSIONS["DEV"]
@@ -109,7 +133,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 3
+    assert DatabaseMigrator(manager.db_path).status().current_version == 4
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -117,17 +141,17 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 3
+    assert client.get("/ready").json()["schema_version"] == 4
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     login(client, "bob", data["passwords"]["bob"])
     assert client.get("/api/v1/admin/users").status_code == 200
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 200
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
     logout(client)
     login(client, "ct", data["passwords"]["ct"])
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 200
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
     assert client.get("/api/v1/admin/users").status_code == 403
     logout(client)
     login(client, "player", data["passwords"]["player"])
@@ -150,7 +174,7 @@ def test_logout_requires_session_csrf(tmp_path: Path) -> None:
 def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     csrf = login(client, "player", data["passwords"]["player"])
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 403
+    assert client.get("/api/v1/attendance/trainings").status_code == 403
     assert client.get("/api/v1/audit").status_code == 403
     assert client.get("/api/v1/exports/history.csv").status_code == 403
     assert client.get("/api/v1/backup").status_code == 403
@@ -162,19 +186,19 @@ def test_dev_only_has_no_sport_access_and_bob_keeps_it(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     login(client, "dev", data["passwords"]["dev"])
     assert client.get("/api/v1/admin/users").status_code == 200
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 403
+    assert client.get("/api/v1/attendance/trainings").status_code == 403
     logout(client)
     login(client, "bob", data["passwords"]["bob"])
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 200
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
 
 
 def test_role_removal_and_deactivation_take_effect_immediately(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     login(client, "ct", data["passwords"]["ct"])
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 200
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
     with manager.unit_of_work() as unit_of_work:
         unit_of_work.identity.set_roles(int(data["ct_id"]), ["DEV"], actor_user_id=1)
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 403
+    assert client.get("/api/v1/attendance/trainings").status_code == 403
     logout(client)
     login(client, "player", data["passwords"]["player"])
     with manager.unit_of_work() as unit_of_work:
@@ -207,7 +231,7 @@ def test_temporary_password_blocks_permissions_until_own_change(tmp_path: Path) 
             int(data["ct_id"]), PasswordHasher().hash("temporaria"), actor_user_id=1
         )
     csrf = login(client, "ct", "temporaria")
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 403
+    assert client.get("/api/v1/attendance/trainings").status_code == 403
     changed = client.post(
         "/api/v1/me/password",
         json={"current_password": "temporaria", "new_password": "definitiva"},
@@ -216,7 +240,7 @@ def test_temporary_password_blocks_permissions_until_own_change(tmp_path: Path) 
     assert changed.status_code == 200
     assert client.get("/api/v1/me").status_code == 401
     login(client, "ct", "definitiva")
-    assert client.get("/api/v1/session", params={"training_date": "2026-08-01"}).status_code == 200
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
 
 
 def test_dev_admin_create_requires_csrf_and_player_link(tmp_path: Path) -> None:
@@ -257,7 +281,7 @@ def test_dev_admin_create_requires_csrf_and_player_link(tmp_path: Path) -> None:
 def test_ct_write_records_actor_and_offline_creator_is_revalidated(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     csrf = login(client, "ct", data["passwords"]["ct"])
-    payload = client.get("/api/v1/session", params={"training_date": "2026-08-01"}).json()
+    payload = open_calendar_training(client, csrf, "2026-08-01")
     record = payload["records"][0]
     operation = {
         "operation_id": "actor-operation-0001",
@@ -293,7 +317,7 @@ def test_ct_write_records_actor_and_offline_creator_is_revalidated(tmp_path: Pat
 def test_player_report_is_scoped_in_query_and_excludes_internal_notes(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     csrf = login(client, "ct", data["passwords"]["ct"])
-    payload = client.get("/api/v1/session", params={"training_date": "2026-08-02"}).json()
+    payload = open_calendar_training(client, csrf, "2026-08-02")
     records = payload["records"]
     operations = []
     for index, record in enumerate(records[:2]):

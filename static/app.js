@@ -13,6 +13,8 @@ const state = {
   permissions: new Set(),
   online: navigator.onLine,
   currentDate: "",
+  currentEventId: null,
+  trainings: [],
   payload: null,
   records: [],
   dirty: new Set(),
@@ -260,37 +262,38 @@ async function afterVaultUnlocked() {
     await saveVault();
     await syncQueue();
   } else if (!state.online) {
-    await loadCachedSession(state.currentDate);
+    await loadCachedSession(state.currentEventId || state.currentDate);
   }
   setConnectionBadge();
 }
 
 function cacheCurrentSession() {
   if (!state.vaultData || !state.payload) return;
-  state.vaultData.sessions[state.currentDate] = {
+  const cacheKey = String(state.currentEventId || state.currentDate);
+  state.vaultData.sessions[cacheKey] = {
     payload: structuredClone({ ...state.payload, records: state.records }),
     cached_at: new Date().toISOString(),
   };
-  state.vaultData.last_date = state.currentDate;
+  state.vaultData.last_session = cacheKey;
 }
 
-async function loadCachedSession(requestedDate) {
+async function loadCachedSession(requestedKey) {
   if (!state.vaultData) return;
-  const dateKey = state.vaultData.sessions[requestedDate]
-    ? requestedDate
-    : state.vaultData.last_date;
-  const cached = state.vaultData.sessions[dateKey];
+  const cacheKey = state.vaultData.sessions[String(requestedKey)]
+    ? String(requestedKey)
+    : state.vaultData.last_session || state.vaultData.last_date;
+  const cached = state.vaultData.sessions[cacheKey];
   if (!cached) {
     setAlert("Nenhuma chamada foi salva neste aparelho para uso offline.", "warning", 0);
     return;
   }
-  state.currentDate = dateKey;
-  $("#training-date").value = dateKey;
+  state.currentEventId = Number(cached.payload.calendar_event?.id) || null;
+  state.currentDate = cached.payload.session.training_date;
   state.payload = structuredClone(cached.payload);
   state.records = state.payload.records;
   state.dirty.clear();
   renderSession();
-  setAlert(`Modo offline: chamada de ${formatDate(dateKey)} carregada.`, "warning");
+  setAlert(`Modo offline: chamada de ${formatDate(state.currentDate)} carregada.`, "warning");
 }
 
 function formatDate(value) {
@@ -667,15 +670,65 @@ function renderSession() {
   setConnectionBadge();
 }
 
-async function loadSession(trainingDate) {
-  state.currentDate = trainingDate;
+function trainingLabel(training) {
+  const status = training.status === "CANCELLED" ? "cancelado" : training.status === "RESCHEDULED" ? "remarcado" : training.attendance_state === "finalized" ? "encerrado" : "";
+  return `${formatDate(training.training_date)} · ${new Date(training.starts_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}${training.location ? ` · ${training.location}` : ""}${status ? ` (${status})` : ""}`;
+}
+
+function renderTrainingPicker() {
+  const picker = $("#calendar-training");
+  picker.replaceChildren();
+  if (!state.trainings.length) {
+    const option = new Option("Nenhum treino cadastrado", "");
+    picker.append(option);
+    picker.disabled = true;
+    $("#open-calendar-training").disabled = true;
+    return;
+  }
+  state.trainings.forEach((training) => {
+    const option = new Option(trainingLabel(training), String(training.id));
+    option.disabled = training.status === "CANCELLED" || training.status === "RESCHEDULED";
+    picker.append(option);
+  });
+  picker.disabled = false;
+  picker.value = String(state.currentEventId || state.trainings[0].id);
+  const selected = state.trainings.find((item) => item.id === Number(picker.value));
+  $("#open-calendar-training").disabled = !selected || !(selected.can_open_attendance || selected.attendance_session_id);
+  $("#open-calendar-training").textContent = selected?.attendance_session_id ? "Abrir chamada" : "Criar chamada";
+}
+
+async function loadCalendarTrainings(preferredEventId = null) {
+  const data = await api("/api/v1/attendance/trainings");
+  state.trainings = data.items || [];
+  const queryEvent = Number(new URLSearchParams(window.location.search).get("calendar_event_id")) || null;
+  const preferred = Number(preferredEventId || queryEvent) || null;
+  const upcoming = state.trainings.find((item) => item.status === "CONFIRMED" || item.status === "PLANNED");
+  const selected = state.trainings.find((item) => item.id === preferred) || upcoming || state.trainings[0] || null;
+  state.currentEventId = selected?.id || null;
+  renderTrainingPicker();
+  if (selected?.attendance_session_id) await loadSession(selected.attendance_session_id);
+  else {
+    state.currentDate = selected?.training_date || "";
+    state.payload = null;
+    state.records = [];
+    $("#session-state").textContent = selected
+      ? "Chamada ainda não criada. Use o botão para criá-la a partir deste treino oficial."
+      : "Cadastre um treino no Calendário para abrir uma chamada.";
+    $("#athlete-list").replaceChildren();
+    $("#metrics").replaceChildren();
+  }
+}
+
+async function loadSession(sessionId) {
   state.dirty.clear();
   if (!state.online) {
-    await loadCachedSession(trainingDate);
+    await loadCachedSession(sessionId);
     return;
   }
   try {
-    state.payload = await api(`/api/v1/session?training_date=${encodeURIComponent(trainingDate)}`);
+    state.payload = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}`);
+    state.currentEventId = Number(state.payload.calendar_event?.id) || state.currentEventId;
+    state.currentDate = state.payload.session.training_date;
     state.records = state.payload.records;
     renderSession();
     if (state.vaultKey) {
@@ -684,9 +737,28 @@ async function loadSession(trainingDate) {
     }
   } catch (error) {
     if (error.status === 401) window.location.href = "/login";
-    else if (error.message === "offline" && state.vaultKey) await loadCachedSession(trainingDate);
+    else if (error.message === "offline" && state.vaultKey) await loadCachedSession(sessionId);
     else if (error.message === "offline" && state.vaultExists) await askOfflinePin("unlock");
     else setAlert(error.message, "error", 0);
+  }
+}
+
+async function openSelectedCalendarTraining() {
+  const eventId = Number($("#calendar-training").value);
+  if (!eventId) return;
+  try {
+    const payload = await api(`/api/v1/attendance/trainings/${eventId}/session`, { method: "POST" });
+    state.payload = payload;
+    state.currentEventId = eventId;
+    state.currentDate = payload.session.training_date;
+    state.records = payload.records;
+    state.dirty.clear();
+    renderSession();
+    await loadCalendarTrainings(eventId);
+    if (state.vaultKey) { cacheCurrentSession(); await saveVault(); }
+    setAlert(`Chamada ${payload.session.id} aberta para o treino do calendário.`);
+  } catch (error) {
+    setAlert(error.message, "error", 0);
   }
 }
 
@@ -744,7 +816,7 @@ async function saveChanges() {
     });
     applySyncResults(response.results, operations, state.currentDate);
     state.dirty.clear();
-    await loadSession(state.currentDate);
+    await loadSession(state.payload.session.id);
     setAlert("Alterações salvas no servidor.");
   } catch (error) {
     setAlert(error.message, "error", 0);
@@ -795,7 +867,7 @@ async function syncQueue() {
     }
   }
   await saveVault();
-  if (state.online && state.currentDate) await loadSession(state.currentDate);
+  if (state.online && state.payload?.session?.id) await loadSession(state.payload.session.id);
   setConnectionBadge();
 }
 
@@ -835,7 +907,7 @@ async function finalizeSession() {
   if (!state.online || !window.confirm("Encerrar a chamada e marcar todos os não apurados como ausentes?")) return;
   try {
     await api(`/api/v1/sessions/${state.payload.session.id}/finalize`, { method: "POST" });
-    await loadSession(state.currentDate);
+    await loadSession(state.payload.session.id);
     setAlert("Chamada encerrada.");
   } catch (error) { setAlert(error.message, "error", 0); }
 }
@@ -844,7 +916,7 @@ async function reopenSession() {
   if (!state.online || !window.confirm("Reabrir esta chamada para correções?")) return;
   try {
     await api(`/api/v1/sessions/${state.payload.session.id}/reopen`, { method: "POST" });
-    await loadSession(state.currentDate);
+    await loadSession(state.payload.session.id);
     setAlert("Chamada reaberta.", "warning");
   } catch (error) { setAlert(error.message, "error", 0); }
 }
@@ -924,7 +996,7 @@ async function addMember(event) {
     });
     event.target.reset();
     await loadRoster();
-    await loadSession(state.currentDate);
+    if (state.payload?.session?.id) await loadSession(state.payload.session.id);
     setAlert("Atleta adicionado ao elenco.");
   } catch (error) { setAlert(error.message, "error", 0); }
 }
@@ -958,12 +1030,12 @@ async function handleConnectivity(online) {
       state.teamId = Number(session.team_ids[0] || 0);
       state.permissions = new Set(session.permissions || []);
       if (state.vaultKey) await syncQueue();
-      else await loadSession(state.currentDate);
+      else await loadCalendarTrainings(state.currentEventId);
     } catch (error) {
       if (error.status === 401 && !state.vaultData) window.location.href = "/login";
     }
   } else if (state.vaultKey) {
-    await loadCachedSession(state.currentDate);
+    await loadCachedSession(state.currentEventId || state.currentDate);
   } else if (state.vaultExists) {
     await askOfflinePin("unlock");
   }
@@ -971,7 +1043,6 @@ async function handleConnectivity(online) {
 
 async function initialize() {
   state.currentDate = localIsoDate(1);
-  $("#training-date").value = state.currentDate;
   state.vaultExists = Boolean(await dbGet(vaultStorageKey()));
   setConnectionBadge();
 
@@ -984,7 +1055,7 @@ async function initialize() {
       state.teamId = Number(session.team_ids[0] || 0);
       state.permissions = new Set(session.permissions || []);
       state.vaultExists = Boolean(await dbGet(vaultStorageKey()));
-      await loadSession(state.currentDate);
+      await loadCalendarTrainings();
       if (state.vaultExists && !state.vaultKey) await askOfflinePin("unlock");
     } catch (error) {
       if (error.status === 401) window.location.href = "/login";
@@ -1022,7 +1093,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   $$('[data-view]').forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
-  $("#training-date").addEventListener("change", (event) => loadSession(event.target.value));
+  $("#calendar-training").addEventListener("change", async (event) => {
+    const eventId = Number(event.target.value);
+    const selected = state.trainings.find((item) => item.id === eventId);
+    state.currentEventId = eventId || null;
+    renderTrainingPicker();
+    if (selected?.attendance_session_id) await loadSession(selected.attendance_session_id);
+    else await loadCalendarTrainings(eventId);
+  });
+  $("#open-calendar-training").addEventListener("click", openSelectedCalendarTraining);
   $("#save-button").addEventListener("click", saveChanges);
   $("#finalize-button").addEventListener("click", finalizeSession);
   $("#reopen-button").addEventListener("click", reopenSession);

@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 from handball.core.calendar import (
     JUSTIFIABLE_EVENT_TYPES,
@@ -11,6 +12,11 @@ from handball.core.calendar import (
     CalendarEventType,
     CollectiveRestrictionKind,
 )
+
+
+LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+ATTENDANCE_OPEN_STATUSES = frozenset({"PLANNED", "CONFIRMED"})
+ATTENDANCE_LOCKED_STATUSES = frozenset({"CANCELLED", "RESCHEDULED"})
 
 
 def _now_iso() -> str:
@@ -23,6 +29,10 @@ def _ids(values: Iterable[int]) -> tuple[int, ...]:
 
 def _placeholders(values: tuple[int, ...]) -> str:
     return ",".join("?" for _ in values)
+
+
+def _local_date(value: str) -> str:
+    return datetime.fromisoformat(value).astimezone(LOCAL_TIMEZONE).date().isoformat()
 
 
 class CalendarRepository:
@@ -117,6 +127,163 @@ class CalendarRepository:
             (int(event_id), *allowed),
         ).fetchone()
         return dict(row) if row else None
+
+    def list_training_events(
+        self,
+        team_ids: Iterable[int],
+        *,
+        season_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        placeholders = _placeholders(allowed)
+        parameters: list[Any] = [*allowed]
+        season_clause = ""
+        if season_id is not None:
+            season_clause = " AND e.season_id=?"
+            parameters.append(int(season_id))
+        rows = self.connection.execute(
+            f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
+                       e.starts_at,e.ends_at,e.location,e.notes,
+                       e.attendance_session_id,s.label season_label,
+                       ts.training_date,ts.is_finalized
+                FROM calendar_events e
+                JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
+                LEFT JOIN training_sessions ts ON ts.id=e.attendance_session_id
+                WHERE e.event_type='TRAINING' AND e.team_id IN ({placeholders})
+                      {season_clause}
+                ORDER BY e.starts_at,e.id""",
+            parameters,
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["training_date"] = _local_date(str(item["starts_at"]))
+            item["can_open_attendance"] = (
+                item["status"] in ATTENDANCE_OPEN_STATUSES
+                and item["attendance_session_id"] is None
+            )
+            item["attendance_state"] = (
+                "cancelled"
+                if item["status"] in ATTENDANCE_LOCKED_STATUSES
+                else "finalized"
+                if item["attendance_session_id"] and item["is_finalized"]
+                else "open"
+                if item["attendance_session_id"]
+                else "not_created"
+            )
+            result.append(item)
+        return result
+
+    def get_training_event_for_session(
+        self,
+        session_id: int,
+        team_ids: Iterable[int],
+    ) -> dict[str, Any] | None:
+        for event in self.list_training_events(team_ids):
+            if event["attendance_session_id"] == int(session_id):
+                return event
+        return None
+
+    def get_or_create_attendance_session(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        event = self.get_event(event_id, team_ids)
+        if event is None:
+            raise KeyError("Treino não encontrado na equipe autorizada.")
+        if event["event_type"] != "TRAINING":
+            raise ValueError("Somente um treino pode abrir chamada de presença.")
+        if event["status"] not in ATTENDANCE_OPEN_STATUSES:
+            raise ValueError("Treino cancelado, remarcado ou concluído não pode abrir nova chamada.")
+        session_id = event.get("attendance_session_id")
+        if session_id is not None:
+            session = self.connection.execute(
+                "SELECT * FROM training_sessions WHERE id=?", (int(session_id),)
+            ).fetchone()
+            if session is None:
+                raise RuntimeError("O vínculo de presença do treino está inválido.")
+            return {"event": event, "session": dict(session), "created": False}
+
+        training_date = _local_date(str(event["starts_at"]))
+        legacy = self.connection.execute(
+            """SELECT ts.* FROM training_sessions ts
+               LEFT JOIN calendar_events ce ON ce.attendance_session_id=ts.id
+               WHERE ts.training_date=? AND ce.id IS NULL
+               ORDER BY ts.id""",
+            (training_date,),
+        ).fetchall()
+        if len(legacy) > 1:
+            raise ValueError(
+                "Há chamadas históricas ambíguas nesta data; vincule-as antes de abrir o treino."
+            )
+        if legacy:
+            unlinked_training_starts = self.connection.execute(
+                """SELECT starts_at FROM calendar_events
+                   WHERE event_type='TRAINING' AND attendance_session_id IS NULL"""
+            ).fetchall()
+            same_date_events = sum(
+                _local_date(str(row["starts_at"])) == training_date
+                for row in unlinked_training_starts
+            )
+            if same_date_events > 1:
+                raise ValueError(
+                    "Há mais de um treino sem chamada nesta data; vincule a "
+                    "chamada histórica ao evento correto antes de continuar."
+                )
+        now = _now_iso()
+        created = not legacy
+        if legacy:
+            session = dict(legacy[0])
+        else:
+            cursor = self.connection.execute(
+                """INSERT INTO training_sessions(
+                       training_date,notes,is_finalized,created_at,updated_at
+                   ) VALUES(?, '', 0, ?, ?)""",
+                (training_date, now, now),
+            )
+            session_id = int(cursor.lastrowid)
+            self.connection.executemany(
+                """INSERT INTO attendance_records(
+                       session_id,member_id,confirmation_status,present,notes,updated_at
+                   ) VALUES(?,?,'PENDING',NULL,'',?)""",
+                [
+                    (session_id, int(row["id"]), now)
+                    for row in self.connection.execute(
+                        "SELECT id FROM team_members WHERE active=1 ORDER BY name"
+                    ).fetchall()
+                ],
+            )
+            session = dict(
+                self.connection.execute(
+                    "SELECT * FROM training_sessions WHERE id=?", (session_id,)
+                ).fetchone()
+            )
+        try:
+            self.connection.execute(
+                """UPDATE calendar_events
+                   SET attendance_session_id=?,updated_by_user_id=?,updated_at=?
+                   WHERE id=? AND attendance_session_id IS NULL""",
+                (int(session["id"]), actor_user_id, now, int(event_id)),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("A chamada já está vinculada a outro treino.") from exc
+        linked = self.get_event(event_id, team_ids)
+        if linked is None or linked["attendance_session_id"] != int(session["id"]):
+            raise RuntimeError("Não foi possível vincular a chamada ao treino.")
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="calendar.attendance.link",
+            entity="calendar_event",
+            target_id=int(event_id),
+            before=event,
+            after=linked,
+        )
+        return {"event": linked, "session": session, "created": created}
 
     def _validate_event_payload(self, payload: Mapping[str, Any]) -> None:
         event_type = CalendarEventType(str(payload["event_type"]))
@@ -240,6 +407,14 @@ class CalendarRepository:
         if before is None:
             raise KeyError("Evento não encontrado na equipe autorizada.")
         self._validate_event_payload(payload)
+        if (
+            before["attendance_session_id"] is not None
+            and _local_date(str(before["starts_at"]))
+            != _local_date(str(payload["starts_at"]))
+        ):
+            raise ValueError(
+                "Um treino com chamada vinculada não pode mudar de dia; cancele/remarque e crie um novo treino."
+            )
         try:
             self.connection.execute(
                 """UPDATE calendar_events

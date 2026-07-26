@@ -467,6 +467,23 @@ class AttendanceRepository:
             raise KeyError(f"Treino {session_id} não encontrado.")
         return dict(row)
 
+    def _assert_session_editable(
+        self,
+        conn: sqlite3.Connection,
+        session_id: int,
+    ) -> None:
+        if not self._table_exists(conn, "calendar_events"):
+            return
+        event = conn.execute(
+            """SELECT status FROM calendar_events
+               WHERE attendance_session_id=?""",
+            (session_id,),
+        ).fetchone()
+        if event is not None and str(event["status"]) in {"CANCELLED", "RESCHEDULED"}:
+            raise ValueError(
+                "A chamada pertence a um treino cancelado ou remarcado e está somente leitura."
+            )
+
     def get_session_records(self, session_id: int) -> list[dict[str, Any]]:
         with self.connection() as conn:
             if not self._read_only:
@@ -640,6 +657,7 @@ class AttendanceRepository:
         now = _now_iso()
 
         with self.connection() as conn:
+            self._assert_session_editable(conn, session_id)
             session = conn.execute(
                 "SELECT is_finalized FROM training_sessions WHERE id = ?",
                 (session_id,),
@@ -859,6 +877,7 @@ class AttendanceRepository:
         changed = 0
 
         with self.connection() as conn:
+            self._assert_session_editable(conn, session_id)
             rows = conn.execute(
                 """
                 SELECT member_id, confirmation_status, present, notes, version
@@ -936,6 +955,7 @@ class AttendanceRepository:
     ) -> None:
         now = _now_iso()
         with self.connection() as conn:
+            self._assert_session_editable(conn, session_id)
             conn.execute(
                 """
                 UPDATE training_sessions
@@ -963,6 +983,7 @@ class AttendanceRepository:
     ) -> None:
         now = _now_iso()
         with self.connection() as conn:
+            self._assert_session_editable(conn, session_id)
             before = conn.execute(
                 "SELECT notes FROM training_sessions WHERE id=?", (session_id,)
             ).fetchone()

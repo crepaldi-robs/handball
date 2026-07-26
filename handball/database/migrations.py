@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 3
+MAX_SUPPORTED_SCHEMA_VERSION = 4
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -416,6 +416,29 @@ MIGRATION_V3_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[3] = (MIGRATION_V3_NAME, MIGRATION_V3_CHECKSUM)
 
+MIGRATION_V4_NAME = "calendar_attendance_source_of_truth"
+MIGRATION_V4_CHECKSUM = _migration_checksum(
+    4,
+    MIGRATION_V4_NAME,
+    (),
+    conditional_steps=(
+        {
+            "condition": "training_sessions.training_date has a unique constraint",
+            "sql": "rebuild training_sessions without unique(training_date)",
+        },
+        {
+            "condition": "calendar_events.attendance_session_id is not unique",
+            "sql": "create partial unique index on calendar_events(attendance_session_id)",
+        },
+    ),
+    canonical_contract={
+        "calendar_event_attendance_link": "canonical",
+        "attendance_session_multiple_same_day": True,
+        "timezone": "America/Sao_Paulo",
+    },
+)
+KNOWN_MIGRATIONS[4] = (MIGRATION_V4_NAME, MIGRATION_V4_CHECKSUM)
+
 V3_REQUIRED_COLUMNS = {
     "calendar_events": {
         "id",
@@ -445,6 +468,65 @@ V3_REQUIRED_COLUMNS = {
         "updated_at",
     },
 }
+
+
+def _apply_schema_v4(conn: sqlite3.Connection) -> None:
+    duplicates = _fetchall(
+        conn,
+        """SELECT attendance_session_id FROM calendar_events
+           WHERE attendance_session_id IS NOT NULL
+           GROUP BY attendance_session_id HAVING COUNT(*) > 1""",
+    )
+    if duplicates:
+        ids = ", ".join(str(row[0]) for row in duplicates)
+        raise DatabaseSchemaError(
+            "Migração recusada: uma chamada está vinculada a mais de um evento "
+            f"de calendário ({ids})."
+        )
+    conn.execute(
+        """CREATE TABLE training_sessions_v4 (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               training_date TEXT NOT NULL,
+               notes TEXT NOT NULL DEFAULT '',
+               is_finalized INTEGER NOT NULL DEFAULT 0
+                   CHECK (is_finalized IN (0, 1)),
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+           )"""
+    )
+    conn.execute(
+        """INSERT INTO training_sessions_v4(
+               id,training_date,notes,is_finalized,created_at,updated_at
+           ) SELECT id,training_date,notes,is_finalized,created_at,updated_at
+             FROM training_sessions"""
+    )
+    conn.execute("DROP TABLE training_sessions")
+    conn.execute("ALTER TABLE training_sessions_v4 RENAME TO training_sessions")
+    conn.execute(
+        "CREATE INDEX idx_training_date ON training_sessions(training_date)"
+    )
+    conn.execute(
+        """CREATE UNIQUE INDEX idx_calendar_events_attendance_session
+           ON calendar_events(attendance_session_id)
+           WHERE attendance_session_id IS NOT NULL"""
+    )
+
+
+def _record_schema_v4(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        """INSERT INTO schema_migrations(
+               version,name,checksum_sha256,applied_at,app_version,origin
+           ) VALUES(?,?,?,?,?,?)""",
+        (
+            4,
+            MIGRATION_V4_NAME,
+            MIGRATION_V4_CHECKSUM,
+            _now_iso(),
+            app_version,
+            origin,
+        ),
+    )
+    conn.execute("PRAGMA user_version = 4").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -691,6 +773,7 @@ def _schema_problems(
     *,
     allow_legacy_version_gap: bool = False,
     allowed_missing_tables: frozenset[str] = frozenset(),
+    allow_multiple_training_same_day: bool = False,
 ) -> list[str]:
     tables = _table_names(conn)
     problems: list[str] = []
@@ -708,6 +791,8 @@ def _schema_problems(
         )
         actual_unique = _unique_constraints(conn, table)
         expected_unique = EXPECTED_UNIQUE_CONSTRAINTS[table]
+        if table == "training_sessions" and allow_multiple_training_same_day:
+            expected_unique = frozenset()
         if actual_unique != expected_unique:
             problems.append(
                 f"Restrições UNIQUE ou collations divergentes em {table}."
@@ -893,7 +978,10 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
             "PRAGMA user_version diverge do histórico schema_migrations."
         )
     if current_version >= 1:
-        base_problems = _schema_problems(conn)
+        base_problems = _schema_problems(
+            conn,
+            allow_multiple_training_same_day=current_version >= 4,
+        )
         if current_version >= 2:
             base_problems = [problem for problem in base_problems if not (
                 "attendance_audit_log" in problem and (
@@ -928,6 +1016,19 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                             + ", ".join(sorted(missing_columns))
                             + "."
                         )
+        if current_version >= 4:
+            index_rows = _fetchall(
+                conn,
+                "PRAGMA index_list(calendar_events)",
+            )
+            if not any(
+                str(row["name"]) == "idx_calendar_events_attendance_session"
+                and bool(row["unique"])
+                for row in index_rows
+            ):
+                base_problems.append(
+                    "Índice único de vínculo Calendário-Presenças ausente."
+                )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1178,7 +1279,23 @@ class DatabaseMigrator:
             cached_statements=0,
         )
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON").close()
+        requires_v4_rebuild = False
+        planning_connection = _open_read_only(self.db_path)
+        try:
+            planning_status = _status_from_connection(
+                planning_connection,
+                self.db_path,
+            )
+            requires_v4_rebuild = (
+                planning_status.versioned
+                and planning_status.current_version >= 2
+                and planning_status.current_version < 4
+            )
+        finally:
+            planning_connection.close()
+        conn.execute(
+            "PRAGMA foreign_keys = OFF" if requires_v4_rebuild else "PRAGMA foreign_keys = ON"
+        ).close()
         conn.execute("PRAGMA busy_timeout = 30000").close()
         try:
             conn.execute("BEGIN IMMEDIATE").close()
@@ -1211,6 +1328,10 @@ class DatabaseMigrator:
             if effective_version >= 2 and effective_version < 3:
                 _apply_schema_v3(conn)
                 _record_schema_v3(conn, app_version=app_version, origin=origin)
+                effective_version = 3
+            if effective_version >= 3 and effective_version < 4:
+                _apply_schema_v4(conn)
+                _record_schema_v4(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1220,6 +1341,8 @@ class DatabaseMigrator:
                 )
             _verify_transaction_integrity(conn)
             conn.commit()
+            if requires_v4_rebuild:
+                conn.execute("PRAGMA foreign_keys = ON").close()
         except Exception:
             if conn.in_transaction:
                 conn.rollback()
@@ -1255,7 +1378,11 @@ class DatabaseMigrator:
                 cached_statements=0,
             )
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON").close()
+            # A v4 reconstrói a tabela de chamadas; a opção precisa ser definida
+            # antes da transação, pois o SQLite não a altera dentro dela.
+            conn.execute(
+                "PRAGMA foreign_keys = OFF" if legacy_admin else "PRAGMA foreign_keys = ON"
+            ).close()
             conn.execute("PRAGMA busy_timeout = 30000").close()
             journal_mode_row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
             journal_mode = (
@@ -1277,6 +1404,8 @@ class DatabaseMigrator:
                 _record_schema_v2(conn, app_version=app_version, origin=origin)
                 _apply_schema_v3(conn)
                 _record_schema_v3(conn, app_version=app_version, origin=origin)
+                _apply_schema_v4(conn)
+                _record_schema_v4(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(
@@ -1285,6 +1414,8 @@ class DatabaseMigrator:
                 )
             _verify_transaction_integrity(conn)
             conn.commit()
+            if legacy_admin:
+                conn.execute("PRAGMA foreign_keys = ON").close()
             conn.close()
             conn = None
 

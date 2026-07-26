@@ -28,7 +28,7 @@ if (root) {
     RAIN: "Chuva",
     HOLIDAY: "Feriado",
   };
-  let state = { options: null, calendar: null };
+  let state = { options: null, calendar: null, visibleMonth: new Date() };
 
   function showMessage(text, kind = "success") {
     message.textContent = text;
@@ -77,6 +77,23 @@ if (root) {
     const date = new Date(iso);
     const offset = date.getTimezoneOffset() * 60_000;
     return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  }
+
+  function dateKey(iso) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(iso));
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day}`;
+  }
+
+  function monthKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function eventClass(event) {
+    return `calendar-event calendar-event--${event.event_type.toLowerCase()} calendar-event--${event.status.toLowerCase()}`;
   }
 
   function renderEmpty(container) {
@@ -136,6 +153,13 @@ if (root) {
       attendance.textContent = `Referência de presença: chamada ${event.attendance_session_id} (${event.attendance_training_date}).`;
       main.append(attendance);
     }
+    if (canManage && event.event_type === "TRAINING" && ["PLANNED", "CONFIRMED"].includes(event.status)) {
+      const openAttendance = document.createElement("a");
+      openAttendance.className = "button button-primary";
+      openAttendance.href = `/app/presencas?calendar_event_id=${event.id}`;
+      openAttendance.textContent = event.attendance_session_id ? "Abrir chamada" : "Criar chamada";
+      article.append(openAttendance);
+    }
     article.append(main);
 
     if (canManage) {
@@ -179,6 +203,50 @@ if (root) {
       document.querySelector(`#${period}-count`).textContent = String(items.length);
       if (!items.length) renderEmpty(container);
       for (const event of items) container.append(eventCard(event));
+    }
+    renderMonth();
+  }
+
+  function renderMonth() {
+    const grid = document.querySelector("#calendar-month-grid");
+    const title = document.querySelector("#calendar-month-label");
+    grid.replaceChildren();
+    const month = state.visibleMonth;
+    title.textContent = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(month);
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const start = new Date(month.getFullYear(), month.getMonth(), 1 - first.getDay());
+    const eventsByDay = new Map();
+    for (const event of state.calendar.items) {
+      const key = dateKey(event.starts_at);
+      const collection = eventsByDay.get(key) || [];
+      collection.push(event);
+      eventsByDay.set(key, collection);
+    }
+    const today = dateKey(new Date().toISOString());
+    for (let offset = 0; offset < 42; offset += 1) {
+      const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset);
+      const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+      const cell = document.createElement("section");
+      cell.className = "calendar-day";
+      if (monthKey(day) !== monthKey(month)) cell.classList.add("calendar-day--outside");
+      if (key === today) cell.classList.add("calendar-day--today");
+      const heading = document.createElement("span");
+      heading.className = "calendar-day-number";
+      heading.textContent = String(day.getDate());
+      cell.append(heading);
+      for (const event of eventsByDay.get(key) || []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = eventClass(event);
+        button.textContent = `${new Intl.DateTimeFormat("pt-BR", { timeStyle: "short" }).format(new Date(event.starts_at))} · ${labels[event.event_type] || event.event_type}`;
+        button.title = `${labels[event.status] || event.status}: ${event.location || "local não informado"}`;
+        button.addEventListener("click", () => {
+          if (canManage) beginEdit(event);
+          else showMessage(`${labels[event.event_type]} — ${localDateTime(event.starts_at)}. ${event.location || "Local não informado"}.`);
+        });
+        cell.append(button);
+      }
+      grid.append(cell);
     }
   }
 
@@ -233,7 +301,6 @@ if (root) {
   }
 
   function eventPayload() {
-    const attendance = document.querySelector("#calendar-attendance-session").value;
     const restriction = document.querySelector("#calendar-restriction-kind").value;
     return {
       team_id: Number(teamSelect.value),
@@ -245,7 +312,6 @@ if (root) {
       location: document.querySelector("#calendar-location").value,
       notes: document.querySelector("#calendar-notes").value,
       restriction_kind: restriction || null,
-      attendance_session_id: attendance ? Number(attendance) : null,
     };
   }
 
@@ -266,7 +332,6 @@ if (root) {
     document.querySelector("#calendar-location").value = event.location || "";
     document.querySelector("#calendar-notes").value = event.notes || "";
     document.querySelector("#calendar-restriction-kind").value = event.restriction_kind || "";
-    document.querySelector("#calendar-attendance-session").value = event.attendance_session_id || "";
     document.querySelector("#event-editor-title").textContent = "Editar evento";
     document.querySelector("#calendar-cancel-edit").hidden = false;
     toggleRestriction();
@@ -288,6 +353,18 @@ if (root) {
     await loadCalendar();
   });
   seasonSelect.addEventListener("change", loadCalendar);
+  document.querySelector("#calendar-previous-month").addEventListener("click", () => {
+    state.visibleMonth = new Date(state.visibleMonth.getFullYear(), state.visibleMonth.getMonth() - 1, 1);
+    renderMonth();
+  });
+  document.querySelector("#calendar-next-month").addEventListener("click", () => {
+    state.visibleMonth = new Date(state.visibleMonth.getFullYear(), state.visibleMonth.getMonth() + 1, 1);
+    renderMonth();
+  });
+  document.querySelector("#calendar-today").addEventListener("click", () => {
+    state.visibleMonth = new Date();
+    renderMonth();
+  });
 
   if (canManage) {
     document.querySelector("#calendar-event-type").addEventListener("change", toggleRestriction);

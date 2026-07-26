@@ -52,12 +52,29 @@
 
     <div id="calendar-message" class="alert" role="status" hidden></div>
 
+    <section class="panel calendar-visual" aria-labelledby="calendar-month-title">
+      <div class="calendar-month-toolbar">
+        <div><span class="eyebrow">VISUALIZAÇÃO</span><h2 id="calendar-month-title">Calendário mensal</h2></div>
+        <div class="calendar-month-actions">
+          <button id="calendar-previous-month" class="button" type="button" aria-label="Mês anterior">←</button>
+          <button id="calendar-today" class="button" type="button">Hoje</button>
+          <button id="calendar-next-month" class="button" type="button" aria-label="Próximo mês">→</button>
+        </div>
+      </div>
+      <p id="calendar-month-label" class="calendar-month-label" aria-live="polite"></p>
+      <div class="calendar-legend" aria-label="Legenda de tipos de evento">
+        <span class="calendar-legend-training">Treino</span><span class="calendar-legend-game">Jogo</span><span class="calendar-legend-championship">Campeonato</span><span class="calendar-legend-restriction">Restrição</span><span class="calendar-legend-cancelled">Cancelado/remarcado</span>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true"><span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span></div>
+      <div id="calendar-month-grid" class="calendar-month-grid" aria-label="Eventos do mês"></div>
+    </section>
+
     {% if can_manage %}
     <section class="panel calendar-editor" aria-labelledby="event-editor-title">
       <div>
         <span class="eyebrow">CT</span>
         <h2 id="event-editor-title">Novo evento</h2>
-        <p>O vínculo com presença é opcional e só aceita uma chamada já existente.</p>
+        <p>Treinos passam a abrir a chamada a partir deste calendário.</p>
       </div>
       <form id="calendar-event-form" class="calendar-form">
         <input id="calendar-event-id" type="hidden">
@@ -67,7 +84,6 @@
         <label><span>Fim</span><input id="calendar-ends-at" type="datetime-local" required></label>
         <label><span>Local</span><input id="calendar-location" maxlength="300"></label>
         <label id="calendar-restriction-field" hidden><span>Restrição formal</span><select id="calendar-restriction-kind"></select></label>
-        <label><span>ID da chamada existente</span><input id="calendar-attendance-session" type="number" min="1"></label>
         <label class="calendar-notes"><span>Observação</span><textarea id="calendar-notes" maxlength="4000" rows="3"></textarea></label>
         <div class="calendar-form-actions">
           <button class="button button-primary" type="submit">Salvar evento</button>
@@ -77,7 +93,7 @@
     </section>
     {% endif %}
 
-    <section class="calendar-period" aria-labelledby="present-title">
+    <section class="calendar-period calendar-agenda" aria-labelledby="present-title">
       <div class="calendar-period-title"><h2 id="present-title">Agora</h2><span id="present-count">0</span></div>
       <div id="calendar-present" class="calendar-list"></div>
     </section>

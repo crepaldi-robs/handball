@@ -6,6 +6,7 @@ from handball.core.authorization import Permission, ROLE_PERMISSIONS
 from handball.database.migrations import (
     DatabaseMigrator,
     MIGRATION_V3_CHECKSUM,
+    MIGRATION_V4_CHECKSUM,
     logical_fingerprint,
     verify_database,
 )
@@ -50,14 +51,14 @@ def _event(
     }
 
 
-def test_v3_migration_is_versioned_integral_and_keeps_open_season_dates(
+def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
     tmp_path: Path,
 ) -> None:
     client, manager, data = make_v2(tmp_path)
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 3
+    assert status.current_version == 4
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -65,6 +66,9 @@ def test_v3_migration_is_versioned_integral_and_keeps_open_season_dates(
     with manager.read_only_connection() as connection:
         row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=3"
+        ).fetchone()
+        v4_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=4"
         ).fetchone()
         season = connection.execute(
             "SELECT label,starts_on,ends_on FROM seasons WHERE label='2026.2'"
@@ -79,9 +83,11 @@ def test_v3_migration_is_versioned_integral_and_keeps_open_season_dates(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     assert row["name"] == "calendar_events_justifications"
     assert row["checksum_sha256"] == MIGRATION_V3_CHECKSUM
+    assert v4_row["name"] == "calendar_attendance_source_of_truth"
+    assert v4_row["checksum_sha256"] == MIGRATION_V4_CHECKSUM
     assert tuple(season) == ("2026.2", None, None)
     assert {"calendar_events", "calendar_justifications"} <= tables
-    assert client.get("/ready").json()["schema_version"] == 3
+    assert client.get("/ready").json()["schema_version"] == 4
     assert data["before_ids"]
 
 
@@ -232,6 +238,56 @@ def test_calendar_client_uses_season_id_and_preserves_success_feedback() -> None
     assert "season_id: seasonSelect.value" in source
     assert "Evento criado (ID ${saved.id})." in source
     assert "async function loadCalendar() {\n    const params" in source
+
+
+def test_attendance_is_opened_only_from_calendar_training_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    first = client.post(
+        "/api/v1/calendar/events",
+        json=_event(
+            team_id, season_id,
+            starts_at="2026-07-28T19:30:00-03:00",
+            ends_at="2026-07-28T21:30:00-03:00",
+        ),
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    second = client.post(
+        "/api/v1/calendar/events",
+        json=_event(
+            team_id, season_id,
+            starts_at="2026-07-28T22:00:00-03:00",
+            ends_at="2026-07-28T23:00:00-03:00",
+        ),
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    assert client.get("/api/v1/session", params={"training_date": "2026-07-28"}).status_code == 410
+    listed = client.get("/api/v1/attendance/trainings", params={"season_id": season_id})
+    assert {item["id"] for item in listed.json()["items"]} == {first["id"], second["id"]}
+
+    first_open = client.post(
+        f"/api/v1/attendance/trainings/{first['id']}/session",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert first_open.status_code == 200
+    first_session = first_open.json()["session"]["id"]
+    assert client.post(
+        f"/api/v1/attendance/trainings/{first['id']}/session",
+        headers={"X-CSRF-Token": csrf},
+    ).json()["session"]["id"] == first_session
+    second_session = client.post(
+        f"/api/v1/attendance/trainings/{second['id']}/session",
+        headers={"X-CSRF-Token": csrf},
+    ).json()["session"]["id"]
+    assert second_session != first_session
+    payload = client.get(f"/api/v1/sessions/{first_session}")
+    assert payload.status_code == 200
+    assert payload.json()["calendar_event"]["id"] == first["id"]
+    with manager.read_only_connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0] == 2
 
 
 def test_player_sees_team_events_and_only_writes_own_justification(

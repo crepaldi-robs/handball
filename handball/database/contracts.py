@@ -149,6 +149,27 @@ class CalendarRepositoryContract(Protocol):
 
     def get_event(self, event_id: int, team_ids: Iterable[int]) -> dict[str, Any] | None: ...
 
+    def list_training_events(
+        self,
+        team_ids: Iterable[int],
+        *,
+        season_id: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_or_create_attendance_session(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def get_training_event_for_session(
+        self,
+        session_id: int,
+        team_ids: Iterable[int],
+    ) -> dict[str, Any] | None: ...
+
     def create_event(self, payload: Mapping[str, Any], *, actor_user_id: int) -> dict[str, Any]: ...
 
     def update_event(
