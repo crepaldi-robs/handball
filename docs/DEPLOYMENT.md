@@ -139,6 +139,29 @@ igualdade byte a byte desses sidecars.
 
 ### 1.3 Evolução separada do banco (`DB_MIGRATION`)
 
+### Comando único para atualizações futuras
+
+Use sempre **PowerShell 7 aberto como Administrador**; não use o Prompt de
+Comando (CMD). Na raiz versionada e limpa do projeto, o launcher abaixo executa
+testes, compilação, validações Git, ativação de uma release `APP_ONLY` e, quando
+informado, o plano e a aplicação controlada de `DB_MIGRATION`:
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -ExecutionPolicy Bypass -File 'C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\atualizar-aplicativo.ps1' -Modo DB_MIGRATION -InstallRoot 'C:\ProgramData\CrepaldiHandball'
+```
+
+Classificação obrigatória antes de orientar o comando:
+
+- Mudança só de código, templates, assets ou dependências: remova
+  `-Modo DB_MIGRATION` (modo `APP_ONLY`).
+- Mudança em schema, migrations, dados persistentes ou contratos SQLite: use
+  exatamente `-Modo DB_MIGRATION`.
+
+Não passe manualmente um `plan_sha256` ao launcher: ele gera o plano sem escrita
+e reaplica exatamente o hash que acabou de validar. Se a fonte tiver alterações
+de runtime não commitadas, o update é recusado; primeiro registre a mudança em
+um commit local limpo.
+
 Uma melhoria de banco não faz parte do update da aplicação. Primeiro instale uma
 release compatível com o schema atual. Em outra janela, no PowerShell 7 como
 Administrador, gere o plano sem escrita:
