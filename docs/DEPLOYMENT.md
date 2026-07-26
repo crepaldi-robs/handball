@@ -13,6 +13,31 @@ alterar hostname, rotas públicas, autenticação, PWA, instalador ou banco.
 
 ## 1. Instalar o servidor local
 
+### Atualização automatizada em um comando
+
+Para uma instalação já existente, abra o **PowerShell 7 como Administrador** na
+raiz do repositório. A atualização comum, sem mudança de banco, é o padrão:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1
+```
+
+Se a release exigir uma migração explicitamente autorizada:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1 -Modo DB_MIGRATION
+```
+
+O wrapper executa testes, `compileall`, verificações Git e o release
+`APP_ONLY`. No modo `DB_MIGRATION`, ele ativa primeiro o código compatível,
+obtém o plano sem escrita, valida a ação e o `plan_sha256` e passa exatamente
+esse hash ao runner formal. Assim, a escolha do modo é explícita, mas não é
+necessário copiar hashes nem encadear comandos manualmente.
+
+O wrapper não instala pela primeira vez, não cria commits, não limpa o
+worktree, não restaura banco e não contorna os locks, backups, fingerprints,
+`quick_check`, `foreign_key_check`, compatibilidade de schema ou `/ready`.
+
 ### 1.1 Instalação inicial (`INITIAL_INSTALL`)
 
 Abra o PowerShell 7 como Administrador na pasta do projeto e execute:

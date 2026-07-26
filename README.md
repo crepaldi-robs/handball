@@ -66,6 +66,25 @@ Se um registro tiver mudado no PC, a edição offline não o sobrescreve.
 
 O roteiro completo está em [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Em resumo:
 
+Para atualizar uma instalação existente sem executar vários comandos, abra o
+PowerShell 7 como Administrador na raiz deste projeto. O modo padrão troca
+somente o aplicativo:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1
+```
+
+Quando a versão exigir explicitamente uma evolução do SQLite, use:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1 -Modo DB_MIGRATION
+```
+
+O segundo modo executa primeiro o update compatível `APP_ONLY`, gera o plano sem
+escrita e aplica exatamente o `plan_sha256` retornado. Testes, compilação,
+verificações Git, backup, integridade, readiness e rollback de código permanecem
+obrigatórios e são executados pelos runners formais.
+
 1. `scripts\install-server.ps1` cria a primeira release imutável em
    `C:\ProgramData\CrepaldiHandball\releases\<release_id>`, publica
    `state\active-release.json` como ponteiro atômico e registra as tarefas de
