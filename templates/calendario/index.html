@@ -5,39 +5,89 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#0b1f33">
-  <title>{{ module.title }} · Hub Handebol</title>
+  <title>Calendário · Hub Handebol</title>
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
+  <script src="/static/calendar.js" defer></script>
 </head>
-<body class="platform-body">
+<body
+  class="platform-body"
+  data-calendar
+  data-csrf-token="{{ session.csrf_token }}"
+  data-can-manage="{{ 'true' if can_manage else 'false' }}"
+  data-can-justify="{{ 'true' if can_justify else 'false' }}"
+  data-active-season="{{ active_season_label }}"
+>
   <header class="topbar">
     <div class="topbar-inner">
       <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
         <div class="mini-mark" aria-hidden="true">H</div>
-        <div><strong>Calendário</strong><span>Hub Handebol</span></div>
+        <div><strong>Calendário</strong><span>{{ organization.display_name }}</span></div>
       </a>
       <div class="top-actions">
         <a class="text-button" href="/app">Hub</a>
         <form method="post" action="/logout" data-platform-logout>
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
           <button class="text-button logout-button" type="submit">Sair</button>
         </form>
       </div>
     </div>
   </header>
 
-  <main class="module-shell skeleton-shell">
+  <main class="module-shell calendar-shell">
     <a class="back-link" href="/app">← Voltar ao hub</a>
-    <section class="skeleton-panel" aria-labelledby="module-title">
-      <span class="module-icon module-icon-large" aria-hidden="true">□</span>
-      <span class="module-status">{{ module.state_label }}</span>
-      <span class="eyebrow">MÓDULO</span>
-      <h1 id="module-title">{{ module.title }}</h1>
-      <p>{{ module.description }}</p>
-      <p class="skeleton-scope">Nenhuma agenda, formulário ou integração foi criada nesta etapa.</p>
-      <a class="button button-primary" href="/app">Escolher outro módulo</a>
+    <section class="calendar-heading" aria-labelledby="calendar-title">
+      <div>
+        <span class="eyebrow">PLANEJAMENTO COLETIVO</span>
+        <h1 id="calendar-title">Calendário da equipe</h1>
+        <p>Eventos planejados e justificativas de possível ausência. Presença continua sendo o ocorrido e não é alterada aqui.</p>
+      </div>
+      <div class="calendar-filters">
+        <label><span>Equipe</span><select id="calendar-team"></select></label>
+        <label><span>Temporada</span><select id="calendar-season"></select></label>
+      </div>
+    </section>
+
+    <div id="calendar-message" class="alert" role="status" hidden></div>
+
+    {% if can_manage %}
+    <section class="panel calendar-editor" aria-labelledby="event-editor-title">
+      <div>
+        <span class="eyebrow">CT</span>
+        <h2 id="event-editor-title">Novo evento</h2>
+        <p>O vínculo com presença é opcional e só aceita uma chamada já existente.</p>
+      </div>
+      <form id="calendar-event-form" class="calendar-form">
+        <input id="calendar-event-id" type="hidden">
+        <label><span>Tipo</span><select id="calendar-event-type" required></select></label>
+        <label><span>Status</span><select id="calendar-event-status" required></select></label>
+        <label><span>Início</span><input id="calendar-starts-at" type="datetime-local" required></label>
+        <label><span>Fim</span><input id="calendar-ends-at" type="datetime-local" required></label>
+        <label><span>Local</span><input id="calendar-location" maxlength="300"></label>
+        <label id="calendar-restriction-field" hidden><span>Restrição formal</span><select id="calendar-restriction-kind"></select></label>
+        <label><span>ID da chamada existente</span><input id="calendar-attendance-session" type="number" min="1"></label>
+        <label class="calendar-notes"><span>Observação</span><textarea id="calendar-notes" maxlength="4000" rows="3"></textarea></label>
+        <div class="calendar-form-actions">
+          <button class="button button-primary" type="submit">Salvar evento</button>
+          <button id="calendar-cancel-edit" class="button" type="button" hidden>Cancelar edição</button>
+        </div>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="calendar-period" aria-labelledby="present-title">
+      <div class="calendar-period-title"><h2 id="present-title">Agora</h2><span id="present-count">0</span></div>
+      <div id="calendar-present" class="calendar-list"></div>
+    </section>
+    <section class="calendar-period" aria-labelledby="future-title">
+      <div class="calendar-period-title"><h2 id="future-title">Próximos</h2><span id="future-count">0</span></div>
+      <div id="calendar-future" class="calendar-list"></div>
+    </section>
+    <section class="calendar-period" aria-labelledby="past-title">
+      <div class="calendar-period-title"><h2 id="past-title">Passados</h2><span id="past-count">0</span></div>
+      <div id="calendar-past" class="calendar-list"></div>
     </section>
   </main>
 </body>

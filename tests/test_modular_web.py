@@ -75,7 +75,7 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
     assert "Disponível" in response.text
-    assert response.text.count("Em preparação") == 2
+    assert response.text.count("Em preparação") == 1
     assert 'form method="post" action="/logout" data-platform-logout' in response.text
 
 
@@ -83,7 +83,6 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     ("path", "title"),
     (
         ("/app/estatisticas", "Estatísticas"),
-        ("/app/calendario", "Calendário"),
     ),
 )
 def test_authenticated_skeletons_are_read_only_and_share_navigation(

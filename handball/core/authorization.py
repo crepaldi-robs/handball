@@ -23,6 +23,9 @@ class Permission(StrEnum):
     BACKUP_DOWNLOAD = "backup.download"
     REPORTS_READ_SELF = "reports.read.self"
     DIAGNOSTICS_READ = "diagnostics.read"
+    CALENDAR_READ_TEAM = "calendar.read.team"
+    CALENDAR_MANAGE = "calendar.manage"
+    CALENDAR_JUSTIFICATION_SELF = "calendar.justification.self"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
@@ -31,8 +34,11 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
                      Permission.ATTENDANCE_FINALIZE, Permission.ATTENDANCE_REOPEN,
                      Permission.MEMBERS_READ_TEAM, Permission.MEMBERS_MANAGE,
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
-                     Permission.BACKUP_DOWNLOAD}),
-    "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.REPORTS_READ_SELF}),
+                     Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
+                     Permission.CALENDAR_MANAGE}),
+    "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.REPORTS_READ_SELF,
+                         Permission.CALENDAR_READ_TEAM,
+                         Permission.CALENDAR_JUSTIFICATION_SELF}),
 }
 
 

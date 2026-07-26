@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class CalendarEventType(StrEnum):
+    TRAINING = "TRAINING"
+    GAME = "GAME"
+    CHAMPIONSHIP = "CHAMPIONSHIP"
+    MILESTONE_HOLIDAY = "MILESTONE_HOLIDAY"
+    COLLECTIVE_RESTRICTION = "COLLECTIVE_RESTRICTION"
+    CANCELLATION_RESCHEDULING = "CANCELLATION_RESCHEDULING"
+
+
+class CalendarEventStatus(StrEnum):
+    PLANNED = "PLANNED"
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+    RESCHEDULED = "RESCHEDULED"
+    COMPLETED = "COMPLETED"
+
+
+class CollectiveRestrictionKind(StrEnum):
+    CHAMPIONSHIP_DATES = "CHAMPIONSHIP_DATES"
+    COURT_UNAVAILABLE = "COURT_UNAVAILABLE"
+    RAIN = "RAIN"
+    HOLIDAY = "HOLIDAY"
+
+
+JUSTIFIABLE_EVENT_TYPES = frozenset(
+    {CalendarEventType.TRAINING, CalendarEventType.GAME}
+)

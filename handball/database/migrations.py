@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 2
+MAX_SUPPORTED_SCHEMA_VERSION = 3
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -391,6 +391,59 @@ V2_REQUIRED_COLUMNS = {
     "player_user_links": {"team_member_id", "person_id", "user_id"},
     "auth_sessions": {"id", "user_id", "token_hash", "csrf_token", "credential_version", "created_at", "expires_at", "revoked_at", "last_seen_at", "user_agent_hash"},
     "security_audit_events": {"id", "actor_user_id", "occurred_at", "action", "entity", "target_id", "origin", "before_json", "after_json", "request_id"},
+}
+
+SCHEMA_V3_STATEMENTS = (
+    "CREATE UNIQUE INDEX idx_seasons_id_team ON seasons(id,team_id)",
+    "CREATE TABLE calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, season_id INTEGER NOT NULL, event_type TEXT NOT NULL CHECK(event_type IN('TRAINING','GAME','CHAMPIONSHIP','MILESTONE_HOLIDAY','COLLECTIVE_RESTRICTION','CANCELLATION_RESCHEDULING')), status TEXT NOT NULL CHECK(status IN('PLANNED','CONFIRMED','CANCELLED','RESCHEDULED','COMPLETED')), starts_at TEXT NOT NULL, ends_at TEXT NOT NULL CHECK(ends_at>starts_at), location TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', restriction_kind TEXT CHECK(restriction_kind IN('CHAMPIONSHIP_DATES','COURT_UNAVAILABLE','RAIN','HOLIDAY') OR restriction_kind IS NULL), attendance_session_id INTEGER, created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK((event_type='COLLECTIVE_RESTRICTION' AND restriction_kind IS NOT NULL) OR (event_type<>'COLLECTIVE_RESTRICTION' AND restriction_kind IS NULL)), CHECK(attendance_session_id IS NULL OR event_type='TRAINING'), CHECK(event_type<>'CANCELLATION_RESCHEDULING' OR status IN('CANCELLED','RESCHEDULED')), FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(season_id,team_id) REFERENCES seasons(id,team_id) ON DELETE RESTRICT, FOREIGN KEY(attendance_session_id) REFERENCES training_sessions(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE calendar_justifications (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, player_member_id INTEGER NOT NULL, reason TEXT NOT NULL CHECK(length(trim(reason))>0), created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(event_id,player_member_id), FOREIGN KEY(event_id) REFERENCES calendar_events(id) ON DELETE CASCADE, FOREIGN KEY(player_member_id) REFERENCES team_members(id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_calendar_events_team_season_start ON calendar_events(team_id,season_id,starts_at)",
+    "CREATE INDEX idx_calendar_events_interval ON calendar_events(starts_at,ends_at)",
+    "CREATE INDEX idx_calendar_justifications_player ON calendar_justifications(player_member_id,event_id)",
+)
+MIGRATION_V3_NAME = "calendar_events_justifications"
+MIGRATION_V3_CHECKSUM = _migration_checksum(
+    3,
+    MIGRATION_V3_NAME,
+    SCHEMA_V3_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "season": "2026.2",
+        "season_dates": None,
+        "attendance_link": "optional-reference-only",
+        "justification_workflow": "self-service-no-approval-no-effect",
+    },
+)
+KNOWN_MIGRATIONS[3] = (MIGRATION_V3_NAME, MIGRATION_V3_CHECKSUM)
+
+V3_REQUIRED_COLUMNS = {
+    "calendar_events": {
+        "id",
+        "team_id",
+        "season_id",
+        "event_type",
+        "status",
+        "starts_at",
+        "ends_at",
+        "location",
+        "notes",
+        "restriction_kind",
+        "attendance_session_id",
+        "created_by_user_id",
+        "updated_by_user_id",
+        "created_at",
+        "updated_at",
+    },
+    "calendar_justifications": {
+        "id",
+        "event_id",
+        "player_member_id",
+        "reason",
+        "created_by_user_id",
+        "updated_by_user_id",
+        "created_at",
+        "updated_at",
+    },
 }
 
 
@@ -859,6 +912,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                             + ", ".join(sorted(missing_columns))
                             + "."
                         )
+        if current_version >= 3:
+            required_v3 = set(V3_REQUIRED_COLUMNS)
+            missing_v3 = required_v3 - tables
+            base_problems.extend(
+                f"Tabela Calendário obrigatória ausente: {table}."
+                for table in sorted(missing_v3)
+            )
+            for table, required_columns in V3_REQUIRED_COLUMNS.items():
+                if table in tables:
+                    missing_columns = required_columns - _columns(conn, table)
+                    if missing_columns:
+                        base_problems.append(
+                            f"Colunas Calendário ausentes em {table}: "
+                            + ", ".join(sorted(missing_columns))
+                            + "."
+                        )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -944,6 +1013,11 @@ def _apply_schema_v2(conn: sqlite3.Connection, *, legacy_admin: tuple[str, str])
     conn.execute("INSERT INTO membership_roles(membership_id,role_code) VALUES(?,'CT')", (membership_id,))
 
 
+def _apply_schema_v3(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V3_STATEMENTS:
+        conn.execute(statement)
+
+
 def migration_manifest(status: SchemaStatus) -> list[dict[str, object]]:
     """Lista ordenada e imutável que vincula o plano ao código de migração."""
 
@@ -1005,6 +1079,23 @@ def _record_schema_v1(
 def _record_schema_v2(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute("INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)", (2,MIGRATION_V2_NAME,MIGRATION_V2_CHECKSUM,_now_iso(),app_version,origin))
     conn.execute("PRAGMA user_version = 2").close()
+
+
+def _record_schema_v3(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        """INSERT INTO schema_migrations(
+               version,name,checksum_sha256,applied_at,app_version,origin
+           ) VALUES(?,?,?,?,?,?)""",
+        (
+            3,
+            MIGRATION_V3_NAME,
+            MIGRATION_V3_CHECKSUM,
+            _now_iso(),
+            app_version,
+            origin,
+        ),
+    )
+    conn.execute("PRAGMA user_version = 3").close()
 
 
 def _verify_transaction_integrity(conn: sqlite3.Connection) -> None:
@@ -1112,9 +1203,14 @@ class DatabaseMigrator:
                     app_version=app_version,
                     origin=origin,
                 )
+            effective_version = before.current_version
             if before.current_version < 2 and legacy_admin:
                 _apply_schema_v2(conn, legacy_admin=legacy_admin)
                 _record_schema_v2(conn, app_version=app_version, origin=origin)
+                effective_version = 2
+            if effective_version >= 2 and effective_version < 3:
+                _apply_schema_v3(conn)
+                _record_schema_v3(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1179,6 +1275,8 @@ class DatabaseMigrator:
             if legacy_admin:
                 _apply_schema_v2(conn, legacy_admin=legacy_admin)
                 _record_schema_v2(conn, app_version=app_version, origin=origin)
+                _apply_schema_v3(conn)
+                _record_schema_v3(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

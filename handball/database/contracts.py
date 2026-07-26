@@ -133,6 +133,59 @@ class AttendanceRepositoryContract(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class CalendarRepositoryContract(Protocol):
+    """Contrato de persistência consumido pelo módulo Calendário."""
+
+    def list_options(self, team_ids: Iterable[int]) -> dict[str, list[dict[str, Any]]]: ...
+
+    def list_events(
+        self,
+        team_ids: Iterable[int],
+        *,
+        season_label: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_event(self, event_id: int, team_ids: Iterable[int]) -> dict[str, Any] | None: ...
+
+    def create_event(self, payload: Mapping[str, Any], *, actor_user_id: int) -> dict[str, Any]: ...
+
+    def update_event(
+        self,
+        event_id: int,
+        payload: Mapping[str, Any],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def list_justifications(
+        self,
+        *,
+        player_member_id: int,
+        team_ids: Iterable[int],
+    ) -> list[dict[str, Any]]: ...
+
+    def upsert_justification(
+        self,
+        event_id: int,
+        *,
+        player_member_id: int,
+        user_id: int,
+        reason: str,
+        team_ids: Iterable[int],
+    ) -> dict[str, Any]: ...
+
+    def update_justification(
+        self,
+        justification_id: int,
+        *,
+        player_member_id: int,
+        user_id: int,
+        reason: str,
+        team_ids: Iterable[int],
+    ) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class BackupDownload:
     """Artefato de download que não revela o caminho persistente ao consumidor."""
@@ -164,6 +217,9 @@ class UnitOfWorkContract(Protocol):
 
     @property
     def identity(self) -> Any: ...
+
+    @property
+    def calendar(self) -> CalendarRepositoryContract: ...
 
     def commit(self) -> None: ...
 

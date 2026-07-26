@@ -17,6 +17,7 @@ class UnitOfWork:
         self._connection: Any | None = None
         self._attendance: AttendanceRepository | None = None
         self._identity: Any | None = None
+        self._calendar: Any | None = None
         self._completed = False
 
     def __enter__(self) -> UnitOfWork:
@@ -64,6 +65,17 @@ class UnitOfWork:
             self._identity = IdentityRepository(self.connection, read_only=self._read_only)
         return self._identity
 
+    @property
+    def calendar(self) -> Any:
+        if self._calendar is None:
+            from .repositories.calendar import CalendarRepository
+
+            self._calendar = CalendarRepository(
+                self.connection,
+                read_only=self._read_only,
+            )
+        return self._calendar
+
     def commit(self) -> None:
         if self._read_only:
             raise RuntimeError("Unidade de trabalho somente leitura não faz commit.")
@@ -99,6 +111,7 @@ class UnitOfWork:
         finally:
             self._attendance = None
             self._identity = None
+            self._calendar = None
             self._connection.close()
             self._connection = None
         return False

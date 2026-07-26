@@ -49,7 +49,7 @@ def create_app(
         database_manager,
     )
     statistics_service = StatisticsService()
-    calendar_service = CalendarService()
+    calendar_service = CalendarService(unit_of_work_factory)
     identity_service = IdentityService(unit_of_work_factory)
 
     application = FastAPI(

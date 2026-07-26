@@ -28,6 +28,7 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
                 "can_attendance": Permission.ATTENDANCE_READ_TEAM in session.permissions,
                 "can_report": Permission.REPORTS_READ_SELF in session.permissions,
                 "can_admin": Permission.USERS_MANAGE in session.permissions,
+                "can_calendar": Permission.CALENDAR_READ_TEAM in session.permissions,
                 "organization": ORGANIZATION,
             },
         )
