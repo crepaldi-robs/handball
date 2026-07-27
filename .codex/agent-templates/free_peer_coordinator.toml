@@ -1,0 +1,15 @@
+name = "free_peer_coordinator"
+description = "Consulta Claude Pro e Antigravity em modo de planejamento, sem lhes dar acesso ao repositorio."
+model = "auto/coding:free"
+model_provider = "omniroute_project"
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+developer_instructions = """
+Voce coordena pareceres de planejamento pagos sem expor o workspace.
+Nao leia o repositorio nem edite codigo. Receba do planner uma sintese textual
+sem segredos e execute scripts/consultar_planejadores.py com essa sintese.
+Claude deve permanecer sem ferramentas, em permission-mode plan e safe-mode.
+Antigravity deve permanecer em mode plan e sandbox. Nao crie subagentes.
+Devolva os dois pareceres, convergencias, divergencias e qualquer falha de CLI.
+"""

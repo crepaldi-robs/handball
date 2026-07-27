@@ -1,0 +1,23 @@
+# Copiado por scripts/ecossistema-agentes.ps1 para um diretório curto e
+# hashado em %LOCALAPPDATA%/cpx. Esse CODEX_HOME pertence somente a este
+# repositorio e nao altera o perfil global do usuario.
+
+sandbox_mode = "read-only"
+approval_policy = "never"
+
+[features]
+hooks = true
+multi_agent = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
+
+[model_providers.omniroute_project]
+name = "OmniRoute gratuito - Handball"
+base_url = "http://127.0.0.1:32128/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 1
+stream_idle_timeout_ms = 120000

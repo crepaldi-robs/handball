@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.streamlit/
 data/*.db
 data/*.db-shm
 data/*.db-wal
@@ -12,3 +11,14 @@ server-release/
 exports/
 .DS_Store
 Thumbs.db
+
+# Artefatos de execucao de agente (progresso/resultado efemeros)
+.codex-finalize-*
+.agente-*
+
+# Segredos e estado local do gateway de modelos
+.agent-runtime/
+.env
+.env.*
+!.env.example
+storage.sqlite

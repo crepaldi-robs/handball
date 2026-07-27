@@ -27,6 +27,45 @@ nos treinos.
 14. Startup e backup de instalação existente devem falhar se o SQLite estiver
     ausente ou incompatível; nunca criar silenciosamente uma base vazia.
 
+## Agentes automatizados
+
+15. Todo agente age **sob demanda humana**. Nada roda em cron ou por conta
+    própria; o gatilho é sempre uma pessoa, por comentário no GitHub ou por
+    chamada direta na máquina.
+16. Na nuvem, o agente **nunca** faz push em `main`: trabalha em `agente/<n>-<slug>`
+    e abre PR, que só é mergeável depois do portão de testes.
+17. O agente não lê nem escreve `data/*.db`, `data/app-config.json`, `backups/`,
+    nem qualquer caminho fora deste repositório. Ele não tem por que ver dados
+    de atleta nem segredo de instalação.
+18. Chave de API e segredo não aparecem em log, comentário, commit ou PR.
+19. Pedido que implique DDL, migration ou seed deve ser recusado com referência à
+    regra 13: mudança de esquema é `DB_MIGRATION`, decidida por uma pessoa.
+20. Neste repositório, o agente principal usa a assinatura do ChatGPT/Codex
+    somente para planejar, decompor, comparar pareceres e coordenar. Ele não usa
+    ferramentas locais para ler, escrever, executar comandos ou testar.
+21. Toda leitura, escrita, busca, comando e teste local deve ser delegado a um
+    dos perfis `free_*`, cujo modelo é obrigatoriamente
+    `auto/coding:free` no provedor `omniroute_project`.
+22. Apenas `free_worker` escreve código e só um `free_worker` pode escrever por
+    vez. Exploração e revisão somente leitura podem ocorrer em paralelo; testes
+    começam depois de estabilizado o conjunto de arquivos.
+23. `free_explorer`, `free_worker`, `free_tester`, `free_reviewer` e
+    `free_peer_coordinator` são os únicos perfis delegáveis. Um executor
+    gratuito não cria outros subagentes.
+24. Claude Pro e Antigravity/Gemini são pareceristas de planejamento. São
+    consultados exclusivamente por `free_peer_coordinator`, por meio de
+    `scripts/consultar_planejadores.py`, sem ferramentas e a partir de um
+    diretório vazio fora da árvore de código.
+25. Credenciais de assinatura do ChatGPT, Claude ou Antigravity nunca passam
+    pelo OmniRoute. O gateway aceita somente chaves de API com cota gratuita e
+    deve falhar quando a rota `auto/coding:free` não tiver candidato.
+26. O usuário opera este ecossistema apenas pelo lançador
+    `scripts/codex-handball.ps1`. A configuração e o estado ficam em
+    `%LOCALAPPDATA%\cpx\<hash-do-projeto>`, vinculados a este repositório por
+    marcador e fora do OneDrive e do Git.
+27. Nenhum agente cria commit, faz push, abre PR, publica release ou altera
+    serviço externo sem uma autorização humana explícita e específica.
+
 ## Verificação obrigatória
 
 Antes de concluir uma alteração:

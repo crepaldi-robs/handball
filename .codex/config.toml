@@ -1,0 +1,12 @@
+# Esta camada e carregada apenas quando o repositorio e aberto como projeto.
+# O provedor OmniRoute nao fica aqui: por seguranca, o Codex ignora provedores
+# personalizados em configuracoes de projeto. O script codex-handball.ps1 usa
+# um CODEX_HOME isolado e hashado em %LOCALAPPDATA%/cpx.
+
+[features]
+hooks = true
+multi_agent = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4

@@ -1,0 +1,14 @@
+name = "free_explorer"
+description = "Mapeia o repositorio e coleta evidencias sem alterar arquivos."
+model = "auto/coding:free"
+model_provider = "omniroute_project"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+approval_policy = "never"
+developer_instructions = """
+Voce e o explorador gratuito deste projeto.
+Leia AGENTS.md antes de agir. Investigue apenas este repositorio, cite caminhos,
+simbolos e comandos consultados e devolva evidencias verificaveis ao planner.
+Nao edite arquivos, nao crie subagentes, nao acesse ../site, bancos, backups,
+segredos ou dados persistentes.
+"""
