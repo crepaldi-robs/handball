@@ -1,0 +1,137 @@
+name: Agente
+
+# Agente sob demanda. O gatilho e sempre uma pessoa: um comentario comecando
+# com "/agente " numa issue ou num pull request.
+#
+# Este agente e SOMENTE LEITURA por decisao de projeto. Num repositorio publico,
+# um bot com contents:write acionado por comentario e o componente de maior
+# risco que existe; e o caso de uso de escrita ja esta melhor coberto pela lane
+# local (scripts/agente.ps1), onde a cota e maior e o ambiente e real.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: agente-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  responder:
+    # Trava dupla: prefixo do comando E vinculo com o repositorio. Sem a segunda
+    # condicao, qualquer pessoa da internet queimaria a cota comentando.
+    if: >
+      startsWith(github.event.comment.body, '/agente ') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Sinalizar que foi recebido
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      - name: Descobrir o alvo
+        id: alvo
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const isPr = Boolean(context.payload.issue.pull_request);
+            let ref = '';
+            let baseRef = '';
+            if (isPr) {
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number,
+              });
+              // refs/pull/N/merge evita confiar no fork do autor do PR.
+              ref = `refs/pull/${context.payload.issue.number}/merge`;
+              baseRef = pr.data.base.ref;
+            }
+            core.setOutput('ref', ref);
+            core.setOutput('base_ref', baseRef);
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.alvo.outputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Subir o gateway de modelos
+        env:
+          # Uma chave por provedor, cada uma no free tier da propria conta.
+          # Provedor sem secret configurado simplesmente nao entra na cadeia.
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          npm install -g omniroute
+          nohup omniroute > "$RUNNER_TEMP/omniroute.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:20128/v1/models > /dev/null; then
+              echo "gateway pronto"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "gateway nao subiu; ultimas linhas do log:"
+          tail -n 20 "$RUNNER_TEMP/omniroute.log" || true
+          exit 1
+
+      - name: Executar o agente
+        id: agente
+        env:
+          AGENTE_BASE_URL: http://127.0.0.1:20128/v1
+          AGENTE_API_KEY: ${{ secrets.OMNIROUTE_LOCAL_KEY }}
+          AGENTE_MODEL: ${{ vars.AGENTE_MODEL }}
+          AGENTE_BASE_REF: ${{ steps.alvo.outputs.base_ref }}
+          PEDIDO: ${{ github.event.comment.body }}
+        run: |
+          python scripts/agente_ci.py "${PEDIDO#/agente }" > "$RUNNER_TEMP/resposta.md"
+
+      - name: Publicar a resposta
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          SUCESSO: ${{ steps.agente.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const caminho = `${process.env.RUNNER_TEMP}/resposta.md`;
+            let corpo;
+            if (process.env.SUCESSO === 'success' && fs.existsSync(caminho)) {
+              corpo = fs.readFileSync(caminho, 'utf8').trim();
+            }
+            if (!corpo) {
+              corpo = [
+                'O agente nao conseguiu responder.',
+                '',
+                `[Ver execucao](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              ].join('\n');
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `${corpo}\n\n---\n<sub>Agente somente leitura. Escrita e feita na maquina, por uma pessoa.</sub>`,
+            });
