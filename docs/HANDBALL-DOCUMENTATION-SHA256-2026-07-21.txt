@@ -1,0 +1,21 @@
+HANDBALL DOCUMENTATION EVIDENCE MANIFEST
+Generated after final documentation validation on 2026-07-21 (America/Sao_Paulo)
+Algorithm: SHA-256 over raw file bytes
+Encoding validation: UTF-8 fatal decoder; approved
+Markdown relative links: resolved; approved
+Trailing whitespace and conflict markers: none
+Secret-pattern scan: no tunnel token, JWT, private key, email credential, password hash or installation command containing a token found
+Portal deploy-manifest: exact six-file allowlist; no docs included
+
+93e4062df7859728d18c0b57de72d7201152894ddbc2c885bf348dc1b89d2ab7  142  C:\Users\rober\OneDrive\Área de Trabalho\site\README.md
+26172fed460e8371c2067537932e847a8c6794c58992b2ee6aa614ff90931d4f  334  C:\Users\rober\OneDrive\Área de Trabalho\site\docs\HANDOFF-HANDBALL.md
+50facfe009da7924d76dff3a0c46b883df14a759ce5361035acdc93d9dfd158e  798  C:\Users\rober\OneDrive\Área de Trabalho\site\docs\HANDBALL-DEPLOY-AUDIT-2026-07-21.md
+ae89b1e5c337bde3ade7042599cb88f9ac7ccef38141c53746c8b77a07ab750c  790  C:\Users\rober\OneDrive\Área de Trabalho\site\docs\HANDBALL-OPERATIONS.md
+9b669380b9c35338821c818830d462798d91779af195dd3e8e37a4f129a8083b   43  C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\AGENTS.md
+0fac40ae3e1d8eb858f15877130857ad0f3e4cbf4d469fde5d41ce5c9ce9e5d5   83  C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\README.md
+d3c848d9ece3f29a0b7fb7d3da6ccb2e284599d6a7120d2bf2111e6f014386b5  120  C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\docs\DEPLOYMENT.md
+96464a982b215c2a547c9f634b9160457fc911d225cee9b5df978f57e12673dd  974  C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\docs\SITE-INTEGRATION-CONTRACT.md
+8421c6d0ee676dd677211fbc8c1199429efc31a0d7b6382e1ad042c93750242f  222  C:\Users\rober\.codex\memories\extensions\ad_hoc\notes\2026-07-21T01-19-25-0300-handball-site-integration-audit.md
+
+The number between hash and path is the line count reported by the validator.
+This manifest is local audit evidence. It is not part of deploy-manifest.txt and must not be uploaded to public_html.
