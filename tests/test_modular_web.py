@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from handball.application import create_app
 from handball.core.config import AppSettings
 from handball.database import DatabaseManager
+from handball.database.migrations import DatabaseMigrator, logical_fingerprint
 
 
 def make_client(tmp_path, *, secure_cookie: bool = False) -> tuple[TestClient, DatabaseManager]:
@@ -17,9 +18,16 @@ def make_client(tmp_path, *, secure_cookie: bool = False) -> tuple[TestClient, D
         backup_dir=tmp_path / "backups",
     )
     database_manager.bootstrap()
+    password_hash = PasswordHasher().hash("senha-de-teste-forte")
+    DatabaseMigrator(tmp_path / "modular-web.db").apply_pending(
+        expected_fingerprint=logical_fingerprint(tmp_path / "modular-web.db"),
+        legacy_admin=("roberto", password_hash),
+        app_version="pytest",
+        origin="pytest",
+    )
     settings = AppSettings(
         admin_username="roberto",
-        password_hash=PasswordHasher().hash("senha-de-teste-forte"),
+        password_hash=password_hash,
         secret_key="s" * 64,
         config_path=tmp_path / "app-config.json",
         cookie_secure=secure_cookie,

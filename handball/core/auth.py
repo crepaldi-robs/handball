@@ -15,10 +15,9 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .config import AppSettings
-from .authorization import AccessContext, Permission, ROLE_PERMISSIONS
+from .authorization import AccessContext, Permission
 
 
 @dataclass(frozen=True)
@@ -113,88 +112,68 @@ class LoginLimiter:
         self._attempts.pop(key, None)
 
 
+def login_client_key(request: Request, trusted_proxies: frozenset[str]) -> str:
+    """Identifica o cliente real do login, sem aceitar cabeçalho forjado.
+
+    Em produção o Cloudflare Tunnel entrega tudo pelo loopback, então
+    `request.client.host` é idêntico para o mundo inteiro e o limitador de
+    tentativas viraria um balde único global. O cabeçalho de IP original só é
+    considerado quando o peer imediato é um proxy declarado como confiável — o
+    Cloudflare sobrescreve `CF-Connecting-IP`, então ele não é forjável por quem
+    passa pelo túnel. Vindo de qualquer outra origem, vale o endereço observado.
+    """
+
+    direct = request.client.host if request.client else ""
+    if direct and direct in trusted_proxies:
+        forwarded = request.headers.get("cf-connecting-ip", "").strip()
+        if not forwarded:
+            forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return direct or "unknown"
+
+
 class AuthManager:
     cookie_name = "handball_session"
 
-    def __init__(self, settings: AppSettings, unit_of_work_factory: Any | None = None) -> None:
+    def __init__(self, settings: AppSettings, unit_of_work_factory: Any) -> None:
         self.settings = settings
         self.password_hasher = PasswordHasher()
-        self.serializer = URLSafeTimedSerializer(
-            settings.secret_key,
-            salt="handball-session-v1",
-        )
         self.limiter = LoginLimiter()
         self.unit_of_work_factory = unit_of_work_factory
 
     def verify_credentials(self, username: str, password: str) -> int | None:
-        if self.unit_of_work_factory is not None:
-            with self.unit_of_work_factory() as unit_of_work:
-                has_schema = unit_of_work.identity.has_user_schema()
-                user = unit_of_work.identity.get_user_by_username(username)
-                if user and bool(user["active"]):
-                    try:
-                        if self.password_hasher.verify(str(user["password_hash"]), password):
-                            unit_of_work.identity.mark_login(int(user["id"]))
-                            return int(user["id"])
-                    except (VerifyMismatchError, InvalidHashError):
-                        pass
-                # Release-ponte: fallback só existe enquanto o banco ainda é v1.
-                if not has_schema and secrets.compare_digest(username.strip(), self.settings.admin_username):
-                    try:
-                        return 0 if self.password_hasher.verify(self.settings.password_hash, password) else None
-                    except (VerifyMismatchError, InvalidHashError):
-                        return None
+        with self.unit_of_work_factory() as unit_of_work:
+            user = unit_of_work.identity.get_user_by_username(username)
+            if user is None or not bool(user["active"]):
                 return None
-        if not secrets.compare_digest(username.strip(), self.settings.admin_username):
-            return None
-        try:
-            return 0 if self.password_hasher.verify(self.settings.password_hash, password) else None
-        except (VerifyMismatchError, InvalidHashError):
+            try:
+                if self.password_hasher.verify(str(user["password_hash"]), password):
+                    unit_of_work.identity.mark_login(int(user["id"]))
+                    return int(user["id"])
+            except (VerifyMismatchError, InvalidHashError):
+                pass
             return None
 
     def create_token(self, user_id: int, *, user_agent: str = "") -> tuple[str, AuthSession]:
         csrf_token = secrets.token_urlsafe(32)
-        if self.unit_of_work_factory is not None and user_id != 0:
-            with self.unit_of_work_factory() as unit_of_work:
-                user = unit_of_work.identity.get_user(user_id)
-                if user is None:
-                    raise ValueError("Conta inexistente.")
-                token, session_id = unit_of_work.identity.create_session(
-                    user_id,
-                    (datetime.now(UTC) + timedelta(seconds=self.settings.session_max_age_seconds)).isoformat(timespec="seconds"),
-                    csrf_token,
-                    user_agent_hash=(
-                        hashlib.sha256(user_agent.encode("utf-8")).hexdigest()
-                        if user_agent else None
-                    ),
-                )
-                data = unit_of_work.identity.access_context_data(token, touch=False)
-            if data is None:
-                raise ValueError("Sessão não pôde ser materializada.")
-            return token, self._session_from_data(data)
-        legacy_roles = frozenset({"DEV", "CT"})
-        legacy_permissions = frozenset(
-            permission
-            for role in legacy_roles
-            for permission in ROLE_PERMISSIONS[role]
-        )
-        session = AuthSession(
-            user_id=0,
-            person_id=None,
-            session_id="legacy",
-            username=self.settings.admin_username,
-            display_name="Bob",
-            csrf_token=csrf_token,
-            team_ids=frozenset(),
-            system_roles=legacy_roles,
-            team_roles=frozenset(),
-            permissions=legacy_permissions,
-            linked_player_id=None,
-        )
-        token = self.serializer.dumps(
-            {"sub": session.username, "csrf": session.csrf_token}
-        )
-        return token, session
+        with self.unit_of_work_factory() as unit_of_work:
+            user = unit_of_work.identity.get_user(user_id)
+            if user is None:
+                raise ValueError("Conta inexistente.")
+            token, session_id = unit_of_work.identity.create_session(
+                user_id,
+                (datetime.now(UTC) + timedelta(seconds=self.settings.session_max_age_seconds)).isoformat(timespec="seconds"),
+                csrf_token,
+                user_agent_hash=(
+                    hashlib.sha256(user_agent.encode("utf-8")).hexdigest()
+                    if user_agent else None
+                ),
+            )
+            data = unit_of_work.identity.access_context_data(token, touch=False)
+        if data is None:
+            raise ValueError("Sessão não pôde ser materializada.")
+        return token, self._session_from_data(data)
 
     def read_token(
         self,
@@ -204,39 +183,9 @@ class AuthManager:
     ) -> AuthSession | None:
         if not token:
             return None
-        if self.unit_of_work_factory is not None:
-            with self.unit_of_work_factory(read_only=not touch) as unit_of_work:
-                data = unit_of_work.identity.access_context_data(token, touch=touch)
-            if data:
-                return self._session_from_data(data)
-        try:
-            payload: dict[str, Any] = self.serializer.loads(
-                token,
-                max_age=self.settings.session_max_age_seconds,
-            )
-        except (BadSignature, SignatureExpired):
-            return None
-        if payload.get("sub") != self.settings.admin_username:
-            return None
-        csrf = str(payload.get("csrf") or "")
-        if not csrf:
-            return None
-        legacy_roles = frozenset({"DEV", "CT"})
-        return AuthSession(
-            user_id=0,
-            person_id=None,
-            session_id="legacy",
-            username=self.settings.admin_username,
-            display_name="Bob",
-            csrf_token=csrf,
-            team_ids=frozenset(),
-            system_roles=legacy_roles,
-            team_roles=frozenset(),
-            permissions=frozenset(
-                permission for role in legacy_roles for permission in ROLE_PERMISSIONS[role]
-            ),
-            linked_player_id=None,
-        )
+        with self.unit_of_work_factory(read_only=not touch) as unit_of_work:
+            data = unit_of_work.identity.access_context_data(token, touch=touch)
+        return self._session_from_data(data) if data else None
 
     @staticmethod
     def _session_from_data(data: dict[str, Any]) -> AuthSession:
@@ -331,7 +280,7 @@ def create_auth_router(
         password: Annotated[str, Form()],
     ) -> Response:
         auth: AuthManager = request.app.state.auth
-        client_key = request.client.host if request.client else "unknown"
+        client_key = login_client_key(request, settings.trusted_proxies)
         limit_status = auth.limiter.status(client_key)
         if limit_status.blocked:
             return templates.TemplateResponse(
@@ -392,7 +341,7 @@ def create_auth_router(
         session = auth.read_token(token)
         if session is not None and not secrets.compare_digest(csrf_token, session.csrf_token):
             raise HTTPException(status_code=403, detail="Token CSRF inválido.")
-        if token and auth.unit_of_work_factory is not None:
+        if token:
             with auth.unit_of_work_factory() as unit_of_work:
                 unit_of_work.identity.revoke_session_token(token)
         response = RedirectResponse("/login", status_code=303)

@@ -9,12 +9,30 @@ from typing import Any
 from .errors import ConfigurationError
 
 
+DEFAULT_TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
+
+
 def _as_bool(value: str | bool | None, default: bool) -> bool:
     if value is None:
         return default
     if isinstance(value, bool):
         return value
     return value.strip().lower() in {"1", "true", "yes", "sim", "on"}
+
+
+def _as_proxy_set(value: object) -> frozenset[str]:
+    """Lê a lista de proxies confiáveis de env (CSV) ou do arquivo (lista)."""
+
+    if value is None:
+        return DEFAULT_TRUSTED_PROXIES
+    if isinstance(value, str):
+        entries = value.split(",")
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        entries = [str(entry) for entry in value]
+    else:
+        return DEFAULT_TRUSTED_PROXIES
+    parsed = frozenset(entry.strip() for entry in entries if entry and entry.strip())
+    return parsed or DEFAULT_TRUSTED_PROXIES
 
 
 @dataclass(frozen=True)
@@ -25,10 +43,16 @@ class AppSettings:
     password_hash: str
     secret_key: str
     config_path: Path
-    cookie_secure: bool = False
+    # Padrão seguro: a aplicação só é servida por HTTPS (túnel). Quem precisar de
+    # HTTP puro tem de desligar explicitamente via ATTENDANCE_COOKIE_SECURE.
+    cookie_secure: bool = True
     session_max_age_seconds: int = 12 * 60 * 60
     release_id: str = "development"
     maintenance_file: Path | None = None
+    # Peers cujo cabeçalho de IP original pode ser aceito. Atrás do túnel, todas
+    # as requisições chegam do loopback: sem isto o limitador de login vira um
+    # balde único global em vez de um balde por cliente.
+    trusted_proxies: frozenset[str] = DEFAULT_TRUSTED_PROXIES
 
     @classmethod
     def load(cls, root_dir: Path) -> "AppSettings":
@@ -66,7 +90,7 @@ class AppSettings:
             config_path=config_path,
             cookie_secure=_as_bool(
                 os.environ.get("ATTENDANCE_COOKIE_SECURE", data.get("cookie_secure")),
-                False,
+                True,
             ),
             session_max_age_seconds=int(
                 os.environ.get(
@@ -82,6 +106,11 @@ class AppSettings:
                 Path(os.environ["ATTENDANCE_MAINTENANCE_FILE"])
                 if os.environ.get("ATTENDANCE_MAINTENANCE_FILE")
                 else None
+            ),
+            trusted_proxies=_as_proxy_set(
+                os.environ.get(
+                    "ATTENDANCE_TRUSTED_PROXIES", data.get("trusted_proxies")
+                )
             ),
         )
 
@@ -104,4 +133,7 @@ class AppSettings:
             session_max_age_seconds=int(settings.session_max_age_seconds),
             release_id=str(getattr(settings, "release_id", "development")),
             maintenance_file=getattr(settings, "maintenance_file", None),
+            trusted_proxies=_as_proxy_set(
+                getattr(settings, "trusted_proxies", None)
+            ),
         )

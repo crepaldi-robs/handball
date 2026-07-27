@@ -297,13 +297,18 @@ sem justificativa e controle de acesso.
 ### 7.4 Autenticação e headers
 
 - hash de senha: Argon2id via `argon2-cffi`;
-- sessão: `itsdangerous.URLSafeTimedSerializer`;
+- sessão: registro em `auth_sessions`; o banco guarda apenas o SHA-256 do token,
+  nunca o token em texto puro. Não há mais sessão assinada em cookie: o par
+  `admin_username`/`password_hash` da configuração não autentica ninguém;
 - duração padrão: 12 horas;
 - cookie: `handball_session`, HttpOnly, SameSite Lax, path `/`;
-- produção inicializa `cookie_secure=true`;
+- `cookie_secure` é `true` por padrão; só HTTP puro exige desligar via
+  `ATTENDANCE_COOKIE_SECURE`;
 - CSRF: token dentro da sessão e header `X-CSRF-Token` nas escritas;
-- login limiter em memória: 5 falhas numa janela de 15 minutos por chave de
-  cliente; reiniciar o processo limpa esse estado;
+- login limiter em memória: 5 falhas numa janela de 15 minutos por cliente;
+  atrás do túnel a chave vem de `CF-Connecting-IP`/`X-Forwarded-For`, e o
+  cabeçalho só é aceito quando o peer imediato está em `trusted_proxies`;
+  reiniciar o processo limpa esse estado;
 - CSP self-only, `object-src 'none'`, `frame-ancestors 'none'`;
 - headers: nosniff, DENY, no-referrer e Permissions-Policy restritiva;
 - `/api/` recebe `Cache-Control: no-store`.

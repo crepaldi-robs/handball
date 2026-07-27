@@ -4,30 +4,42 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 import pytest
 
+from starlette.requests import Request
+
 from handball.application import create_app
-from handball.core.auth import LoginLimiter
+from handball.core.auth import LoginLimiter, login_client_key
 from handball.core.config import AppSettings
 from handball.database import (
+    LATEST_SCHEMA_VERSION,
     AttendanceRepository,
     DatabaseCompatibilityError,
     DatabaseManager,
 )
+from handball.database.migrations import DatabaseMigrator, logical_fingerprint
 
 
-def make_client(tmp_path) -> TestClient:
+def make_client(tmp_path, *, trusted_proxies: frozenset[str] | None = None) -> TestClient:
     database_path = tmp_path / "web.db"
     database_manager = DatabaseManager(
         database_path,
         backup_dir=tmp_path / "backups",
     )
     database_manager.bootstrap()
+    password_hash = PasswordHasher().hash("senha-de-teste-forte")
+    DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("roberto", password_hash),
+        app_version="pytest",
+        origin="pytest",
+    )
     settings = AppSettings(
         admin_username="roberto",
-        password_hash=PasswordHasher().hash("senha-de-teste-forte"),
+        password_hash=password_hash,
         secret_key="s" * 64,
         config_path=tmp_path / "app-config.json",
         cookie_secure=False,
         release_id="test-release",
+        **({"trusted_proxies": trusted_proxies} if trusted_proxies else {}),
     )
     return TestClient(create_app(settings, database_manager=database_manager))
 
@@ -51,7 +63,7 @@ def test_authentication_and_security_headers(tmp_path):
     assert readiness.json() == {
         "status": "ok",
         "database": "ready",
-        "schema_version": 1,
+        "schema_version": LATEST_SCHEMA_VERSION,
         "release_id": "test-release",
     }
     assert client.get("/api/v1/history").status_code == 401
@@ -168,6 +180,131 @@ def test_login_alert_uses_changed_policy_values(tmp_path, monkeypatch):
     assert "Limite de 3 tentativas atingido." in blocked.text
     assert "por até 1 minuto e 30 segundos." in blocked.text
     assert "Tente novamente em 1 minuto e 30 segundos." in blocked.text
+
+
+def test_config_admin_is_not_a_credential_anymore(tmp_path):
+    """A ponte de release morreu: app-config.json nao autentica ninguem.
+
+    Antes, se o banco ainda fosse v1, o par admin_username/password_hash da
+    configuracao logava com papeis DEV+CT fixos. Com o esquema em v4 esse
+    caminho era codigo morto perigoso; aqui garantimos que ele nao volta.
+    """
+
+    database_path = tmp_path / "sem-legado.db"
+    manager = DatabaseManager(database_path, backup_dir=tmp_path / "backups")
+    manager.bootstrap()
+    password_hash = PasswordHasher().hash("senha-de-teste-forte")
+    DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("roberto", password_hash),
+        app_version="pytest",
+        origin="pytest",
+    )
+
+    # A configuracao aponta para alguem que nao tem conta na tabela users.
+    settings = AppSettings(
+        admin_username="fantasma",
+        password_hash=password_hash,
+        secret_key="s" * 64,
+        config_path=tmp_path / "app-config.json",
+        cookie_secure=False,
+        release_id="test-release",
+    )
+    client = TestClient(create_app(settings, database_manager=manager))
+
+    response = client.post(
+        "/login",
+        data={"username": "fantasma", "password": "senha-de-teste-forte"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+
+    # E um cookie assinado com a secret_key tambem nao vale mais nada.
+    client.cookies.set("handball_session", "qualquer-coisa-assinada")
+    assert client.get("/api/v1/auth/session").status_code == 401
+
+
+def _request_from(client_host: str | None, **headers: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/login",
+            "headers": [
+                (name.replace("_", "-").encode(), value.encode())
+                for name, value in headers.items()
+            ],
+            "client": (client_host, 51234) if client_host else None,
+        }
+    )
+
+
+def test_login_client_key_uses_original_ip_only_behind_trusted_proxy():
+    trusted = frozenset({"127.0.0.1"})
+
+    # Atrás do túnel: o peer é o loopback e o cabeçalho do Cloudflare vale.
+    assert (
+        login_client_key(
+            _request_from("127.0.0.1", cf_connecting_ip="203.0.113.7"), trusted
+        )
+        == "203.0.113.7"
+    )
+
+    # X-Forwarded-For é o segundo recurso, e só a primeira entrada conta.
+    assert (
+        login_client_key(
+            _request_from("127.0.0.1", x_forwarded_for="203.0.113.9, 10.0.0.1"),
+            trusted,
+        )
+        == "203.0.113.9"
+    )
+
+    # Peer desconhecido não pode forjar identidade: vale o endereço observado.
+    assert (
+        login_client_key(
+            _request_from("198.51.100.4", cf_connecting_ip="203.0.113.7"), trusted
+        )
+        == "198.51.100.4"
+    )
+
+    # Sem cabeçalho algum, o peer confiável responde por si mesmo.
+    assert login_client_key(_request_from("127.0.0.1"), trusted) == "127.0.0.1"
+    assert login_client_key(_request_from(None), trusted) == "unknown"
+
+
+def test_login_limit_is_per_client_behind_the_tunnel(tmp_path, monkeypatch):
+    """Um atacante não pode bloquear o login de todo mundo pelo túnel."""
+
+    clock = {"now": 3_000.0}
+    limiter = LoginLimiter(monotonic=lambda: clock["now"])
+    monkeypatch.setattr("handball.core.auth.LoginLimiter", lambda: limiter)
+    client = make_client(tmp_path, trusted_proxies=frozenset({"testclient"}))
+
+    attacker = {"CF-Connecting-IP": "203.0.113.66"}
+    for _ in range(5):
+        client.post(
+            "/login",
+            data={"username": "roberto", "password": "errada"},
+            headers=attacker,
+        )
+
+    blocked = client.post(
+        "/login",
+        data={"username": "roberto", "password": "errada"},
+        headers=attacker,
+    )
+    assert blocked.status_code == 429
+
+    # Outro cliente, vindo pelo mesmo túnel, continua conseguindo entrar.
+    innocent = client.post(
+        "/login",
+        data={"username": "roberto", "password": "senha-de-teste-forte"},
+        headers={"CF-Connecting-IP": "203.0.113.99"},
+        follow_redirects=False,
+    )
+    assert innocent.status_code == 303
+    assert "handball_session=" in innocent.headers["set-cookie"]
 
 
 def test_legacy_session_endpoint_does_not_create_arbitrary_training(tmp_path):

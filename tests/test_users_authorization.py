@@ -64,7 +64,12 @@ def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, obje
         config_path=tmp_path / "config.json",
         release_id="pytest-v2",
     )
-    client = TestClient(create_app(settings, database_manager=manager))
+    # HTTPS como em producao: o cookie de sessao e Secure por padrao, entao um
+    # cliente em http descartaria a sessao silenciosamente.
+    client = TestClient(
+        create_app(settings, database_manager=manager),
+        base_url="https://testserver",
+    )
     return client, manager, {
         "passwords": passwords,
         "player_id": player_id,
