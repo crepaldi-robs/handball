@@ -125,5 +125,15 @@ da implementação atual.
   confirmado por hash, serviço parado, backup verificado, transação e checks de
   integridade.
 
-O schema atual continua na versão 1. Estatísticas e calendário não criam
-tabelas, migrations ou dados fictícios persistidos.
+O schema atual está na versão 4 (`LATEST_SCHEMA_VERSION` em
+`handball/database/migrations.py`), aplicada em etapas explícitas:
+
+| Versão | Conteúdo |
+| --- | --- |
+| 1 | presenças, auditoria, membros, treinos e operações de sincronização |
+| 2 | usuários, sessões, papéis e auditoria de segurança (HM-IME) |
+| 3 | eventos de calendário |
+| 4 | vínculo único entre chamada e evento de calendário |
+
+Estatísticas não criam tabelas, migrations ou dados fictícios persistidos. Toda
+mudança de versão é `DB_MIGRATION`, nunca `APP_ONLY`.
