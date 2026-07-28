@@ -66,24 +66,143 @@ Se um registro tiver mudado no PC, a edição offline não o sobrescreve.
 
 O roteiro completo está em [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Em resumo:
 
-Para atualizar uma instalação existente sem executar vários comandos, abra o
-PowerShell 7 como Administrador na raiz deste projeto. O modo padrão troca
-somente o aplicativo:
+## Comandos administrativos: atualizar e iniciar
+
+Abra o **PowerShell 7 como Administrador**. Cole cada bloco completo, um de
+cada vez. Os comandos usam caminhos absolutos, portanto podem ser executados
+de qualquer pasta do terminal.
+
+### Atualização comum (APP_ONLY)
+
+Este é o procedimento normal. Atualiza código, dependências e arquivos do
+aplicativo, sem criar, alterar ou popular o banco SQLite existente:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\atualizar-aplicativo.ps1" -Modo APP_ONLY
 ```
 
-Quando a versão exigir explicitamente uma evolução do SQLite, use:
+### Atualização com migração do banco (DB_MIGRATION)
+
+Use somente quando a versão informar expressamente que há uma migração SQLite
+aprovada. O comando executa primeiro o update compatível `APP_ONLY`, gera o
+plano sem escrita e aplica exatamente o `plan_sha256` confirmado:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\atualizar-aplicativo.ps1 -Modo DB_MIGRATION
+pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\Users\rober\OneDrive\Área de Trabalho\handball\registrador-presencas\atualizar-aplicativo.ps1" -Modo DB_MIGRATION
 ```
 
-O segundo modo executa primeiro o update compatível `APP_ONLY`, gera o plano sem
-escrita e aplica exatamente o `plan_sha256` retornado. Testes, compilação,
-verificações Git, backup, integridade, readiness e rollback de código permanecem
-obrigatórios e são executados pelos runners formais.
+### Iniciar o aplicativo
+
+Use este procedimento após ligar o computador, após uma parada do serviço ou
+depois de uma atualização. `Start-ScheduledTask` apenas pede o início da tarefa
+e retorna imediatamente; por isso, sempre aguarde a porta local e confirme
+`/ready` antes de abrir o site.
+
+```powershell
+$tarefa = Get-ScheduledTask -TaskName "CrepaldiHandball"
+if ($tarefa.State -ne "Running") {
+    Start-ScheduledTask -TaskName "CrepaldiHandball"
+}
+else {
+    Write-Host "A tarefa CrepaldiHandball já está em execução."
+}
+```
+
+```powershell
+$portaAberta = $false
+for ($tentativa = 1; $tentativa -le 60; $tentativa++) {
+    $listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+    if ($listener) {
+        $portaAberta = $true
+        break
+    }
+    Start-Sleep -Seconds 1
+}
+if (-not $portaAberta) {
+    throw "O servidor não abriu a porta 127.0.0.1:8765 em 60 segundos. Execute o diagnóstico desta seção."
+}
+```
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/ready"
+```
+
+Se o último comando retornar um objeto de readiness, abra
+`http://127.0.0.1:8765/app` ou `https://handball.crepaldi.com.br/app`.
+
+### Diagnóstico de indisponibilidade ou erro 502
+
+O erro **502** no domínio significa que o Cloudflare Tunnel não conseguiu
+alcançar o aplicativo local. Antes de investigar o Tunnel, confirme o serviço
+local. Cole os blocos abaixo, um por vez:
+
+```powershell
+Get-ScheduledTask -TaskName "CrepaldiHandball" | Select-Object TaskName, State
+```
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "CrepaldiHandball" | Select-Object LastRunTime, LastTaskResult
+```
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, OwningProcess, State
+```
+
+O estado saudável é: tarefa `Running`, porta `127.0.0.1:8765` em `Listen` e
+`/ready` respondendo. Uma tarefa `Running` sem a porta em `Listen` não é um
+servidor saudável.
+
+Para ler o motivo de uma falha recente, liste os logs:
+
+```powershell
+Get-ChildItem "C:\ProgramData\CrepaldiHandball\logs" -File | Sort-Object LastWriteTime -Descending | Select-Object -First 10 FullName, LastWriteTime, Length
+```
+
+Em seguida, substitua `<arquivo-do-log-mais-recente>` pelo caminho exibido
+acima:
+
+```powershell
+Get-Content "<arquivo-do-log-mais-recente>" -Tail 120
+```
+
+Para converter `LastTaskResult` para hexadecimal, o formato normalmente usado
+nas mensagens do Windows, execute:
+
+```powershell
+$resultado = (Get-ScheduledTaskInfo -TaskName "CrepaldiHandball").LastTaskResult
+"Decimal: $resultado | Hexadecimal: {0:X8}" -f $resultado
+```
+
+### Reinicialização segura do serviço
+
+Se a tarefa estiver `Running`, mas a porta 8765 não estiver em `Listen`, ou se
+o site estiver em 502, reinicie somente a tarefa. Isto não atualiza código, não
+reinstala o serviço e não altera o banco SQLite.
+
+```powershell
+Stop-ScheduledTask -TaskName "CrepaldiHandball"
+```
+
+```powershell
+Start-Sleep -Seconds 8
+Get-CimInstance Win32_Process | Where-Object { $_.Name -in "pwsh.exe", "python.exe", "pythonw.exe" -and $_.CommandLine -match "CrepaldiHandball|uvicorn|run-server" } | Select-Object ProcessId, Name, CommandLine
+```
+
+O segundo comando deve retornar vazio. Então inicie novamente e repita a
+verificação de porta e `/ready` da seção anterior:
+
+```powershell
+Start-ScheduledTask -TaskName "CrepaldiHandball"
+```
+
+Não encerre processos com `Stop-Process`, não execute `install-server.ps1` em
+uma instalação existente e não rode `DB_MIGRATION` para corrigir um 502. Se a
+porta continuar indisponível após a reinicialização, preserve os logs e use o
+diagnóstico acima antes de qualquer outra ação.
+
+Testes, compilação, verificações Git, backup, integridade, readiness e rollback
+de código permanecem obrigatórios e são executados pelos runners formais durante
+a atualização.
 
 1. `scripts\install-server.ps1` cria a primeira release imutável em
    `C:\ProgramData\CrepaldiHandball\releases\<release_id>`, publica
