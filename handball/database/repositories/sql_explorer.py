@@ -1,4 +1,5 @@
-"""Exploração SQLite em modo estritamente somente leitura."""
+"""Exploração SQLite: somente leitura por padrão; escrita completa (DML/DDL)
+quando o chamador tem sql.admin, sempre preservando RESTRICTED_RELATIONS."""
 from __future__ import annotations
 
 import csv
@@ -10,10 +11,54 @@ from typing import Any, Iterable, Iterator
 
 
 RESTRICTED_RELATIONS = frozenset({"users", "auth_sessions", "schema_migrations"})
-FORBIDDEN_TOKENS = frozenset({
+
+FORBIDDEN_TOKENS_READONLY = frozenset({
     "ALTER", "ANALYZE", "ATTACH", "BEGIN", "COMMIT", "CREATE", "DELETE",
     "DETACH", "DROP", "END", "INSERT", "PRAGMA", "REINDEX", "RELEASE",
     "ROLLBACK", "SAVEPOINT", "UPDATE", "VACUUM",
+})
+
+# Com allow_write=True (permissão sql.admin), DML/DDL sobre tabelas comuns
+# passa a ser permitido; o que continua proibido é o que mexe no motor/arquivo
+# ou sobrevive à requisição (trigger, view, tabela virtual, objeto temporário
+# — ver _install_guard), além de controle de transação manual, que conflita
+# com o BEGIN implícito da UnitOfWork.
+FORBIDDEN_TOKENS_ADMIN = frozenset({
+    "ANALYZE", "ATTACH", "BEGIN", "COMMIT", "DETACH", "END", "PRAGMA",
+    "REINDEX", "RELEASE", "ROLLBACK", "SAVEPOINT", "VACUUM",
+})
+
+WRITE_LEADING_TOKENS = frozenset({"INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"})
+
+# Ações liberadas apenas com allow_write=True, e mesmo assim negadas se a
+# tabela/índice alvo estiver em RESTRICTED_RELATIONS. O valor indica se o
+# nome da tabela vem em arg1 ou arg2 do callback do authorizer do SQLite.
+_TABLE_SCOPED_WRITE_ACTIONS: dict[int, int] = {
+    sqlite3.SQLITE_INSERT: 1,
+    sqlite3.SQLITE_UPDATE: 1,
+    sqlite3.SQLITE_DELETE: 1,
+    sqlite3.SQLITE_CREATE_TABLE: 1,
+    sqlite3.SQLITE_DROP_TABLE: 1,
+    sqlite3.SQLITE_CREATE_INDEX: 2,
+    sqlite3.SQLITE_DROP_INDEX: 2,
+    sqlite3.SQLITE_ALTER_TABLE: 2,
+}
+
+# Sempre negado, mesmo com allow_write=True: engine/arquivo (pragma, attach,
+# vacuum...) e qualquer objeto que sobrevive à requisição e pode executar
+# código fora do escopo desta conexão (trigger, view, tabela virtual, temp).
+_ALWAYS_DENIED_ACTIONS = frozenset({
+    sqlite3.SQLITE_CREATE_TEMP_INDEX, sqlite3.SQLITE_CREATE_TEMP_TABLE,
+    sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_CREATE_TEMP_VIEW,
+    sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
+    sqlite3.SQLITE_CREATE_VTABLE,
+    sqlite3.SQLITE_DROP_TEMP_INDEX, sqlite3.SQLITE_DROP_TEMP_TABLE,
+    sqlite3.SQLITE_DROP_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_VIEW,
+    sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_VIEW,
+    sqlite3.SQLITE_DROP_VTABLE,
+    sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH,
+    sqlite3.SQLITE_PRAGMA, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+    sqlite3.SQLITE_REINDEX, sqlite3.SQLITE_ANALYZE,
 })
 
 
@@ -77,50 +122,49 @@ class SqlExplorerRepository:
         self.connection = connection
         self.timeout_seconds = float(timeout_seconds)
 
-    def _validate(self, sql: str, *, allow_explain: bool = True) -> list[str]:
+    def _validate(self, sql: str, *, allow_explain: bool = True, allow_write: bool = False) -> list[str]:
         statement = sql.strip()
         if not statement:
             raise ValueError("Informe uma consulta SQL.")
         if len(statement) > 20_000:
             raise ValueError("A consulta excede o limite de 20.000 caracteres.")
         tokens = _tokens(statement)
-        if not tokens or tokens[0] not in {"SELECT", "WITH", "EXPLAIN"}:
+        allowed_leading = {"SELECT", "WITH", "EXPLAIN"} | (WRITE_LEADING_TOKENS if allow_write else set())
+        if not tokens or tokens[0] not in allowed_leading:
+            if allow_write:
+                raise ValueError(
+                    "São permitidas consultas SELECT, WITH, EXPLAIN, INSERT, UPDATE, DELETE, CREATE, ALTER e DROP."
+                )
             raise ValueError("São permitidas somente consultas SELECT, WITH e EXPLAIN.")
         if tokens[0] == "EXPLAIN" and not allow_explain:
             raise ValueError("EXPLAIN não é aceito nesta operação.")
-        if any(token in FORBIDDEN_TOKENS for token in tokens):
-            raise ValueError("A consulta contém um comando não permitido em produção.")
+        forbidden = FORBIDDEN_TOKENS_ADMIN if allow_write else FORBIDDEN_TOKENS_READONLY
+        if any(token in forbidden for token in tokens):
+            raise ValueError("A consulta contém um comando não permitido.")
         return tokens
 
-    def _install_guard(self) -> None:
-        denied_actions = {
-            sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
-            sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TABLE,
-            sqlite3.SQLITE_CREATE_TEMP_INDEX, sqlite3.SQLITE_CREATE_TEMP_TABLE,
-            sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_CREATE_TEMP_VIEW,
-            sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
-            sqlite3.SQLITE_DROP_INDEX, sqlite3.SQLITE_DROP_TABLE,
-            sqlite3.SQLITE_DROP_TEMP_INDEX, sqlite3.SQLITE_DROP_TEMP_TABLE,
-            sqlite3.SQLITE_DROP_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_VIEW,
-            sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_VIEW,
-            sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH,
-            sqlite3.SQLITE_PRAGMA, sqlite3.SQLITE_TRANSACTION,
-        }
-
+    def _install_guard(self, *, allow_write: bool = False) -> None:
         def authorizer(action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
-            del arg2, database, source
-            if action in denied_actions:
+            del database, source
+            if action in _ALWAYS_DENIED_ACTIONS:
                 return sqlite3.SQLITE_DENY
             if action == sqlite3.SQLITE_READ and (arg1 or "").casefold() in RESTRICTED_RELATIONS:
                 return sqlite3.SQLITE_DENY
             if action == sqlite3.SQLITE_FUNCTION and (arg1 or "").casefold() == "load_extension":
                 return sqlite3.SQLITE_DENY
+            table_arg_position = _TABLE_SCOPED_WRITE_ACTIONS.get(action)
+            if table_arg_position is not None:
+                if not allow_write:
+                    return sqlite3.SQLITE_DENY
+                table_name = arg1 if table_arg_position == 1 else arg2
+                if (table_name or "").casefold() in RESTRICTED_RELATIONS:
+                    return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
         self.connection.set_authorizer(authorizer)
 
-    def _execute(self, sql: str) -> sqlite3.Cursor:
-        self._install_guard()
+    def _execute(self, sql: str, *, allow_write: bool = False) -> sqlite3.Cursor:
+        self._install_guard(allow_write=allow_write)
         deadline = time.monotonic() + self.timeout_seconds
         self.connection.set_progress_handler(
             lambda: 1 if time.monotonic() >= deadline else 0,
@@ -176,12 +220,19 @@ class SqlExplorerRepository:
             relations.append(relation)
         return {"source": "operacional", "dialect": "sqlite", "relations": relations}
 
-    def preview(self, sql: str, *, page: int, page_size: int) -> dict[str, Any]:
-        self._validate(sql, allow_explain=False)
+    def preview(self, sql: str, *, page: int, page_size: int, allow_write: bool = False) -> dict[str, Any]:
+        self._validate(sql, allow_explain=False, allow_write=allow_write)
         if page < 1 or page_size < 1 or page_size > 200:
             raise ValueError("Página inválida; use página >= 1 e até 200 linhas.")
-        cursor = self._execute(sql)
+        cursor = self._execute(sql, allow_write=allow_write)
         columns = [item[0] for item in cursor.description or ()]
+        if not columns:
+            affected = cursor.rowcount
+            return {
+                "columns": [], "rows": [], "page": page, "page_size": page_size,
+                "has_more": False,
+                "affected_rows": affected if affected is not None and affected >= 0 else 0,
+            }
         offset = (page - 1) * page_size
         if offset:
             cursor.fetchmany(offset)

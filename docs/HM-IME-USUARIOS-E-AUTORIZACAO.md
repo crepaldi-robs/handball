@@ -44,8 +44,12 @@ As permissões são constantes tipadas em `handball/core/authorization.py`. O ma
 | `backup.download` | não | sim | não |
 | `reports.read.self` | não | não | sim |
 | `diagnostics.read` | sim | não | não |
+| `sql.explore` | não | sim | não |
+| `sql.admin` | sim | não | não |
 
 `DEV` não implica acesso esportivo. Por compatibilidade, o administrador legado Bob recebe explicitamente `DEV + CT`; assim, preserva a operação anterior sem enfraquecer a separação dos papéis.
+
+`sql.explore` dá acesso de leitura ao módulo `/app/consultas` (parser restrito a `SELECT`/`WITH`/`EXPLAIN`, conexão aberta somente-leitura no SO). `sql.admin` (exclusivo de `DEV`) libera, no mesmo módulo, execução de `INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`DROP` sobre tabelas comuns. Mesmo com `sql.admin`: as tabelas `users`, `auth_sessions` e `schema_migrations` continuam totalmente bloqueadas (leitura e escrita); comandos de motor/arquivo (`PRAGMA`, `ATTACH`/`DETACH`, `VACUUM`, controle de transação manual) e objetos que sobrevivem à requisição (`TRIGGER`, `VIEW`, tabela virtual, objeto temporário) permanecem negados independentemente do papel. Cada consulta roda como uma única instrução (sem `;`), com timeout de 5s, e é aplicada/commitada imediatamente — não há confirmação adicional além do aviso na interface.
 
 ## 4. Modelo relacional
 

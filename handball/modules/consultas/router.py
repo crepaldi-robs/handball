@@ -32,19 +32,19 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
         session = session_from_request(request, touch=False)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        if Permission.SQL_EXPLORE not in session.permissions:
+        if Permission.SQL_EXPLORE not in session.permissions and Permission.SQL_ADMIN not in session.permissions:
             raise HTTPException(status_code=403)
         return templates.TemplateResponse(
             request,
             "consultas/index.html",
-            {"session": session},
+            {"session": session, "can_write": Permission.SQL_ADMIN in session.permissions},
         )
 
     @router.get("/api/v1/sql/catalog")
     def catalog(
         context: Annotated[
             AccessContext,
-            Depends(require_read_only_permission(Permission.SQL_EXPLORE)),
+            Depends(require_read_only_permission(Permission.SQL_EXPLORE, Permission.SQL_ADMIN)),
         ],
     ) -> dict:
         try:
@@ -57,7 +57,7 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
         body: SqlQueryInput,
         context: Annotated[
             AccessContext,
-            Depends(require_read_only_permission(Permission.SQL_EXPLORE)),
+            Depends(require_read_only_permission(Permission.SQL_EXPLORE, Permission.SQL_ADMIN)),
         ],
     ) -> dict:
         try:
@@ -70,7 +70,7 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
         body: SqlQueryInput,
         context: Annotated[
             AccessContext,
-            Depends(require_read_only_permission(Permission.SQL_EXPLORE)),
+            Depends(require_read_only_permission(Permission.SQL_EXPLORE, Permission.SQL_ADMIN)),
         ],
     ) -> dict:
         try:
@@ -85,7 +85,7 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
         background_tasks: BackgroundTasks,
         context: Annotated[
             AccessContext,
-            Depends(require_read_only_permission(Permission.SQL_EXPLORE)),
+            Depends(require_read_only_permission(Permission.SQL_EXPLORE, Permission.SQL_ADMIN)),
         ],
     ) -> FileResponse:
         try:

@@ -27,10 +27,12 @@ class Permission(StrEnum):
     CALENDAR_MANAGE = "calendar.manage"
     CALENDAR_JUSTIFICATION_SELF = "calendar.justification.self"
     SQL_EXPLORE = "sql.explore"
+    SQL_ADMIN = "sql.admin"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
-    "DEV": frozenset({Permission.USERS_MANAGE, Permission.SESSIONS_REVOKE, Permission.DIAGNOSTICS_READ}),
+    "DEV": frozenset({Permission.USERS_MANAGE, Permission.SESSIONS_REVOKE, Permission.DIAGNOSTICS_READ,
+                      Permission.SQL_ADMIN}),
     "CT": frozenset({Permission.ATTENDANCE_READ_TEAM, Permission.ATTENDANCE_WRITE,
                      Permission.ATTENDANCE_FINALIZE, Permission.ATTENDANCE_REOPEN,
                      Permission.MEMBERS_READ_TEAM, Permission.MEMBERS_MANAGE,
@@ -86,9 +88,12 @@ def require_permission(permission: Permission) -> Callable[[Request], AccessCont
 
 
 def require_read_only_permission(
-    permission: Permission,
+    *permissions: Permission,
 ) -> Callable[[Request], AccessContext]:
-    """Autentica uma consulta sem atualizar last_seen_at da sessão."""
+    """Autentica uma consulta sem atualizar last_seen_at da sessão.
+
+    Aceita uma ou mais permissões; basta ter uma delas para passar.
+    """
 
     def dependency(request: Request) -> AccessContext:
         context = getattr(request.state, "access_context", None)
@@ -104,7 +109,7 @@ def require_read_only_permission(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Troca de senha obrigatória antes de continuar.",
             )
-        if permission not in context.permissions:
+        if not any(permission in context.permissions for permission in permissions):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return context
 
