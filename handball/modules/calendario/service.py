@@ -31,7 +31,7 @@ class CalendarService:
 
     @staticmethod
     def _require(context: AccessContext, permission: Permission) -> None:
-        if context.must_change_password or permission not in context.permissions:
+        if permission not in context.permissions:
             raise PermissionError("Operação não autorizada.")
 
     @staticmethod

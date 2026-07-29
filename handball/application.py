@@ -65,6 +65,7 @@ def create_app(
     application.state.database_manager = database_manager
     application.state.auth = auth_manager
     application.state.attendance_service = attendance_service
+    application.state.identity_service = identity_service
     application.mount(
         "/static",
         StaticFiles(directory=ROOT_DIR / "static"),

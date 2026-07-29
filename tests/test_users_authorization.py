@@ -144,6 +144,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
     assert ROLE_PERMISSIONS["PLAYER"] == frozenset(
         {
             Permission.ATTENDANCE_READ_SELF,
+            Permission.ATTENDANCE_WRITE_SELF,
             Permission.REPORTS_READ_SELF,
             Permission.CALENDAR_READ_TEAM,
             Permission.CALENDAR_JUSTIFICATION_SELF,
@@ -154,7 +155,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 5
+    assert DatabaseMigrator(manager.db_path).status().current_version == 6
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -162,7 +163,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 5
+    assert client.get("/ready").json()["schema_version"] == 6
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:
@@ -192,6 +193,30 @@ def test_logout_requires_session_csrf(tmp_path: Path) -> None:
     assert client.get("/api/v1/me").status_code == 401
 
 
+def test_player_can_self_register_once_and_enters_hub(tmp_path: Path) -> None:
+    client, manager, _ = make_v2(tmp_path)
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        available = unit_of_work.identity.available_player_registrations()
+    assert available
+    response = client.post(
+        "/register",
+        data={
+            "team_member_id": available[0]["id"], "username": "novo-jogador",
+            "password": "x", "password_confirmation": "x",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303 and response.headers["location"] == "/app"
+    me = client.get("/api/v1/me").json()
+    assert me["linked_player_id"] == available[0]["id"]
+    assert me["must_change_password"] is False
+    second = client.post(
+        "/register",
+        data={"team_member_id": available[0]["id"], "username": "outro", "password": "x", "password_confirmation": "x"},
+    )
+    assert second.status_code == 400
+
+
 def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     csrf = login(client, "player", data["passwords"]["player"])
@@ -200,7 +225,40 @@ def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> 
     assert client.get("/api/v1/exports/history.csv").status_code == 403
     assert client.get("/api/v1/backup").status_code == 403
     assert client.post("/api/v1/sessions/1/finalize", headers={"X-CSRF-Token": csrf}).status_code == 403
-    assert client.get("/app/presencas").status_code == 403
+    assert client.get("/app/presencas").status_code == 200
+
+
+def test_player_confirms_active_training_with_many_positions_and_justification(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    with manager.unit_of_work() as unit_of_work:
+        unit_of_work.attendance.update_member(
+            int(data["player_member_id"]), position="PD/PE", active=True, actor_user_id=1
+        )
+    ct_csrf = login(client, "ct", data["passwords"]["ct"])
+    opened = open_calendar_training(client, ct_csrf, "2099-01-10")
+    event_id = int(opened["calendar_event"]["id"])
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    active = client.post("/api/v1/me/attendance/active", headers={"X-CSRF-Token": player_csrf})
+    assert active.status_code == 200, active.text
+    item = active.json()["item"]
+    assert int(item["event"]["id"]) == event_id
+    saved = client.put(
+        f"/api/v1/me/attendance/events/{event_id}",
+        json={"response": "GOING", "positions": ["PD", "PE"], "justification": "Vou chegar alguns minutos depois.", "base_version": item["record"]["version"]},
+        headers={"X-CSRF-Token": player_csrf},
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["record"]["confirmation_status"] == "CONFIRMED_EARLY"
+    assert body["record"]["training_positions"] == ["PD", "PE"]
+    assert body["justification"] == "Vou chegar alguns minutos depois."
+    forbidden = client.put(
+        f"/api/v1/me/attendance/events/{event_id}",
+        json={"response": "GOING", "positions": ["GOL"], "justification": "", "base_version": body["record"]["version"]},
+        headers={"X-CSRF-Token": player_csrf},
+    )
+    assert forbidden.status_code == 409
 
 
 def test_dev_only_has_no_sport_access_and_bob_keeps_it(tmp_path: Path) -> None:
@@ -242,17 +300,17 @@ def test_session_revocation_expiration_and_password_reset(tmp_path: Path) -> Non
         unit_of_work.identity.reset_password(int(data["ct_id"]), PasswordHasher().hash("nova-temporaria"), actor_user_id=1)
     assert client.get("/api/v1/me").status_code == 401
     login(client, "ct", "nova-temporaria")
-    assert client.get("/api/v1/me").json()["must_change_password"] is True
+    assert client.get("/api/v1/me").json()["must_change_password"] is False
 
 
-def test_temporary_password_blocks_permissions_until_own_change(tmp_path: Path) -> None:
+def test_reset_password_remains_usable_and_can_be_changed_voluntarily(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     with manager.unit_of_work() as unit_of_work:
         unit_of_work.identity.reset_password(
             int(data["ct_id"]), PasswordHasher().hash("temporaria"), actor_user_id=1
         )
     csrf = login(client, "ct", "temporaria")
-    assert client.get("/api/v1/attendance/trainings").status_code == 403
+    assert client.get("/api/v1/attendance/trainings").status_code == 200
     changed = client.post(
         "/api/v1/me/password",
         json={"current_password": "temporaria", "new_password": "definitiva"},

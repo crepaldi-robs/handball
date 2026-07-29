@@ -22,6 +22,13 @@ class SessionNotes(BaseModel):
     notes: str = Field(default="", max_length=4000)
 
 
+class SelfConfirmationInput(BaseModel):
+    response: str = Field(pattern="^(GOING|NOT_GOING)$")
+    positions: list[str] = Field(default_factory=list, max_length=12)
+    justification: str = Field(default="", max_length=1000)
+    base_version: int = Field(ge=1)
+
+
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     position: str = Field(min_length=1, max_length=40)

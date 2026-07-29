@@ -12,6 +12,7 @@ class Permission(StrEnum):
     USERS_MANAGE = "users.manage"
     SESSIONS_REVOKE = "auth.sessions.revoke"
     ATTENDANCE_READ_SELF = "attendance.read.self"
+    ATTENDANCE_WRITE_SELF = "attendance.write.self"
     ATTENDANCE_READ_TEAM = "attendance.read.team"
     ATTENDANCE_WRITE = "attendance.write"
     ATTENDANCE_FINALIZE = "attendance.finalize"
@@ -39,7 +40,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
                      Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
                      Permission.CALENDAR_MANAGE, Permission.SQL_EXPLORE}),
-    "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.REPORTS_READ_SELF,
+    "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.ATTENDANCE_WRITE_SELF, Permission.REPORTS_READ_SELF,
                          Permission.CALENDAR_READ_TEAM,
                          Permission.CALENDAR_JUSTIFICATION_SELF}),
 }
@@ -76,11 +77,6 @@ def require_authenticated_user(request: Request) -> AccessContext:
 def require_permission(permission: Permission) -> Callable[[Request], AccessContext]:
     def dependency(request: Request) -> AccessContext:
         context = require_authenticated_user(request)
-        if context.must_change_password:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Troca de senha obrigatória antes de continuar.",
-            )
         if permission not in context.permissions:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return context
@@ -104,11 +100,6 @@ def require_read_only_permission(
             context = getattr(request.state, "access_context", None)
         if context is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        if context.must_change_password:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Troca de senha obrigatória antes de continuar.",
-            )
         if not any(permission in context.permissions for permission in permissions):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return context

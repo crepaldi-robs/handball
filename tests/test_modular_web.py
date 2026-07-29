@@ -165,7 +165,7 @@ def test_pwa_v5_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v7"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v8"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert 'pathname === "/app/estatisticas"' in worker

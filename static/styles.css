@@ -464,6 +464,13 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .login-card { padding: clamp(36px, 7vw, 92px); display: flex; flex-direction: column; justify-content: center; background: var(--cream); }
 .login-card h2 { font-size: 2rem; margin-bottom: .5rem; }
 .login-card .stack-form { margin-top: 28px; }
+.registration-panel { margin-top: 20px; border-top: 1px solid var(--line, #d6d0c5); padding-top: 18px; }
+.registration-panel summary { cursor: pointer; font-weight: 700; color: var(--navy-900); }
+.registration-panel .stack-form { margin-top: 16px; }
+.player-attendance-shell { max-width: 760px; }
+.player-attendance-shell fieldset { display: grid; gap: 10px; border: 1px solid var(--line, #d6d0c5); border-radius: 12px; padding: 16px; }
+.player-attendance-shell legend { font-weight: 700; padding: 0 6px; }
+.inline-options { display: flex; flex-wrap: wrap; gap: 12px; }
 .security-note { margin: 24px 0 0; color: var(--muted); font-size: .75rem; text-align: center; }
 
 .bottom-nav { display: none; }

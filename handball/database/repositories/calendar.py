@@ -186,6 +186,44 @@ class CalendarRepository:
                 return event
         return None
 
+    def active_training_event(self, team_ids: Iterable[int]) -> dict[str, Any] | None:
+        for event in self.list_training_events(team_ids):
+            if event["status"] not in ATTENDANCE_OPEN_STATUSES:
+                continue
+            if event["attendance_session_id"] is None or not bool(event["is_finalized"]):
+                return event
+        return None
+
+    def own_justification(
+        self, event_id: int, *, player_member_id: int
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """SELECT id,event_id,player_member_id,reason,created_at,updated_at
+               FROM calendar_justifications WHERE event_id=? AND player_member_id=?""",
+            (int(event_id), int(player_member_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete_own_justification(
+        self,
+        event_id: int,
+        *,
+        player_member_id: int,
+        user_id: int,
+        team_ids: Iterable[int],
+    ) -> None:
+        self._owned_justifiable_event(
+            event_id, player_member_id=player_member_id, user_id=user_id, team_ids=team_ids
+        )
+        before = self.own_justification(event_id, player_member_id=player_member_id)
+        if before is None:
+            return
+        self.connection.execute("DELETE FROM calendar_justifications WHERE id=?", (int(before["id"]),))
+        self._audit(
+            actor_user_id=user_id, action="calendar.justification.delete", entity="calendar_justification",
+            target_id=int(before["id"]), before=before, after=None,
+        )
+
     def get_or_create_attendance_session(
         self,
         event_id: int,

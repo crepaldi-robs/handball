@@ -61,8 +61,6 @@ class SqlExplorerService:
 
     @staticmethod
     def _access(context: AccessContext, *, admin: bool = False) -> None:
-        if context.must_change_password:
-            raise PermissionError("Operação não autorizada.")
         required = Permission.SQL_ADMIN if admin else Permission.SQL_EXPLORE
         if required not in context.permissions and not (
             not admin and Permission.SQL_ADMIN in context.permissions

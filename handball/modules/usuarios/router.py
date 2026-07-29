@@ -146,6 +146,6 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
     @router.post("/api/v1/admin/users/{user_id}/password/reset")
     def reset_password(user_id: int, body: TemporaryPasswordReset, context: Annotated[AccessContext, Depends(_write_permission(Permission.USERS_MANAGE))]) -> dict[str, bool]:
         service.reset_password(user_id, body.temporary_password, context)
-        return {"reset": True, "must_change_password": True}
+        return {"reset": True, "must_change_password": False}
 
     return router

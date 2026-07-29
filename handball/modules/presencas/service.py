@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from handball.database.contracts import (
     BackupDownload,
@@ -11,6 +12,8 @@ from handball.database.contracts import (
 )
 
 from .domain import CONFIRMATION_LABELS, build_coach_message, summarize_records
+
+LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 
 class AttendanceService:
@@ -94,6 +97,87 @@ class AttendanceService:
                 team_ids,
                 season_id=season_id,
             )
+
+    @staticmethod
+    def _allowed_positions(value: str) -> list[str]:
+        return list(dict.fromkeys(part.strip().upper() for part in value.replace(",", "/").split("/") if part.strip()))
+
+    @staticmethod
+    def _confirmation_code(response: str, training_date: str) -> str:
+        early = datetime.now(LOCAL_TIMEZONE).date() < date.fromisoformat(training_date)
+        if response == "GOING":
+            return "CONFIRMED_EARLY" if early else "CONFIRMED_LATE"
+        return "CANCELLED_EARLY" if early else "CANCELLED_LATE"
+
+    def active_self_confirmation(
+        self, *, team_ids: Iterable[int], player_member_id: int, actor_user_id: int
+    ) -> dict[str, Any] | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            event = unit_of_work.calendar.active_training_event(team_ids)
+            if event is None:
+                return None
+            linked = unit_of_work.calendar.get_or_create_attendance_session(
+                int(event["id"]), team_ids=team_ids, actor_user_id=actor_user_id
+            )
+            record = next(
+                item for item in unit_of_work.attendance.get_session_records(int(linked["session"]["id"]))
+                if int(item["member_id"]) == int(player_member_id)
+            )
+            justification = unit_of_work.calendar.own_justification(
+                int(event["id"]), player_member_id=player_member_id
+            )
+        return {
+            "event": linked["event"], "session": linked["session"], "record": record,
+            "allowed_positions": self._allowed_positions(str(record["position"])),
+            "justification": justification["reason"] if justification else "",
+        }
+
+    def save_self_confirmation(
+        self,
+        event_id: int,
+        *,
+        response: str,
+        positions: list[str],
+        justification: str,
+        base_version: int,
+        team_ids: Iterable[int],
+        player_member_id: int,
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        with self._unit_of_work_factory() as unit_of_work:
+            active = unit_of_work.calendar.active_training_event(team_ids)
+            if active is None or int(active["id"]) != int(event_id):
+                raise ValueError("Este não é mais o treino ativo para confirmação.")
+            linked = unit_of_work.calendar.get_or_create_attendance_session(
+                int(event_id), team_ids=team_ids, actor_user_id=actor_user_id
+            )
+            records = unit_of_work.attendance.get_session_records(int(linked["session"]["id"]))
+            record = next(item for item in records if int(item["member_id"]) == int(player_member_id))
+            allowed = set(self._allowed_positions(str(record["position"])))
+            normalized_positions = [str(value).strip().upper() for value in positions]
+            if response == "GOING" and not normalized_positions:
+                raise ValueError("Selecione ao menos uma posição para confirmar presença.")
+            if response == "NOT_GOING" and normalized_positions:
+                raise ValueError("Posições só se aplicam quando você vai ao treino.")
+            if any(position not in allowed for position in normalized_positions):
+                raise ValueError("Selecione apenas posições cadastradas para você.")
+            updated = unit_of_work.attendance.update_self_confirmation(
+                int(linked["session"]["id"]), member_id=player_member_id,
+                confirmation_status=self._confirmation_code(response, str(linked["session"]["training_date"])),
+                positions=normalized_positions, base_version=base_version, actor_user_id=actor_user_id,
+            )
+            clean_justification = justification.strip()
+            if clean_justification:
+                unit_of_work.calendar.upsert_justification(
+                    int(event_id), player_member_id=player_member_id, user_id=actor_user_id,
+                    reason=clean_justification, team_ids=team_ids,
+                )
+            else:
+                unit_of_work.calendar.delete_own_justification(
+                    int(event_id), player_member_id=player_member_id, user_id=actor_user_id,
+                    team_ids=team_ids,
+                )
+        return {"event": linked["event"], "session": linked["session"], "record": updated, "justification": clean_justification}
 
     def open_calendar_training(
         self,

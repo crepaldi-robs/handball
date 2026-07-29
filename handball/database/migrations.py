@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 5
+MAX_SUPPORTED_SCHEMA_VERSION = 6
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -474,6 +474,20 @@ MIGRATION_V5_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[5] = (MIGRATION_V5_NAME, MIGRATION_V5_CHECKSUM)
 
+SCHEMA_V6_STATEMENTS = (
+    "CREATE TABLE attendance_record_positions (attendance_record_id INTEGER NOT NULL, position TEXT NOT NULL CHECK(length(trim(position))>0), ordinal INTEGER NOT NULL CHECK(ordinal>=0), PRIMARY KEY(attendance_record_id,position), UNIQUE(attendance_record_id,ordinal), FOREIGN KEY(attendance_record_id) REFERENCES attendance_records(id) ON DELETE CASCADE)",
+    "CREATE INDEX idx_attendance_record_positions_record ON attendance_record_positions(attendance_record_id,ordinal)",
+)
+MIGRATION_V6_NAME = "player_self_confirmation_positions"
+MIGRATION_V6_CHECKSUM = _migration_checksum(
+    6,
+    MIGRATION_V6_NAME,
+    SCHEMA_V6_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={"player_self_confirmation": "server-scoped", "positions": "many-per-attendance-record"},
+)
+KNOWN_MIGRATIONS[6] = (MIGRATION_V6_NAME, MIGRATION_V6_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -588,12 +602,25 @@ def _apply_schema_v5(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _apply_schema_v6(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V6_STATEMENTS:
+        conn.execute(statement)
+
+
 def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
         (5, MIGRATION_V5_NAME, MIGRATION_V5_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 5").close()
+
+
+def _record_schema_v6(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (6, MIGRATION_V6_NAME, MIGRATION_V6_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 6").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1134,6 +1161,12 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                 )
                 if index_problem:
                     base_problems.append(index_problem)
+        if current_version >= 6:
+            required_v6 = {"attendance_record_positions"}
+            base_problems.extend(
+                f"Tabela de posições por treino ausente: {table}."
+                for table in sorted(required_v6 - tables)
+            )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1441,6 +1474,10 @@ class DatabaseMigrator:
             if effective_version >= 4 and effective_version < 5:
                 _apply_schema_v5(conn)
                 _record_schema_v5(conn, app_version=app_version, origin=origin)
+                effective_version = 5
+            if effective_version >= 5 and effective_version < 6:
+                _apply_schema_v6(conn)
+                _record_schema_v6(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1517,6 +1554,8 @@ class DatabaseMigrator:
                 _record_schema_v4(conn, app_version=app_version, origin=origin)
                 _apply_schema_v5(conn)
                 _record_schema_v5(conn, app_version=app_version, origin=origin)
+                _apply_schema_v6(conn)
+                _record_schema_v6(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

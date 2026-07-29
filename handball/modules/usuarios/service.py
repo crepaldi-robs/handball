@@ -32,7 +32,7 @@ class IdentityService:
             "permissions": sorted(str(value) for value in context.permissions),
             "team_ids": sorted(context.team_ids),
             "linked_player_id": context.linked_player_id,
-            "must_change_password": context.must_change_password,
+            "must_change_password": False,
             "organization": {
                 "code": ORGANIZATION.code,
                 "slug": ORGANIZATION.slug,
@@ -89,6 +89,20 @@ class IdentityService:
     def options(self) -> dict[str, list[dict[str, Any]]]:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             return unit_of_work.identity.list_people_and_players()
+
+    def available_player_registrations(self) -> list[dict[str, Any]]:
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.identity.available_player_registrations()
+
+    def register_player(self, *, team_member_id: int, username: str, password: str) -> int:
+        if not password:
+            raise ValueError("A senha não pode ficar vazia.")
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.identity.register_player(
+                team_member_id=team_member_id,
+                username=username,
+                password_hash=self._hasher.hash(password),
+            )
 
     def security_audit(self, limit: int) -> list[dict[str, Any]]:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:

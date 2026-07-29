@@ -22,7 +22,7 @@
       <div>
         <span class="eyebrow">ACESSO PRIVADO</span>
         <h2>Bem-vindo</h2>
-        <p class="muted">Entre com sua conta de administrador.</p>
+        <p class="muted">Entre com sua conta ou crie o primeiro acesso como jogador.</p>
       </div>
       {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
       <form method="post" action="/login" class="stack-form">
@@ -36,6 +36,18 @@
         </label>
         <button class="button button-primary button-large" type="submit">Entrar</button>
       </form>
+      {% if registration_players %}
+      <details class="registration-panel">
+        <summary>Criar minha conta de jogador</summary>
+        <form method="post" action="/register" class="stack-form compact-form">
+          <label><span>Meu nome no elenco</span><select name="team_member_id" required><option value="">Selecione seu nome</option>{% for player in registration_players %}<option value="{{ player.id }}">{{ player.name }} · {{ player.position }}</option>{% endfor %}</select></label>
+          <label><span>Usuário</span><input name="username" autocomplete="username" maxlength="80" required></label>
+          <label><span>Senha</span><input name="password" type="password" autocomplete="new-password" required></label>
+          <label><span>Confirmar senha</span><input name="password_confirmation" type="password" autocomplete="new-password" required></label>
+          <button class="button button-primary" type="submit">Criar conta</button>
+        </form>
+      </details>
+      {% endif %}
       <p class="security-note">Acesso protegido. Os dados permanecem no servidor particular.</p>
     </section>
   </main>

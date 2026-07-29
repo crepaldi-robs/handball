@@ -53,6 +53,13 @@
         <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
       </a>{% endif %}
 
+      {% if can_self_attendance and not can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
+        <span class="module-icon" aria-hidden="true">✓</span>
+        <span class="module-status module-status-available">Disponível</span>
+        <span class="module-card-copy"><strong>Minha presença</strong><span>Confirme o próximo treino, posições e justificativa.</span></span>
+        <span class="module-card-action" aria-hidden="true">Responder <b>→</b></span>
+      </a>{% endif %}
+
       {% if can_report %}<a class="module-card module-card-available" href="/app/meu-relatorio">
         <span class="module-icon" aria-hidden="true">◎</span>
         <span class="module-status module-status-available">Disponível</span>

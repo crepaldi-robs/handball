@@ -263,15 +263,23 @@ def create_auth_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    def login_template(request: Request, *, error: str | None, username: str, status_code: int = 200) -> Response:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "error": error,
+                "username": username,
+                "registration_players": request.app.state.identity_service.available_player_registrations(),
+            },
+            status_code=status_code,
+        )
+
     @router.get("/login", response_class=HTMLResponse)
     def login_page(request: Request) -> Response:
         if session_from_request(request):
             return RedirectResponse("/app", status_code=303)
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {"error": None, "username": settings.admin_username},
-        )
+        return login_template(request, error=None, username=settings.admin_username)
 
     @router.post("/login", response_class=HTMLResponse)
     def login(
@@ -283,36 +291,17 @@ def create_auth_router(
         client_key = login_client_key(request, settings.trusted_proxies)
         limit_status = auth.limiter.status(client_key)
         if limit_status.blocked:
-            return templates.TemplateResponse(
-                request,
-                "login.html",
-                {
-                    "error": _login_limit_message(limit_status),
-                    "username": username,
-                },
-                status_code=429,
-                headers={"Retry-After": str(limit_status.retry_after_seconds)},
-            )
+            response = login_template(request, error=_login_limit_message(limit_status), username=username, status_code=429)
+            response.headers["Retry-After"] = str(limit_status.retry_after_seconds)
+            return response
         user_id = auth.verify_credentials(username, password)
         if user_id is None:
             limit_status = auth.limiter.fail(client_key)
             if limit_status.blocked:
-                return templates.TemplateResponse(
-                    request,
-                    "login.html",
-                    {
-                        "error": _login_limit_message(limit_status),
-                        "username": username,
-                    },
-                    status_code=429,
-                    headers={"Retry-After": str(limit_status.retry_after_seconds)},
-                )
-            return templates.TemplateResponse(
-                request,
-                "login.html",
-                {"error": "Usuário ou senha inválidos.", "username": username},
-                status_code=401,
-            )
+                response = login_template(request, error=_login_limit_message(limit_status), username=username, status_code=429)
+                response.headers["Retry-After"] = str(limit_status.retry_after_seconds)
+                return response
+            return login_template(request, error="Usuário ou senha inválidos.", username=username, status_code=401)
 
         auth.limiter.clear(client_key)
         token, _ = auth.create_token(
@@ -329,6 +318,36 @@ def create_auth_router(
             samesite="lax",
             path="/",
         )
+        return response
+
+    @router.post("/register", response_class=HTMLResponse)
+    def register(
+        request: Request,
+        team_member_id: Annotated[int, Form()],
+        username: Annotated[str, Form()],
+        password: Annotated[str, Form()],
+        password_confirmation: Annotated[str, Form()],
+    ) -> Response:
+        auth: AuthManager = request.app.state.auth
+        client_key = login_client_key(request, settings.trusted_proxies)
+        limit_status = auth.limiter.status(client_key)
+        if limit_status.blocked:
+            response = login_template(request, error=_login_limit_message(limit_status), username="", status_code=429)
+            response.headers["Retry-After"] = str(limit_status.retry_after_seconds)
+            return response
+        if password != password_confirmation:
+            return login_template(request, error="As senhas não coincidem.", username=username, status_code=400)
+        try:
+            user_id = request.app.state.identity_service.register_player(
+                team_member_id=team_member_id, username=username, password=password
+            )
+        except ValueError as exc:
+            auth.limiter.fail(client_key)
+            return login_template(request, error=str(exc), username=username, status_code=400)
+        auth.limiter.clear(client_key)
+        token, _ = auth.create_token(user_id, user_agent=request.headers.get("user-agent", "")[:500])
+        response = RedirectResponse("/app", status_code=303)
+        response.set_cookie(auth.cookie_name, token, max_age=settings.session_max_age_seconds, httponly=True, secure=settings.cookie_secure, samesite="lax", path="/")
         return response
 
     @router.post("/logout")

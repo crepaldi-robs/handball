@@ -291,6 +291,62 @@ class IdentityRepository:
             "players": [item for item in people if item["team_member_id"] is not None],
         }
 
+    def available_player_registrations(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """SELECT tm.id,tm.name,tm.position
+               FROM team_members tm
+               JOIN player_user_links pul ON pul.team_member_id=tm.id
+               JOIN people p ON p.id=pul.person_id
+               WHERE tm.active=1 AND p.active=1 AND pul.user_id IS NULL
+               ORDER BY tm.name COLLATE NOCASE"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def register_player(
+        self, *, team_member_id: int, username: str, password_hash: str
+    ) -> int:
+        link = self.connection.execute(
+            """SELECT pul.person_id,pul.user_id
+               FROM player_user_links pul
+               JOIN team_members tm ON tm.id=pul.team_member_id
+               JOIN people p ON p.id=pul.person_id
+               WHERE pul.team_member_id=? AND tm.active=1 AND p.active=1""",
+            (int(team_member_id),),
+        ).fetchone()
+        if link is None or link["user_id"] is not None:
+            raise ValueError("Atleta indisponível para cadastro.")
+        person_id = int(link["person_id"])
+        now = now_iso()
+        try:
+            cursor = self.connection.execute(
+                """INSERT INTO users(person_id,username,password_hash,active,
+                       must_change_password,credential_version,created_at,updated_at)
+                   VALUES(?,?,?,1,0,1,?,?)""",
+                (person_id, self.normalize_username(username), password_hash, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Usuário indisponível para cadastro.") from exc
+        user_id = int(cursor.lastrowid)
+        updated = self.connection.execute(
+            "UPDATE player_user_links SET user_id=? WHERE team_member_id=? AND user_id IS NULL",
+            (user_id, int(team_member_id)),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("Atleta indisponível para cadastro.")
+        self.connection.execute(
+            "INSERT INTO system_roles(user_id,role_code) VALUES(?,'PLAYER')",
+            (user_id,),
+        )
+        self.audit_event(
+            actor_user_id=None,
+            action="user.self_register",
+            entity="user",
+            target_id=str(user_id),
+            origin="registration",
+            after={"team_member_id": int(team_member_id), "roles": ["PLAYER"]},
+        )
+        return user_id
+
     def person_id_for_player(self, team_member_id: int) -> int | None:
         row = self.connection.execute(
             "SELECT person_id FROM player_user_links WHERE team_member_id=?",
@@ -332,7 +388,7 @@ class IdentityRepository:
             cursor = self.connection.execute(
                 """INSERT INTO users(person_id,username,password_hash,active,
                        must_change_password,credential_version,created_at,updated_at)
-                   VALUES(?,?,?,1,1,1,?,?)""",
+                   VALUES(?,?,?,1,0,1,?,?)""",
                 (person_id, self.normalize_username(username), password_hash, now, now),
             )
         except sqlite3.IntegrityError as exc:
@@ -470,7 +526,7 @@ class IdentityRepository:
     def reset_password(self, user_id: int, password_hash: str, *, actor_user_id: int) -> None:
         now = now_iso()
         self.connection.execute(
-            """UPDATE users SET password_hash=?,must_change_password=1,
+            """UPDATE users SET password_hash=?,must_change_password=0,
                    credential_version=credential_version+1,updated_at=? WHERE id=?""",
             (password_hash, now, user_id),
         )

@@ -513,7 +513,98 @@ class AttendanceRepository:
                 """,
                 (session_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+            result = [dict(row) for row in rows]
+            if self._table_exists(conn, "attendance_record_positions") and result:
+                position_rows = conn.execute(
+                    """SELECT attendance_record_id,position FROM attendance_record_positions
+                       WHERE attendance_record_id IN ({}) ORDER BY attendance_record_id,ordinal""".format(
+                        ",".join("?" for _ in result)
+                    ),
+                    tuple(int(item["record_id"]) for item in result),
+                ).fetchall()
+                positions_by_record: dict[int, list[str]] = {}
+                for row in position_rows:
+                    positions_by_record.setdefault(int(row["attendance_record_id"]), []).append(str(row["position"]))
+                for item in result:
+                    item["training_positions"] = positions_by_record.get(int(item["record_id"]), [])
+            else:
+                for item in result:
+                    item["training_positions"] = []
+        return result
+
+    def update_self_confirmation(
+        self,
+        session_id: int,
+        *,
+        member_id: int,
+        confirmation_status: str,
+        positions: list[str],
+        base_version: int,
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        if confirmation_status not in VALID_CONFIRMATION_STATUSES:
+            raise ValueError("Situação de confirmação inválida.")
+        with self.connection() as conn:
+            if not self._table_exists(conn, "attendance_record_positions"):
+                raise RuntimeError("O banco ainda não recebeu a atualização de posições por treino.")
+            session = conn.execute(
+                "SELECT is_finalized FROM training_sessions WHERE id=?", (int(session_id),)
+            ).fetchone()
+            if session is None:
+                raise KeyError("Chamada não encontrada.")
+            if bool(session["is_finalized"]):
+                raise ValueError("A chamada já foi encerrada.")
+            row = conn.execute(
+                """SELECT id,confirmation_status,present,notes,version
+                   FROM attendance_records WHERE session_id=? AND member_id=?""",
+                (int(session_id), int(member_id)),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Registro individual não encontrado.")
+            if int(row["version"]) != int(base_version):
+                raise ValueError("Sua resposta foi atualizada em outro lugar. Recarregue a chamada.")
+            old_positions = [
+                str(item[0])
+                for item in conn.execute(
+                    "SELECT position FROM attendance_record_positions WHERE attendance_record_id=? ORDER BY ordinal",
+                    (int(row["id"]),),
+                ).fetchall()
+            ]
+            normalized_positions = [str(value).strip().upper() for value in positions]
+            if any(not value for value in normalized_positions) or len(set(normalized_positions)) != len(normalized_positions):
+                raise ValueError("Posições inválidas.")
+            changed = str(row["confirmation_status"]) != confirmation_status or old_positions != normalized_positions
+            if changed:
+                now = _now_iso()
+                conn.execute(
+                    "UPDATE attendance_records SET confirmation_status=?,version=version+1,updated_at=? WHERE id=?",
+                    (confirmation_status, now, int(row["id"])),
+                )
+                conn.execute("DELETE FROM attendance_record_positions WHERE attendance_record_id=?", (int(row["id"]),))
+                conn.executemany(
+                    "INSERT INTO attendance_record_positions(attendance_record_id,position,ordinal) VALUES(?,?,?)",
+                    [(int(row["id"]), position, index) for index, position in enumerate(normalized_positions)],
+                )
+                audit_cursor = conn.execute(
+                    """INSERT INTO attendance_audit_log(session_id,member_id,old_confirmation_status,new_confirmation_status,
+                           old_present,new_present,old_notes,new_notes,changed_at,source)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (int(session_id), int(member_id), row["confirmation_status"], confirmation_status,
+                     row["present"], row["present"], row["notes"] or "", row["notes"] or "", now, "player-self"),
+                )
+                self._attach_audit_actor(
+                    conn, int(audit_cursor.lastrowid), actor_user_id=actor_user_id,
+                    action="attendance.self_confirmation", target_id=f"{session_id}:{member_id}",
+                )
+                conn.execute(
+                    """INSERT INTO security_audit_events(actor_user_id,occurred_at,action,entity,target_id,origin,before_json,after_json,request_id)
+                       VALUES(?,?,?,?,?,'attendance',?,?,NULL)""",
+                    (actor_user_id, now, "attendance.positions.update", "attendance_record", str(row["id"]),
+                     json.dumps({"positions": old_positions}, ensure_ascii=False),
+                     json.dumps({"positions": normalized_positions}, ensure_ascii=False)),
+                )
+            result = self.get_session_records(int(session_id))
+            return next(item for item in result if int(item["member_id"]) == int(member_id))
 
     def save_records(
         self,

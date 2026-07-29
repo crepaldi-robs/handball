@@ -1,12 +1,13 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v7";
+const CACHE_NAME = "handball-shell-v8";
 const SHELL = [
   "/app",
   "/app/presencas",
   "/static/styles.css",
   "/static/platform.js",
   "/static/app.js",
+  "/static/player-attendance.js",
   "/static/manifest.webmanifest",
   "/static/icon-192.png",
   "/static/icon-512.png",

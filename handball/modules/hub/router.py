@@ -26,6 +26,7 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
                 "csrf_token": session.csrf_token,
                 "roles": sorted(session.system_roles | session.team_roles),
                 "can_attendance": Permission.ATTENDANCE_READ_TEAM in session.permissions,
+                "can_self_attendance": Permission.ATTENDANCE_READ_SELF in session.permissions,
                 "can_report": Permission.REPORTS_READ_SELF in session.permissions,
                 "can_admin": Permission.USERS_MANAGE in session.permissions,
                 "can_calendar": Permission.CALENDAR_READ_TEAM in session.permissions,

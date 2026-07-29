@@ -34,7 +34,7 @@ def _admin_write_context(request: Request) -> AccessContext:
     session = session_from_request(request, touch=False)
     if session is None:
         raise HTTPException(status_code=401)
-    if session.must_change_password or Permission.SQL_ADMIN not in session.permissions:
+    if Permission.SQL_ADMIN not in session.permissions:
         raise HTTPException(status_code=403)
     supplied = request.headers.get("X-CSRF-Token", "")
     if not secrets.compare_digest(supplied, session.csrf_token):

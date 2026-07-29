@@ -23,7 +23,7 @@ from handball.core.authorization import AccessContext, Permission, require_permi
 from handball.core.organization import ORGANIZATION
 
 from .domain import history_to_dataframe
-from .schemas import MemberCreate, MemberUpdate, SessionNotes, SyncBatch
+from .schemas import MemberCreate, MemberUpdate, SelfConfirmationInput, SessionNotes, SyncBatch
 from .service import AttendanceService
 
 
@@ -54,8 +54,12 @@ def create_router(
         session = session_from_request(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        if Permission.ATTENDANCE_READ_TEAM not in session.permissions:
+        if Permission.ATTENDANCE_READ_TEAM not in session.permissions and Permission.ATTENDANCE_READ_SELF not in session.permissions:
             raise HTTPException(status_code=403)
+        if Permission.ATTENDANCE_READ_TEAM not in session.permissions:
+            return templates.TemplateResponse(
+                request, "presencas/player.html", {"session": session, "organization": ORGANIZATION}
+            )
         return templates.TemplateResponse(
             request,
             "presencas/index.html",
@@ -76,6 +80,35 @@ def create_router(
             "team_ids": sorted(session.team_ids),
             "linked_player_id": session.linked_player_id,
         }
+
+    @router.post("/api/v1/me/attendance/active")
+    def active_self_confirmation(context: AuthSession = Depends(require_write_session)) -> dict[str, Any]:
+        if Permission.ATTENDANCE_WRITE_SELF not in context.permissions or context.linked_player_id is None:
+            raise HTTPException(status_code=403)
+        try:
+            payload = service.active_self_confirmation(
+                team_ids=context.team_ids, player_member_id=context.linked_player_id, actor_user_id=context.user_id
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"item": payload}
+
+    @router.put("/api/v1/me/attendance/events/{event_id}")
+    def save_self_confirmation(
+        event_id: int, body: SelfConfirmationInput, context: AuthSession = Depends(require_write_session)
+    ) -> dict[str, Any]:
+        if Permission.ATTENDANCE_WRITE_SELF not in context.permissions or context.linked_player_id is None:
+            raise HTTPException(status_code=403)
+        try:
+            return service.save_self_confirmation(
+                event_id, response=body.response, positions=body.positions, justification=body.justification,
+                base_version=body.base_version, team_ids=context.team_ids,
+                player_member_id=context.linked_player_id, actor_user_id=context.user_id,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/api/v1/session")
     def get_session(
