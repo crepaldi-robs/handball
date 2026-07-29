@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from contextlib import contextmanager
 from datetime import datetime
@@ -218,3 +219,55 @@ class DatabaseManager:
             content_length=backup_path.stat().st_size,
             _open_binary=lambda: backup_path.open("rb"),
         )
+
+    def create_sql_change_backup(
+        self, request_id: str, *, expected_fingerprint: str
+    ) -> tuple[Path, str]:
+        """Cria o backup obrigatório de uma alteração administrativa."""
+        if self._backup_dir is None:
+            raise DatabaseCompatibilityError(
+                "Diretório de backups não foi configurado."
+            )
+        self._backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime(
+            "%Y%m%d-%H%M%S-%f"
+        )
+        path = self.backup_to(
+            self._backup_dir / f"sql-change-{timestamp}-{request_id}.db",
+            expected_fingerprint=expected_fingerprint,
+        )
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return path, digest.hexdigest()
+
+    def finalize_sql_change_backup(
+        self, backup_path: Path, metadata: Mapping[str, object]
+    ) -> None:
+        """Grava sidecar e mantém os 30 backups SQL operacionais mais recentes."""
+        if self._backup_dir is None:
+            return
+        try:
+            backup_path.with_suffix(".json").write_text(
+                json.dumps(
+                    dict(metadata),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            backups = sorted(
+                self._backup_dir.glob("sql-change-*.db"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for obsolete in backups[30:]:
+                obsolete.with_suffix(".json").unlink(missing_ok=True)
+                obsolete.unlink(missing_ok=True)
+        except OSError:
+            # A alteração já foi confirmada e auditada. Não sinalizar uma falha
+            # ambígua que possa induzir o administrador a repeti-la.
+            return

@@ -290,7 +290,7 @@ def test_database_migration_requires_confirmed_plan_and_verified_backup(
     result = json.loads(capsys.readouterr().out)
 
     assert result["status"] == "applied"
-    assert result["schema"]["current_version"] == 4
+    assert result["schema"]["current_version"] == 5
     assert result["verification"]["quick_check"] == "ok"
     assert result["verification"]["foreign_key_check"] == []
     assert backup_path.is_file()

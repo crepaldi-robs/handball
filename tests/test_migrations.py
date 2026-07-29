@@ -32,6 +32,16 @@ def _make_unversioned_current(database_path) -> AttendanceRepository:
     return repository
 
 
+def _make_v5_database(database_path) -> None:
+    AttendanceRepository(database_path).bootstrap()
+    DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("admin", "test-password-hash"),
+        app_version="pytest-v5",
+        origin="pytest",
+    )
+
+
 def _make_ea5404b_database(database_path) -> None:
     """Reproduz o DDL histórico de ea5404b, anterior a sync/version."""
 
@@ -140,8 +150,8 @@ def test_bootstrap_creates_formally_versioned_current_schema(tmp_path):
 
     assert status.state == "migration_required"
     assert status.current_version == 1
-    assert status.latest_version == 4
-    assert status.pending_versions == (2, 3, 4)
+    assert status.latest_version == 5
+    assert status.pending_versions == (2, 3, 4, 5)
     assert status.versioned and status.compatible
     assert verification["quick_check"] == "ok"
     assert verification["foreign_key_check"] == []
@@ -529,3 +539,55 @@ def test_status_rejects_matching_columns_without_required_constraints(tmp_path):
         assert int(
             conn.execute("SELECT COUNT(*) FROM attendance_records").fetchone()[0]
         ) == len(records_before)
+
+
+@pytest.mark.parametrize(
+    "tamper_sql",
+    (
+        "DROP INDEX idx_user_permission_grants_actor",
+        """
+        DROP INDEX idx_user_permission_grants_actor;
+        ALTER TABLE user_permission_grants RENAME TO grants_old;
+        CREATE TABLE user_permission_grants (
+            user_id INTEGER NOT NULL,
+            permission_code TEXT NOT NULL,
+            granted_by_user_id INTEGER NOT NULL,
+            granted_at TEXT NOT NULL,
+            extra TEXT,
+            PRIMARY KEY(user_id,permission_code),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        );
+        DROP TABLE grants_old;
+        CREATE INDEX idx_user_permission_grants_actor
+            ON user_permission_grants(granted_by_user_id,granted_at);
+        """,
+        """
+        DROP INDEX idx_user_permission_grants_actor;
+        ALTER TABLE user_permission_grants RENAME TO grants_old;
+        CREATE TABLE user_permission_grants (
+            user_id INTEGER NOT NULL,
+            permission_code TEXT NOT NULL
+                CHECK(permission_code IN('sql.explore','sql.admin')),
+            granted_by_user_id INTEGER NOT NULL,
+            granted_at TEXT NOT NULL,
+            PRIMARY KEY(user_id,permission_code),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+            FOREIGN KEY(granted_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        DROP TABLE grants_old;
+        CREATE UNIQUE INDEX idx_user_permission_grants_actor
+            ON user_permission_grants(granted_by_user_id,granted_at);
+        """,
+    ),
+)
+def test_v5_contract_rejects_permission_grant_tampering(tmp_path, tamper_sql):
+    database_path = tmp_path / "v5-tampered.db"
+    _make_v5_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.executescript(tamper_sql)
+    status = DatabaseMigrator(database_path).status()
+    assert status.compatible is False
+    assert status.state == "invalid"
+    assert status.problems

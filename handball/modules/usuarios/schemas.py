@@ -17,6 +17,10 @@ class RoleUpdate(BaseModel):
     roles: list[str] = Field(min_length=1)
 
 
+class PermissionGrantUpdate(BaseModel):
+    permissions: list[str] = Field(default_factory=list)
+
+
 class TemporaryPasswordReset(BaseModel):
     temporary_password: str = Field(min_length=1, max_length=1024)
 

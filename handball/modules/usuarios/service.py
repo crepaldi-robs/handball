@@ -122,6 +122,14 @@ class IdentityService:
         with self._unit_of_work_factory() as unit_of_work:
             unit_of_work.identity.set_roles(user_id, roles, actor_user_id=actor.user_id)
 
+    def set_permission_grants(
+        self, user_id: int, permissions: list[str], actor: AccessContext
+    ) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            unit_of_work.identity.set_permission_grants(
+                user_id, permissions, actor_user_id=actor.user_id
+            )
+
     def deactivate(self, user_id: int, actor: AccessContext) -> None:
         if user_id == actor.user_id:
             raise ValueError("Não é permitido desativar a própria conta nesta operação.")

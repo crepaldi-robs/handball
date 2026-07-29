@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 4
+MAX_SUPPORTED_SCHEMA_VERSION = 5
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -439,6 +439,60 @@ MIGRATION_V4_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[4] = (MIGRATION_V4_NAME, MIGRATION_V4_CHECKSUM)
 
+SCHEMA_V5_STATEMENTS = (
+    "CREATE TABLE user_permission_grants (user_id INTEGER NOT NULL, permission_code TEXT NOT NULL CHECK(permission_code IN('sql.explore','sql.admin')), granted_by_user_id INTEGER NOT NULL, granted_at TEXT NOT NULL, PRIMARY KEY(user_id,permission_code), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_user_permission_grants_actor ON user_permission_grants(granted_by_user_id,granted_at)",
+)
+MIGRATION_V5_NAME = "individual_sql_permission_grants"
+MIGRATION_V5_CHECKSUM = _migration_checksum(
+    5,
+    MIGRATION_V5_NAME,
+    SCHEMA_V5_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "permissions": ["sql.explore", "sql.admin"],
+        "effective_permissions": "role-union-direct-grants",
+        "audit": "security_audit_events",
+        "column_layout": [
+            ["user_id", "INTEGER", True, None, 1],
+            ["permission_code", "TEXT", True, None, 2],
+            ["granted_by_user_id", "INTEGER", True, None, 0],
+            ["granted_at", "TEXT", True, None, 0],
+        ],
+        "foreign_keys": [
+            ["user_id", "users", "id", "NO ACTION", "CASCADE", "NONE"],
+            ["granted_by_user_id", "users", "id", "NO ACTION", "RESTRICT", "NONE"],
+        ],
+        "check": "permission_code in ('sql.explore','sql.admin')",
+        "named_index": {
+            "name": "idx_user_permission_grants_actor",
+            "columns": ["granted_by_user_id", "granted_at"],
+            "unique": False,
+            "partial": False,
+        },
+    },
+)
+KNOWN_MIGRATIONS[5] = (MIGRATION_V5_NAME, MIGRATION_V5_CHECKSUM)
+
+V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
+    ("user_id", "INTEGER", True, None, 1),
+    ("permission_code", "TEXT", True, None, 2),
+    ("granted_by_user_id", "INTEGER", True, None, 0),
+    ("granted_at", "TEXT", True, None, 0),
+)
+V5_PERMISSION_GRANT_FOREIGN_KEYS = frozenset({
+    ("user_id", "users", "id", "NO ACTION", "CASCADE", "NONE"),
+    ("granted_by_user_id", "users", "id", "NO ACTION", "RESTRICT", "NONE"),
+})
+V5_PERMISSION_GRANT_SQL_FRAGMENTS = (
+    "check(permission_codein('sql.explore','sql.admin'))",
+)
+V5_PERMISSION_GRANT_INDEX = (
+    "idx_user_permission_grants_actor",
+    "user_permission_grants",
+    ("granted_by_user_id", "granted_at"),
+)
+
 V3_REQUIRED_COLUMNS = {
     "calendar_events": {
         "id",
@@ -527,6 +581,19 @@ def _record_schema_v4(conn: sqlite3.Connection, *, app_version: str, origin: str
         ),
     )
     conn.execute("PRAGMA user_version = 4").close()
+
+
+def _apply_schema_v5(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V5_STATEMENTS:
+        conn.execute(statement)
+
+
+def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (5, MIGRATION_V5_NAME, MIGRATION_V5_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 5").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1029,6 +1096,44 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                 base_problems.append(
                     "Índice único de vínculo Calendário-Presenças ausente."
                 )
+        if current_version >= 5:
+            if "user_permission_grants" not in tables:
+                base_problems.append(
+                    "Tabela de concessões individuais de permissão ausente."
+                )
+            else:
+                base_problems.extend(
+                    _column_layout_problems(
+                        conn,
+                        "user_permission_grants",
+                        V5_PERMISSION_GRANT_LAYOUT,
+                    )
+                )
+                if _unique_constraints(conn, "user_permission_grants"):
+                    base_problems.append(
+                        "Restrições UNIQUE inesperadas em user_permission_grants."
+                    )
+                if (
+                    _foreign_keys(conn, "user_permission_grants")
+                    != V5_PERMISSION_GRANT_FOREIGN_KEYS
+                ):
+                    base_problems.append(
+                        "Chaves estrangeiras divergentes em user_permission_grants."
+                    )
+                normalized_sql = _normalized_table_sql(
+                    conn, "user_permission_grants"
+                )
+                for fragment in V5_PERMISSION_GRANT_SQL_FRAGMENTS:
+                    if fragment not in normalized_sql:
+                        base_problems.append(
+                            "Restrição CHECK divergente em user_permission_grants."
+                        )
+                index_name, index_table, index_columns = V5_PERMISSION_GRANT_INDEX
+                index_problem = _named_index_problem(
+                    conn, index_name, index_table, index_columns
+                )
+                if index_problem:
+                    base_problems.append(index_problem)
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1332,6 +1437,10 @@ class DatabaseMigrator:
             if effective_version >= 3 and effective_version < 4:
                 _apply_schema_v4(conn)
                 _record_schema_v4(conn, app_version=app_version, origin=origin)
+                effective_version = 4
+            if effective_version >= 4 and effective_version < 5:
+                _apply_schema_v5(conn)
+                _record_schema_v5(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1406,6 +1515,8 @@ class DatabaseMigrator:
                 _record_schema_v3(conn, app_version=app_version, origin=origin)
                 _apply_schema_v4(conn)
                 _record_schema_v4(conn, app_version=app_version, origin=origin)
+                _apply_schema_v5(conn)
+                _record_schema_v5(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

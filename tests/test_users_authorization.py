@@ -97,6 +97,22 @@ def logout(client: TestClient) -> None:
     client.post("/logout", data={"csrf_token": csrf}, follow_redirects=False)
 
 
+def test_dev_can_assign_direct_sql_permission_to_player(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "dev", data["passwords"]["dev"])
+    granted = client.put(
+        f"/api/v1/admin/users/{data['player_id']}/permissions",
+        json={"permissions": ["sql.explore"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert granted.status_code == 200, granted.text
+    logout(client)
+    login(client, "player", data["passwords"]["player"])
+    assert client.get("/api/v1/sql/catalog").status_code == 200
+    me = client.get("/api/v1/me").json()
+    assert "sql.explore" in me["permissions"]
+
+
 def open_calendar_training(client: TestClient, csrf: str, training_date: str) -> dict[str, object]:
     options = client.get("/api/v1/calendar/options").json()
     team = options["teams"][0]
@@ -138,7 +154,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 4
+    assert DatabaseMigrator(manager.db_path).status().current_version == 5
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -146,7 +162,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 4
+    assert client.get("/ready").json()["schema_version"] == 5
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:

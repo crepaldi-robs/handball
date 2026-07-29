@@ -47,6 +47,15 @@ document.addEventListener("DOMContentLoaded", () => {
       window.location.reload();
     } catch (error) { showAdminAlert(error.message, true); }
   }));
+  document.querySelectorAll("[data-permissions-user]").forEach((button) => button.addEventListener("click", async () => {
+    const answer = window.prompt("Permissões diretas separadas por vírgula: sql.explore, sql.admin. Deixe vazio para remover.", button.dataset.currentPermissions);
+    if (answer === null) return;
+    const permissions = [...new Set(answer.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean))];
+    try {
+      await adminRequest(`/api/v1/admin/users/${button.dataset.permissionsUser}/permissions`, { method: "PUT", body: JSON.stringify({ permissions }) });
+      window.location.reload();
+    } catch (error) { showAdminAlert(error.message, true); }
+  }));
   document.querySelectorAll("[data-reset-user]").forEach((button) => button.addEventListener("click", async () => {
     const temporaryPassword = window.prompt("Informe a nova senha temporária. Ela não será exibida novamente.");
     if (!temporaryPassword) return;

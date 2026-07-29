@@ -18,14 +18,14 @@
   <main class="module-shell sql-shell">
     <a class="back-link" href="/app">← Voltar ao hub</a>
     {% if can_write %}
-    <section class="calendar-heading"><div><span class="eyebrow">ACESSO TOTAL</span><h1>Explorador SQL</h1><p>Seu papel permite SELECT, WITH, INSERT, UPDATE, DELETE, CREATE, ALTER e DROP sobre tabelas comuns. As tabelas <code>users</code>, <code>auth_sessions</code> e <code>schema_migrations</code> continuam bloqueadas mesmo aqui, assim como PRAGMA/ATTACH/VACUUM e triggers/views. Cada execução é aplicada imediatamente — não há confirmação de commit.</p></div></section>
+    <section class="calendar-heading"><div><span class="eyebrow">ADMINISTRAÇÃO PROTEGIDA</span><h1>Explorador SQL</h1><p>Consultas são somente leitura. INSERT, UPDATE, DELETE, CREATE e ALTER passam primeiro por uma simulação sem alterar o banco; a execução exige confirmação separada e cria backup. DROP, segredos, auditorias e o histórico de migrações permanecem bloqueados.</p></div></section>
     {% else %}
     <section class="calendar-heading"><div><span class="eyebrow">SOMENTE LEITURA</span><h1>Explorador SQL</h1><p>Catálogo gerado da base operacional. Consultas são limitadas a SELECT/WITH; tabelas sensíveis permanecem restritas.</p></div></section>
     {% endif %}
     <div id="sql-message" class="alert" role="status" hidden></div>
     <section class="sql-layout">
       <aside class="panel sql-catalog"><h2>Catálogo</h2><div id="sql-relations" aria-live="polite"></div></aside>
-      <section class="panel sql-workbench"><label for="sql-editor">Consulta</label><textarea id="sql-editor" rows="10" spellcheck="false">SELECT * FROM calendar_events LIMIT 100</textarea><div class="calendar-form-actions"><button id="sql-run" class="button button-primary" type="button">Executar</button><button id="sql-explain" class="button" type="button">Plano</button><button id="sql-csv" class="button" type="button">CSV completo</button><button id="sql-xlsx" class="button" type="button">Excel completo</button></div><p class="sql-note">A tabela mostra uma prévia de até 200 linhas por página; a exportação usa o resultado completo.</p><div id="sql-results" class="sql-results"></div></section>
+      <section class="panel sql-workbench"><label for="sql-editor">Consulta</label><textarea id="sql-editor" rows="10" spellcheck="false">SELECT * FROM calendar_events LIMIT 100</textarea><div class="calendar-form-actions"><button id="sql-run" class="button button-primary" type="button">Executar consulta</button>{% if can_write %}<button id="sql-preview-change" class="button button-danger" type="button">Analisar alteração</button>{% endif %}<button id="sql-explain" class="button" type="button">Plano</button><button id="sql-csv" class="button" type="button">CSV completo</button><button id="sql-xlsx" class="button" type="button">Excel completo</button></div><p class="sql-note">A tabela mostra uma prévia de até 200 linhas por página; a exportação usa o resultado completo.</p><div id="sql-change-preview" class="panel" hidden aria-live="polite"></div><div id="sql-results" class="sql-results"></div></section>
     </section>
   </main>
 </body>

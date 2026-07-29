@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from typing import Annotated
 
@@ -10,19 +11,35 @@ from fastapi.templating import Jinja2Templates
 from handball.core.auth import session_from_request
 from handball.core.authorization import AccessContext, Permission, require_read_only_permission
 
-from .schemas import SqlQueryInput
-from .service import SqlExplorerService
+from .schemas import SqlChangeExecuteInput, SqlChangeInput, SqlQueryInput
+from .service import SqlChangeConflict, SqlExplorerService
 
 
 def _error(exc: Exception) -> HTTPException:
     status_code = 408 if isinstance(exc, TimeoutError) else 400
     if isinstance(exc, PermissionError):
         status_code = 403
+    if isinstance(exc, SqlChangeConflict):
+        status_code = 409
+    if isinstance(exc, RuntimeError) and not isinstance(exc, SqlChangeConflict):
+        status_code = 503
     return HTTPException(status_code=status_code, detail=str(exc))
 
 
 def _delete(path: Path) -> None:
     path.unlink(missing_ok=True)
+
+
+def _admin_write_context(request: Request) -> AccessContext:
+    session = session_from_request(request, touch=False)
+    if session is None:
+        raise HTTPException(status_code=401)
+    if session.must_change_password or Permission.SQL_ADMIN not in session.permissions:
+        raise HTTPException(status_code=403)
+    supplied = request.headers.get("X-CSRF-Token", "")
+    if not secrets.compare_digest(supplied, session.csrf_token):
+        raise HTTPException(status_code=403, detail="Token CSRF inválido.")
+    return session.to_access_context()
 
 
 def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> APIRouter:
@@ -61,7 +78,27 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
         ],
     ) -> dict:
         try:
-            return service.preview(context, sql=body.sql, page=body.page, page_size=body.page_size)
+            return service.query(context, sql=body.sql, page=body.page, page_size=body.page_size)
+        except Exception as exc:
+            raise _error(exc) from exc
+
+    @router.post("/api/v1/sql/changes/preview")
+    def preview_change(
+        body: SqlChangeInput,
+        context: Annotated[AccessContext, Depends(_admin_write_context)],
+    ) -> dict:
+        try:
+            return service.preview_change(context, sql=body.sql)
+        except Exception as exc:
+            raise _error(exc) from exc
+
+    @router.post("/api/v1/sql/changes/execute")
+    def execute_change(
+        body: SqlChangeExecuteInput,
+        context: Annotated[AccessContext, Depends(_admin_write_context)],
+    ) -> dict:
+        try:
+            return service.execute_change(context, token=body.token)
         except Exception as exc:
             raise _error(exc) from exc
 

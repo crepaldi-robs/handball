@@ -52,7 +52,7 @@ def create_app(
     )
     statistics_service = StatisticsService()
     calendar_service = CalendarService(unit_of_work_factory)
-    sql_explorer_service = SqlExplorerService(unit_of_work_factory)
+    sql_explorer_service = SqlExplorerService(unit_of_work_factory, database_manager)
     identity_service = IdentityService(unit_of_work_factory)
 
     application = FastAPI(

@@ -18,7 +18,7 @@ def create_router(
 
     @router.get("/app/estatisticas", response_class=HTMLResponse)
     def page(request: Request) -> Response:
-        session = session_from_request(request)
+        session = session_from_request(request, touch=False)
         if session is None:
             return RedirectResponse("/login", status_code=303)
         if Permission.ATTENDANCE_READ_TEAM not in session.permissions:

@@ -10,7 +10,7 @@ from handball.core.auth import require_write_session, session_from_request
 from handball.core.authorization import AccessContext, Permission, require_authenticated_user, require_permission
 from handball.core.organization import ORGANIZATION
 
-from .schemas import OwnPasswordChange, RoleUpdate, TemporaryPasswordReset, UserCreate
+from .schemas import OwnPasswordChange, PermissionGrantUpdate, RoleUpdate, TemporaryPasswordReset, UserCreate
 from .service import IdentityService
 
 
@@ -112,6 +112,20 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
     def roles(user_id: int, body: RoleUpdate, context: Annotated[AccessContext, Depends(_write_permission(Permission.USERS_MANAGE))]) -> dict[str, bool]:
         try:
             service.set_roles(user_id, body.roles, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"updated": True}
+
+    @router.put("/api/v1/admin/users/{user_id}/permissions")
+    def permissions(
+        user_id: int,
+        body: PermissionGrantUpdate,
+        context: Annotated[
+            AccessContext, Depends(_write_permission(Permission.USERS_MANAGE))
+        ],
+    ) -> dict[str, bool]:
+        try:
+            service.set_permission_grants(user_id, body.permissions, context)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"updated": True}

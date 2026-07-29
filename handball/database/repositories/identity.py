@@ -113,6 +113,18 @@ class IdentityRepository:
         permissions: set[str] = set()
         for role in system_roles | team_roles:
             permissions.update(str(permission) for permission in ROLE_PERMISSIONS.get(role, ()))
+        if self.connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='user_permission_grants'"
+        ).fetchone():
+            permissions.update(
+                str(item[0])
+                for item in self.connection.execute(
+                    "SELECT permission_code FROM user_permission_grants WHERE user_id=?",
+                    (row["user_id"],),
+                )
+            )
+        if "sql.admin" in permissions:
+            permissions.add("sql.explore")
         if touch and not self.read_only:
             self.connection.execute(
                 "UPDATE auth_sessions SET last_seen_at=? WHERE id=?",
@@ -194,8 +206,74 @@ class IdentityRepository:
                     (row["id"],),
                 )
             ]
+            inherited: set[str] = set()
+            for role in item["roles"]:
+                inherited.update(str(value) for value in ROLE_PERMISSIONS.get(role, ()))
+            direct = (
+                [
+                    str(value[0])
+                    for value in self.connection.execute(
+                        "SELECT permission_code FROM user_permission_grants WHERE user_id=? ORDER BY permission_code",
+                        (row["id"],),
+                    )
+                ]
+                if self.connection.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='user_permission_grants'"
+                ).fetchone()
+                else []
+            )
+            effective = inherited | set(direct)
+            if "sql.admin" in effective:
+                effective.add("sql.explore")
+            item["inherited_permissions"] = sorted(inherited)
+            item["direct_permissions"] = direct
+            item["effective_permissions"] = sorted(effective)
             result.append(item)
         return result
+
+    def set_permission_grants(
+        self,
+        user_id: int,
+        permissions: Iterable[str],
+        *,
+        actor_user_id: int,
+    ) -> None:
+        if not self.connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='user_permission_grants'"
+        ).fetchone():
+            raise ValueError(
+                "A migração v5 é necessária para permissões individuais."
+            )
+        normalized = {str(value).strip().casefold() for value in permissions}
+        allowed = {"sql.explore", "sql.admin"}
+        if not normalized <= allowed:
+            raise ValueError("Permissão SQL inválida.")
+        if not self.connection.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+            raise ValueError("Usuário inexistente.")
+        before = [
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT permission_code FROM user_permission_grants WHERE user_id=? ORDER BY permission_code",
+                (user_id,),
+            )
+        ]
+        self.connection.execute(
+            "DELETE FROM user_permission_grants WHERE user_id=?", (user_id,)
+        )
+        now = now_iso()
+        self.connection.executemany(
+            "INSERT INTO user_permission_grants(user_id,permission_code,granted_by_user_id,granted_at) VALUES(?,?,?,?)",
+            [(user_id, permission, actor_user_id, now) for permission in sorted(normalized)],
+        )
+        self.audit_event(
+            actor_user_id=actor_user_id,
+            action="user.permissions.update",
+            entity="user",
+            target_id=str(user_id),
+            origin="admin",
+            before={"direct_permissions": before},
+            after={"direct_permissions": sorted(normalized)},
+        )
 
     def list_people_and_players(self) -> dict[str, list[dict[str, Any]]]:
         people = [
@@ -466,3 +544,21 @@ class IdentityRepository:
             (max(1, min(limit, 1000)),),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_security_audit_result(
+        self, *, request_id: str, actor_user_id: int
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """SELECT after_json FROM security_audit_events
+               WHERE request_id=? AND actor_user_id=?
+                 AND action='sql.change.execute' AND origin='sql-admin'
+               ORDER BY id DESC LIMIT 1""",
+            (request_id, actor_user_id),
+        ).fetchone()
+        if row is None or not row["after_json"]:
+            return None
+        try:
+            payload = json.loads(str(row["after_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
