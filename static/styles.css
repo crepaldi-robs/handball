@@ -21,6 +21,53 @@
   --shadow: 0 18px 45px rgba(7, 21, 35, .1);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
+
+  /* Fundação de plataforma compartilhada (HM-IME) — valores espelham
+     handball/core/team_theme.py::TEAM_THEMES["hm-ime"]. */
+  --hm-primary: #D71920;
+  --hm-primary-dark: #A40E17;
+  --hm-canvas: #F7F4F2;
+  --hm-surface: #FFFFFF;
+  --hm-ink: #171717;
+  --hm-muted: #6B6464;
+  --hm-border: #E6DEDB;
+  --hm-success: #0F7B5A;
+  --hm-warning: #B45F06;
+  --hm-destructive: #7F1D1D;
+}
+
+/* -------------------------------------------------------------------------
+   Casco compartilhado: app bar e marca do produto (docs/HM-IME-IDENTIDADE-VISUAL.md).
+   Novos componentes; .topbar/.mini-mark continuam servindo as telas ainda
+   não migradas.
+   ------------------------------------------------------------------------- */
+.platform-appbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: 68px;
+  color: #fff;
+  background: var(--hm-ink);
+  border-bottom: 3px solid var(--hm-primary);
+  padding-top: env(safe-area-inset-top);
+}
+.platform-brand {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  color: white;
+  background: var(--hm-primary);
+  border-radius: 9px 4px 9px 4px;
+  font-family: Georgia, serif;
+  font-weight: 800;
+}
+.platform-brand.has-image {
+  color: transparent;
+  background-image: url("/static/hm-ime-logo.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 /* -------------------------------------------------------------------------
@@ -768,7 +815,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .alert-success { color: var(--success); background: var(--success-bg); border: 1px solid #bde5d6; }
 .alert-warning { color: var(--warning); background: var(--warning-bg); border: 1px solid #eddaa7; }
 
-.module-shell {
+.module-shell, .platform-shell {
   width: min(1180px, calc(100% - 40px));
   margin: 0 auto;
   padding: clamp(48px, 8vw, 94px) 0 72px;
@@ -821,12 +868,12 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   display: grid;
   place-items: center;
   color: white;
-  background: var(--navy-800);
+  background: var(--hm-ink);
   border-radius: 14px;
   font-size: 1.35rem;
   font-weight: 800;
 }
-.module-card-available .module-icon { background: var(--success); }
+.module-card-available .module-icon { background: var(--hm-success); }
 .module-status {
   margin: 22px 0 15px;
   padding: 6px 9px;
@@ -849,7 +896,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   font-size: .78rem;
   font-weight: 800;
 }
-.module-card-action b { margin-left: 5px; color: var(--orange); font-size: 1rem; }
+.module-card-action b { margin-left: 5px; color: var(--hm-primary); font-size: 1rem; }
 .platform-note { margin: 30px 0 0; color: var(--muted); font-size: .74rem; text-align: center; }
 .skeleton-shell { width: min(900px, calc(100% - 40px)); }
 .back-link { display: inline-flex; margin-bottom: 24px; color: var(--navy-700); font-size: .82rem; font-weight: 800; }
@@ -917,7 +964,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 
 @media (max-width: 760px) {
   body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
-  .topbar { height: calc(62px + env(safe-area-inset-top)); }
+  .topbar, .platform-appbar { height: calc(62px + env(safe-area-inset-top)); }
   .topbar-inner { height: 62px; padding: 0 14px; }
   .identity strong { font-size: .83rem; }
   .identity span, .hub-text-link, .user-label, .sidebar { display: none; }

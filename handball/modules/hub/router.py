@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from handball.core.auth import session_from_request
 from handball.core.authorization import Permission
 from handball.core.organization import ORGANIZATION
+from handball.core.team_theme import team_theme
 
 
 def create_router(templates: Jinja2Templates) -> APIRouter:
@@ -33,6 +34,7 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
                 "can_playbook": Permission.PLAYBOOK_READ in session.permissions,
                 "can_sql_explorer": Permission.SQL_EXPLORE in session.permissions or Permission.SQL_ADMIN in session.permissions,
                 "organization": ORGANIZATION,
+                "team_theme": team_theme(ORGANIZATION.slug).to_dict(),
             },
         )
 
