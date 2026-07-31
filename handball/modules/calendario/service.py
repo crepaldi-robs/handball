@@ -23,6 +23,7 @@ from .schemas import (
     CalendarRescheduleInput,
     CalendarSeriesEditInput,
     CalendarSeriesInput,
+    CalendarVisibilityInput,
 )
 
 
@@ -44,6 +45,15 @@ class CalendarService:
     def _require(context: AccessContext, permission: Permission) -> None:
         if permission not in context.permissions:
             raise PermissionError("Operação não autorizada.")
+
+    @staticmethod
+    def _is_player_calendar_view(context: AccessContext) -> bool:
+        """Atleta vê apenas o calendário publicado; CT mantém a visão integral."""
+
+        return (
+            context.linked_player_id is not None
+            and Permission.CALENDAR_MANAGE not in context.permissions
+        )
 
     @staticmethod
     def _team_ids(context: AccessContext, team_id: int | None = None) -> tuple[int, ...]:
@@ -94,6 +104,7 @@ class CalendarService:
         effective_season_label = (
             None if season_id is not None else season_label or ACTIVE_SEASON_LABEL
         )
+        player_view = self._is_player_calendar_view(context)
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             events = unit_of_work.calendar.list_events(
                 allowed,
@@ -104,6 +115,7 @@ class CalendarService:
                 event_types=event_types,
                 statuses=statuses,
                 query=query,
+                player_visible_only=player_view,
             )
             justifications = (
                 unit_of_work.calendar.list_justifications(
@@ -117,17 +129,33 @@ class CalendarService:
                 )
                 else []
             )
-            countdown_targets = unit_of_work.calendar.list_countdown_targets(
-                allowed,
-                season_id=season_id,
-                season_label=effective_season_label,
+            countdown_targets = (
+                []
+                if player_view
+                else unit_of_work.calendar.list_countdown_targets(
+                    allowed,
+                    season_id=season_id,
+                    season_label=effective_season_label,
+                )
             )
-            training_events = unit_of_work.calendar.list_training_events(allowed)
+            training_events = unit_of_work.calendar.list_training_events(
+                allowed,
+                player_visible_only=player_view,
+            )
         countdown_by_event, countdowns = self._countdowns(
             countdown_targets,
             training_events,
         )
         own_by_event = {int(item["event_id"]): item for item in justifications}
+        visible_event_ids = {int(item["id"]) for item in events}
+        own_by_event = {
+            event_id: item
+            for event_id, item in own_by_event.items()
+            if event_id in visible_event_ids
+        }
+        justifications = [
+            item for item in justifications if int(item["event_id"]) in visible_event_ids
+        ]
         now = self._now_factory().astimezone(UTC)
         groups: dict[str, list[dict[str, Any]]] = {
             "past": [],
@@ -377,6 +405,32 @@ class CalendarService:
                 actor_user_id=context.user_id,
             )
 
+    def set_player_visibility(
+        self,
+        event_id: int,
+        body: CalendarVisibilityInput,
+        context: AccessContext,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.CALENDAR_VISIBILITY_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            # A conta DEV não precisa estar vinculada a uma equipe para operar
+            # a publicação; ela administra todas as equipes ativas. CT continua
+            # estritamente limitado às equipes do seu vínculo.
+            allowed = tuple(sorted(int(value) for value in context.team_ids))
+            if not allowed:
+                if "DEV" not in context.system_roles:
+                    raise PermissionError("Conta sem equipe ativa.")
+                allowed = tuple(unit_of_work.playbook.active_team_ids())
+            if not allowed:
+                raise PermissionError("Não há equipe ativa para administrar.")
+            return unit_of_work.calendar.set_player_visibility(
+                event_id,
+                is_player_visible=body.is_player_visible,
+                team_ids=allowed,
+                actor_user_id=context.user_id,
+                base_version=body.base_version,
+            )
+
     def check_conflicts(
         self,
         body: CalendarConflictCheckInput,
@@ -410,10 +464,38 @@ class CalendarService:
                 suggestion="Recarregue a página e tente novamente.",
             )
         with self._unit_of_work_factory() as unit_of_work:
+            allowed = self._team_ids(context)
+            if action == "COMPLETE" and unit_of_work.playbook.is_available():
+                event_plan = unit_of_work.playbook.plan_for_event(
+                    event_id,
+                    team_ids=allowed,
+                )
+                linked_session_ids = {
+                    int(item["session"]["id"])
+                    for item in event_plan.get("sessions") or ()
+                }
+                if linked_session_ids:
+                    selected_session_id = body.playbook_session_id
+                    if selected_session_id is None:
+                        raise CalendarProblem(
+                            code="calendar.playbook_session_required",
+                            title="Escolha a sessão do Playbook",
+                            message="Este treino tem sessões vinculadas; indique qual sessão é o destino deste fechamento.",
+                            suggestion="Selecione uma sessão no Playbook e conclua novamente.",
+                            status_code=409,
+                        )
+                    if int(selected_session_id) not in linked_session_ids:
+                        raise CalendarProblem(
+                            code="calendar.playbook_session_invalid",
+                            title="Sessão do Playbook inválida",
+                            message="A sessão escolhida não está vinculada ativamente a este treino.",
+                            suggestion="Recarregue o treino e escolha uma das sessões vinculadas.",
+                            status_code=409,
+                        )
             return unit_of_work.calendar.transition_event(
                 event_id,
                 action=action,
-                team_ids=self._team_ids(context),
+                team_ids=allowed,
                 actor_user_id=context.user_id,
                 reason=body.reason,
                 base_version=body.base_version,
@@ -459,6 +541,7 @@ class CalendarService:
             return unit_of_work.calendar.event_history(
                 event_id,
                 team_ids=self._team_ids(context),
+                player_visible_only=self._is_player_calendar_view(context),
             )
 
     def _series_occurrences(

@@ -5,7 +5,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from handball.database import DatabaseManager
-from handball.database.migrations import DatabaseMigrator, MIGRATION_V8_CHECKSUM
+from handball.database.migrations import (
+    DatabaseMigrator,
+    MIGRATION_V8_CHECKSUM,
+    MIGRATION_V10_CHECKSUM,
+)
 from tests.test_users_authorization import login, logout, make_v2
 
 
@@ -44,6 +48,7 @@ def _create_training(
     *,
     starts_at: str,
     ends_at: str,
+    is_player_visible: bool = False,
 ) -> dict[str, object]:
     response = client.post(
         "/api/v1/calendar/events",
@@ -59,6 +64,7 @@ def _create_training(
             "location": "CEPEUSP",
             "notes": "Treino planejado pelo Playbook",
             "restriction_kind": None,
+            "is_player_visible": is_player_visible,
         },
         headers={"X-CSRF-Token": csrf},
     )
@@ -89,12 +95,15 @@ def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
 
     status = DatabaseMigrator(manager.db_path).status()
 
-    assert status.current_version == 9
-    assert status.latest_version == 9
+    assert status.current_version == 10
+    assert status.latest_version == 10
     assert status.compatible is True
     with manager.read_only_connection() as connection:
         row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=8"
+        ).fetchone()
+        v10_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=10"
         ).fetchone()
         tables = {
             item[0]
@@ -103,13 +112,21 @@ def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
             )
         }
     assert tuple(row) == ("playbook_library_and_training_plans", MIGRATION_V8_CHECKSUM)
+    assert tuple(v10_row) == (
+        "playbook_independent_plans_and_player_calendar_visibility",
+        MIGRATION_V10_CHECKSUM,
+    )
     assert {
         "playbook_folders",
         "playbook_contents",
         "playbook_content_revisions",
         "playbook_training_plans",
-        "playbook_plan_transfers",
-        "playbook_plan_evaluations",
+        "playbook_training_plan_revisions",
+        "playbook_series",
+        "playbook_sessions",
+        "playbook_session_event_links",
+        "playbook_session_event_history",
+        "playbook_session_evaluations",
     } <= tables
 
 
@@ -275,11 +292,13 @@ def test_playbook_plan_transfers_on_reschedule_and_guided_finish(tmp_path: Path)
         ends_at="2035-09-10T21:00:00-03:00",
     )
     finish_event_id = int(finish_event["id"])
-    assert client.put(
+    finish_saved = client.put(
         f"/api/v1/playbook/events/{finish_event_id}/plan",
         json={"title": "Treino de fechamento", "notes": "", "items": [{"content_id": content_id, "sort_order": 0, "planned_minutes": 20, "notes": ""}]},
         headers={"X-CSRF-Token": csrf},
-    ).status_code == 200
+    )
+    assert finish_saved.status_code == 200, finish_saved.text
+    finish_session_id = int(finish_saved.json()["sessions"][0]["session"]["id"])
     confirmed = client.post(
         f"/api/v1/calendar/events/{finish_event_id}/confirm",
         json={"reason": "Confirmado para teste", "base_version": finish_event["version"]},
@@ -296,6 +315,7 @@ def test_playbook_plan_transfers_on_reschedule_and_guided_finish(tmp_path: Path)
         json={
             "session_notes": "Pivô respondeu bem ao bloqueio.",
             "finalize_attendance": True,
+            "playbook_session_id": finish_session_id,
             "evaluations": [{
                 "content_id": content_id,
                 "mastery_stage": "IMPROVING",
@@ -316,10 +336,227 @@ def test_playbook_plan_transfers_on_reschedule_and_guided_finish(tmp_path: Path)
         "continuity_decision": "CONTINUE",
         "notes": "Retomar no próximo treino.",
         "evaluated_at": final_plan.json()["evaluations"][0]["evaluated_at"],
+        "session_id": finish_session_id,
         "title": "Cruzamento curto",
     }]
     with manager.read_only_connection() as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM playbook_plan_evaluations WHERE calendar_event_id=?",
+            "SELECT COUNT(*) FROM playbook_session_evaluations WHERE calendar_event_id=?",
             (finish_event_id,),
         ).fetchone()[0] == 1
+
+
+def test_independent_plan_series_sessions_links_revisions_and_player_visibility(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, _, content = _seed_and_content(client, csrf)
+    content_id = int(content["id"])
+    assert client.post(
+        f"/api/v1/playbook/contents/{content_id}/publish",
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    _, season_id = _team_and_season(client)
+    plan_payload = {
+        "team_id": team_id,
+        "title": "Plano independente",
+        "seasonal_objective": "Treinar continuidade de ataque.",
+        "context_adjustment": "Sem depender de evento do calendário.",
+        "notes": "Versão inicial.",
+        "change_summary": "Criação do plano independente.",
+        "items": [{
+            "content_id": content_id,
+            "sort_order": 2,
+            "planned_minutes": 30,
+            "notes": "Bloco principal.",
+        }],
+    }
+    created_plan = client.post(
+        "/api/v1/playbook/plans",
+        json=plan_payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created_plan.status_code == 201, created_plan.text
+    plan = created_plan.json()
+    plan_id = int(plan["plan"]["id"])
+    initial_plan_revision_id = int(plan["revisions"][0]["id"])
+    assert plan["items"][0]["sort_order"] == 2
+    assert client.get("/api/v1/playbook/plans").json()["items"][0]["id"] == plan_id
+
+    changed_plan = client.put(
+        f"/api/v1/playbook/plans/{plan_id}",
+        json={**plan_payload, "title": "Plano independente revisado", "notes": "Versão alterada."},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert changed_plan.status_code == 200, changed_plan.text
+    restored_plan = client.post(
+        f"/api/v1/playbook/plans/{plan_id}/revisions/{initial_plan_revision_id}/restore",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert restored_plan.status_code == 200, restored_plan.text
+    assert restored_plan.json()["plan"]["title"] == "Plano independente"
+
+    created_series = client.post(
+        "/api/v1/playbook/series",
+        json={
+            "team_id": team_id,
+            "plan_id": plan_id,
+            "title": "Ciclo de cruzamentos",
+            "recurrence_rule": "FREQ=WEEKLY;BYDAY=MO",
+            "starts_on": "2035-10-01",
+            "ends_on": "2035-11-30",
+            "notes": "Série reutilizável.",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created_series.status_code == 201, created_series.text
+    series_id = int(created_series.json()["id"])
+    assert client.get("/api/v1/playbook/series").json()["items"][0]["id"] == series_id
+
+    unlinked_session = client.post(
+        "/api/v1/playbook/sessions",
+        json={
+            "team_id": team_id,
+            "plan_id": plan_id,
+            "series_id": series_id,
+            "title_override": "Sessão sem evento",
+            "local_overrides": {"quadra": "anexo", "minutos": 75},
+            "change_summary": "Planejamento sem calendário.",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert unlinked_session.status_code == 201, unlinked_session.text
+    unlinked = unlinked_session.json()
+    unlinked_id = int(unlinked["session"]["id"])
+    first_session_revision_id = int(unlinked["revisions"][0]["id"])
+    assert unlinked["event_links"] == []
+    executed = client.post(
+        f"/api/v1/playbook/sessions/{unlinked_id}/execute",
+        json={"execution_status": "COMPLETED", "execution_notes": "Executada sem evento.", "change_summary": "Execução independente."},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert executed.status_code == 200, executed.text
+    assert executed.json()["session"]["execution_status"] == "COMPLETED"
+    restored_session = client.post(
+        f"/api/v1/playbook/sessions/{unlinked_id}/revisions/{first_session_revision_id}/restore",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert restored_session.status_code == 200, restored_session.text
+    assert restored_session.json()["session"]["execution_status"] == "NOT_STARTED"
+    assert restored_session.json()["session"]["local_overrides"] == {"minutos": 75, "quadra": "anexo"}
+    independent_evaluation = client.post(
+        f"/api/v1/playbook/sessions/{unlinked_id}/evaluations",
+        json={
+            "evaluations": [{
+                "content_id": content_id,
+                "mastery_stage": "REFINING",
+                "continuity_decision": "CONTINUE",
+                "notes": "Avaliação sem evento de calendário.",
+            }],
+            "change_summary": "Avaliação independente.",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert independent_evaluation.status_code == 200, independent_evaluation.text
+    assert independent_evaluation.json()["items"] == [{
+        "content_id": content_id,
+        "mastery_stage": "REFINING",
+        "continuity_decision": "CONTINUE",
+        "notes": "Avaliação sem evento de calendário.",
+        "evaluated_at": independent_evaluation.json()["items"][0]["evaluated_at"],
+        "session_id": unlinked_id,
+        "calendar_event_id": None,
+    }]
+
+    private_event = _create_training(
+        client,
+        csrf,
+        team_id,
+        season_id,
+        starts_at="2035-10-02T19:00:00-03:00",
+        ends_at="2035-10-02T21:00:00-03:00",
+    )
+    source_event = _create_training(
+        client,
+        csrf,
+        team_id,
+        season_id,
+        starts_at="2035-10-04T19:00:00-03:00",
+        ends_at="2035-10-04T21:00:00-03:00",
+        is_player_visible=True,
+    )
+    source_event_id = int(source_event["id"])
+    first_link = client.post(
+        f"/api/v1/playbook/sessions/{unlinked_id}/calendar-link",
+        json={"event_id": source_event_id, "reason": "Primeiro bloco."},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert first_link.status_code == 200, first_link.text
+    second_session = client.post(
+        "/api/v1/playbook/sessions",
+        json={
+            "team_id": team_id,
+            "plan_id": plan_id,
+            "series_id": series_id,
+            "title_override": "Segundo bloco do mesmo treino",
+            "change_summary": "Sessão adicional.",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert second_session.status_code == 201, second_session.text
+    second_session_id = int(second_session.json()["session"]["id"])
+    assert client.post(
+        f"/api/v1/playbook/sessions/{second_session_id}/calendar-link",
+        json={"event_id": source_event_id, "reason": "Segundo bloco."},
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    before_reschedule = client.get(f"/api/v1/playbook/events/{source_event_id}/plan")
+    assert before_reschedule.status_code == 200, before_reschedule.text
+    assert [item["session"]["id"] for item in before_reschedule.json()["sessions"]] == [
+        unlinked_id,
+        second_session_id,
+    ]
+
+    rescheduled = client.post(
+        f"/api/v1/calendar/events/{source_event_id}/reschedule",
+        json={
+            "starts_at": "2035-10-05T19:00:00-03:00",
+            "ends_at": "2035-10-05T21:00:00-03:00",
+            "reason": "Quadra em manutenção.",
+            "base_version": source_event["version"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert rescheduled.status_code == 200, rescheduled.text
+    replacement = rescheduled.json()["replacement"]
+    replacement_id = int(replacement["id"])
+    assert replacement["is_player_visible"] == 1
+    after_reschedule = client.get(f"/api/v1/playbook/events/{replacement_id}/plan")
+    assert after_reschedule.status_code == 200, after_reschedule.text
+    assert [item["session"]["id"] for item in after_reschedule.json()["sessions"]] == [
+        unlinked_id,
+        second_session_id,
+    ]
+    moved_session = client.get(f"/api/v1/playbook/sessions/{unlinked_id}").json()
+    assert moved_session["event_links"][0]["calendar_event_id"] == replacement_id
+    assert moved_session["event_links"][0]["link_state"] == "ACTIVE"
+    assert any(
+        item["action"] == "RESCHEDULE"
+        and item["from_event_id"] == source_event_id
+        and item["to_event_id"] == replacement_id
+        for item in moved_session["history"]
+    )
+
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    player_library = client.get(f"/api/v1/playbook?team_id={team_id}")
+    assert player_library.status_code == 200, player_library.text
+    assert player_library.json()["next_training"]["event"]["id"] == replacement_id
+    assert client.get(f"/api/v1/playbook/events/{private_event['id']}/plan").status_code == 403
+    assert client.get(f"/api/v1/playbook/events/{replacement_id}/plan").status_code == 200
+    assert client.post(
+        f"/api/v1/playbook/sessions/{unlinked_id}/execute",
+        json={"execution_status": "COMPLETED"},
+        headers={"X-CSRF-Token": player_csrf},
+    ).status_code == 403

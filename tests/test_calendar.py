@@ -11,6 +11,7 @@ from handball.database.migrations import (
     MIGRATION_V7_CHECKSUM,
     MIGRATION_V8_CHECKSUM,
     MIGRATION_V9_CHECKSUM,
+    MIGRATION_V10_CHECKSUM,
     logical_fingerprint,
     verify_database,
 )
@@ -40,6 +41,7 @@ def _event(
     ends_at: str = "2035-08-01T21:00:00-03:00",
     restriction_kind: str | None = None,
     attendance_session_id: int | None = None,
+    is_player_visible: bool = False,
 ) -> dict[str, object]:
     return {
         "team_id": team_id,
@@ -52,6 +54,7 @@ def _event(
         "notes": "Planejamento de teste",
         "restriction_kind": restriction_kind,
         "attendance_session_id": attendance_session_id,
+        "is_player_visible": is_player_visible,
     }
 
 
@@ -62,7 +65,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 9
+    assert status.current_version == 10
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -82,6 +85,9 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         ).fetchone()
         v9_row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=9"
+        ).fetchone()
+        v10_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=10"
         ).fetchone()
         season = connection.execute(
             "SELECT label,starts_on,ends_on FROM seasons WHERE label='2026.2'"
@@ -105,6 +111,8 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
     assert v8_row["checksum_sha256"] == MIGRATION_V8_CHECKSUM
     assert v9_row["name"] == "calendar_countdown_targets"
     assert v9_row["checksum_sha256"] == MIGRATION_V9_CHECKSUM
+    assert v10_row["name"] == "playbook_independent_plans_and_player_calendar_visibility"
+    assert v10_row["checksum_sha256"] == MIGRATION_V10_CHECKSUM
     assert {
         "calendar_events",
         "calendar_justifications",
@@ -112,7 +120,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         "calendar_event_transitions",
         "calendar_command_receipts",
     } <= tables
-    assert client.get("/ready").json()["schema_version"] == 9
+    assert client.get("/ready").json()["schema_version"] == 10
     assert data["before_ids"]
 
 
@@ -446,12 +454,17 @@ def test_player_sees_team_events_and_only_writes_own_justification(
     team_id, season_id = _options(client)
     training = client.post(
         "/api/v1/calendar/events",
-        json=_event(team_id, season_id),
+        json=_event(team_id, season_id, is_player_visible=True),
         headers={"X-CSRF-Token": ct_csrf},
     ).json()
     championship = client.post(
         "/api/v1/calendar/events",
-        json=_event(team_id, season_id, event_type="CHAMPIONSHIP"),
+        json=_event(
+            team_id,
+            season_id,
+            event_type="CHAMPIONSHIP",
+            is_player_visible=True,
+        ),
         headers={"X-CSRF-Token": ct_csrf},
     ).json()
     with manager.unit_of_work() as unit_of_work:
@@ -835,6 +848,7 @@ def test_player_calendar_exposes_response_only_for_next_training(
                     season_id,
                     starts_at=starts_at,
                     ends_at=ends_at,
+                    is_player_visible=True,
                 ),
                 headers={"X-CSRF-Token": csrf},
             ).json()
@@ -851,6 +865,41 @@ def test_player_calendar_exposes_response_only_for_next_training(
     assert "respond" in listed[0]["available_actions"]
     assert listed[1]["is_next_player_training"] is False
     assert "respond" not in listed[1]["available_actions"]
+
+
+def test_calendar_is_private_by_default_and_publication_is_scoped(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    ct_csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    private_event = client.post(
+        "/api/v1/calendar/events",
+        json=_event(team_id, season_id),
+        headers={"X-CSRF-Token": ct_csrf},
+    )
+    assert private_event.status_code == 201, private_event.text
+    private_payload = private_event.json()
+    assert private_payload["is_player_visible"] == 0
+
+    logout(client)
+    login(client, "player", data["passwords"]["player"])
+    assert client.get("/api/v1/calendar").json()["items"] == []
+
+    logout(client)
+    dev_csrf = login(client, "dev", data["passwords"]["dev"])
+    published = client.put(
+        f"/api/v1/calendar/events/{private_payload['id']}/player-visibility",
+        json={"is_player_visible": True, "base_version": private_payload["version"]},
+        headers={"X-CSRF-Token": dev_csrf},
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["is_player_visible"] == 1
+
+    logout(client)
+    login(client, "player", data["passwords"]["player"])
+    visible = client.get("/api/v1/calendar").json()["items"]
+    assert [item["id"] for item in visible] == [private_payload["id"]]
 
 
 def test_calendar_page_has_modern_touch_journey_without_hard_delete(

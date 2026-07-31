@@ -42,6 +42,182 @@ def _make_v5_database(database_path) -> None:
     )
 
 
+def _make_v8_or_v9_playbook_database(database_path, *, version: int) -> None:
+    """Materializa um banco histórico realista para provar a cópia PB-3B.
+
+    O fixture passa pelas próprias funções de migração antigas até V8/V9 e só
+    então insere um plano já ligado a evento, sua remarcação e sua avaliação.
+    Assim a V10 é exercitada exatamente pelo caminho suportado em produção.
+    """
+
+    assert version in {8, 9}
+    AttendanceRepository(database_path).bootstrap()
+    now = "2026-07-31T12:00:00-03:00"
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        migrations._apply_schema_v2(conn, legacy_admin=("historico", "hash"))
+        migrations._record_schema_v2(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v3(conn)
+        migrations._record_schema_v3(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v4(conn)
+        migrations._record_schema_v4(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v5(conn)
+        migrations._record_schema_v5(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v6(conn)
+        migrations._record_schema_v6(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v7(conn)
+        migrations._record_schema_v7(conn, app_version="pytest", origin="pytest")
+        migrations._apply_schema_v8(conn)
+        migrations._record_schema_v8(conn, app_version="pytest", origin="pytest")
+        if version == 9:
+            migrations._apply_schema_v9(conn)
+            migrations._record_schema_v9(conn, app_version="pytest", origin="pytest")
+
+        team_id = int(conn.execute("SELECT id FROM teams WHERE code='HM_IME'").fetchone()[0])
+        season_id = int(
+            conn.execute(
+                "SELECT id FROM seasons WHERE team_id=? AND label='2026.2'",
+                (team_id,),
+            ).fetchone()[0]
+        )
+        actor_id = int(conn.execute("SELECT id FROM users WHERE username='historico'").fetchone()[0])
+        for event_id, status, starts_at in (
+            (101, "RESCHEDULED", "2035-08-01T22:00:00+00:00"),
+            (102, "PLANNED", "2035-08-03T22:00:00+00:00"),
+        ):
+            conn.execute(
+                """INSERT INTO calendar_events(
+                       id,team_id,season_id,event_type,status,starts_at,ends_at,
+                       location,notes,restriction_kind,attendance_session_id,
+                       created_by_user_id,updated_by_user_id,created_at,updated_at,
+                       title,opponent,all_day,version,series_id
+                   ) VALUES(?,?,?,'TRAINING',?,?,?,'CEPEUSP','histórico',NULL,NULL,
+                            ?,?,?,?,'Treino histórico','',0,1,NULL)""",
+                (
+                    event_id,
+                    team_id,
+                    season_id,
+                    status,
+                    starts_at,
+                    starts_at.replace("22:00", "23:30"),
+                    actor_id,
+                    actor_id,
+                    now,
+                    now,
+                ),
+            )
+        conn.execute(
+            """INSERT INTO playbook_contents(
+                   id,team_id,title,status,created_by_user_id,updated_by_user_id,
+                   created_at,updated_at
+               ) VALUES(55,?,'Cruzamento preservado','PUBLISHED',?,?,?,?)""",
+            (team_id, actor_id, actor_id, now, now),
+        )
+        conn.execute(
+            """INSERT INTO playbook_training_plans(
+                   id,calendar_event_id,team_id,title,seasonal_objective,
+                   context_adjustment,notes,created_by_user_id,updated_by_user_id,
+                   created_at,updated_at
+               ) VALUES(77,102,?,'Plano histórico','Objetivo preservado',
+                        'Ajuste preservado','Notas preservadas',?,?,?,?)""",
+            (team_id, actor_id, actor_id, now, now),
+        )
+        conn.execute(
+            """INSERT INTO playbook_training_plan_items(
+                   id,plan_id,content_id,sort_order,planned_minutes,notes,created_at
+               ) VALUES(88,77,55,4,35,'Item preservado',?)""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO playbook_plan_transfers(
+                   id,plan_id,from_event_id,to_event_id,reason,actor_user_id,transferred_at
+               ) VALUES(91,77,101,102,'Quadra indisponível',?,?)""",
+            (actor_id, now),
+        )
+        conn.execute(
+            """INSERT INTO playbook_plan_evaluations(
+                   id,calendar_event_id,content_id,mastery_stage,continuity_decision,
+                   notes,actor_user_id,evaluated_at
+               ) VALUES(93,102,55,'IMPROVING','CONTINUE','Avaliação preservada',?,?)""",
+            (actor_id, now),
+        )
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
+@pytest.mark.parametrize("source_version", [8, 9])
+def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
+    tmp_path,
+    source_version: int,
+) -> None:
+    database_path = tmp_path / f"playbook-v{source_version}.db"
+    _make_v8_or_v9_playbook_database(database_path, version=source_version)
+    before = DatabaseMigrator(database_path).status()
+    assert before.current_version == source_version
+    assert before.compatible is True
+
+    result = DatabaseMigrator(database_path).apply_pending(
+        app_version="pytest-v10",
+        origin="pytest",
+        expected_fingerprint=logical_fingerprint(database_path),
+    )
+
+    assert result.current_version == 10
+    assert result.pending_versions == ()
+    assert verify_database(database_path)["ok"] is True
+    with sqlite3.connect(database_path) as conn:
+        migrations_by_version = dict(
+            conn.execute(
+                "SELECT version,checksum_sha256 FROM schema_migrations WHERE version IN(8,9,10)"
+            )
+        )
+        plan = conn.execute(
+            """SELECT id,title,seasonal_objective,context_adjustment,notes,current_revision
+               FROM playbook_training_plans WHERE id=77"""
+        ).fetchone()
+        item = conn.execute(
+            """SELECT id,plan_id,content_id,sort_order,planned_minutes,notes
+               FROM playbook_training_plan_items WHERE id=88"""
+        ).fetchone()
+        session = conn.execute(
+            "SELECT id,plan_id,execution_status,current_revision FROM playbook_sessions WHERE id=77"
+        ).fetchone()
+        links = conn.execute(
+            """SELECT calendar_event_id,link_state,link_order
+               FROM playbook_session_event_links WHERE session_id=77
+               ORDER BY link_state,link_order,id"""
+        ).fetchall()
+        history = conn.execute(
+            """SELECT id,session_id,from_event_id,to_event_id,action,reason
+               FROM playbook_session_event_history WHERE id=91"""
+        ).fetchone()
+        evaluation = conn.execute(
+            """SELECT id,session_id,calendar_event_id,content_id,mastery_stage,
+                      continuity_decision,notes
+               FROM playbook_session_evaluations WHERE id=93"""
+        ).fetchone()
+        legacy_plan = conn.execute(
+            "SELECT id,calendar_event_id FROM playbook_training_plans_v8 WHERE id=77"
+        ).fetchone()
+        visibility = conn.execute(
+            "SELECT id,is_player_visible FROM calendar_events WHERE id IN(101,102) ORDER BY id"
+        ).fetchall()
+
+    assert migrations_by_version[8] == migrations.MIGRATION_V8_CHECKSUM
+    assert migrations_by_version[9] == migrations.MIGRATION_V9_CHECKSUM
+    assert migrations_by_version[10] == migrations.MIGRATION_V10_CHECKSUM
+    assert tuple(plan) == (77, "Plano histórico", "Objetivo preservado", "Ajuste preservado", "Notas preservadas", 1)
+    assert tuple(item) == (88, 77, 55, 4, 35, "Item preservado")
+    assert tuple(session) == (77, 77, "NOT_STARTED", 1)
+    assert [tuple(row) for row in links] == [(102, "ACTIVE", 0), (101, "HISTORICAL", 91)]
+    assert tuple(history) == (91, 77, 101, 102, "RESCHEDULE", "Quadra indisponível")
+    assert tuple(evaluation) == (93, 77, 102, 55, "IMPROVING", "CONTINUE", "Avaliação preservada")
+    assert tuple(legacy_plan) == (77, 102)
+    assert [tuple(row) for row in visibility] == [(101, 0), (102, 0)]
+
+
 def _make_ea5404b_database(database_path) -> None:
     """Reproduz o DDL histórico de ea5404b, anterior a sync/version."""
 

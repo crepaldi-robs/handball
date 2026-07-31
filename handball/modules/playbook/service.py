@@ -171,12 +171,16 @@ class PlaybookService:
                 team_ids=team_ids,
                 published_only=not can_manage,
             )
-            next_event_id = unit_of_work.playbook.next_training_event_id(team_ids)
+            next_event_id = unit_of_work.playbook.next_training_event_id(
+                team_ids,
+                player_visible_only=not can_manage,
+            )
             next_plan = (
                 unit_of_work.playbook.plan_for_event(
                     next_event_id,
                     team_ids=team_ids,
                     published_only=not can_manage,
+                    player_visible_only=not can_manage,
                 )
                 if next_event_id is not None
                 else None
@@ -616,19 +620,217 @@ class PlaybookService:
         ]
         return {"items": items}
 
+    # ------------------------------------------------------------------
+    # PB-3B: planejamento independente do calendário
+    # ------------------------------------------------------------------
+    def list_plans(
+        self,
+        context: AccessContext,
+        *,
+        team_id: int | None = None,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.list_plans(
+                team_ids=self._team_ids(context, team_id),
+                include_archived=include_archived,
+            )
+
+    def plan_detail(self, plan_id: int, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.plan_detail(
+                plan_id,
+                team_ids=self._team_ids(context),
+            )
+
+    def save_independent_plan(
+        self,
+        body: Any,
+        context: AccessContext,
+        *,
+        plan_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        payload = body.model_dump(mode="json", exclude_none=False)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.save_independent_plan(
+                payload,
+                plan_id=plan_id,
+                team_ids=self._team_ids(context, payload.get("team_id")),
+                actor_user_id=context.user_id,
+            )
+
+    def restore_plan_revision(
+        self,
+        plan_id: int,
+        revision_id: int,
+        context: AccessContext,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.restore_plan_revision(
+                plan_id,
+                revision_id,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
+    def list_series(
+        self,
+        context: AccessContext,
+        *,
+        team_id: int | None = None,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.list_series(
+                team_ids=self._team_ids(context, team_id),
+                include_archived=include_archived,
+            )
+
+    def save_series(
+        self,
+        body: Any,
+        context: AccessContext,
+        *,
+        series_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        payload = body.model_dump(mode="json", exclude_none=False)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.save_series(
+                payload,
+                series_id=series_id,
+                team_ids=self._team_ids(context, payload.get("team_id")),
+                actor_user_id=context.user_id,
+            )
+
+    def list_sessions(
+        self,
+        context: AccessContext,
+        *,
+        team_id: int | None = None,
+        event_id: int | None = None,
+        future_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.list_sessions(
+                team_ids=self._team_ids(context, team_id),
+                event_id=event_id,
+                future_only=future_only,
+            )
+
+    def session_detail(self, session_id: int, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.session_detail(
+                session_id,
+                team_ids=self._team_ids(context),
+            )
+
+    def save_session(
+        self,
+        body: Any,
+        context: AccessContext,
+        *,
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        payload = body.model_dump(mode="json", exclude_none=False)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.save_session(
+                payload,
+                session_id=session_id,
+                team_ids=self._team_ids(context, payload.get("team_id")),
+                actor_user_id=context.user_id,
+            )
+
+    def link_session_event(self, session_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.link_session_event(
+                session_id,
+                body.event_id,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+                reason=body.reason,
+            )
+
+    def unlink_session_event(self, session_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.unlink_session_event(
+                session_id,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+                reason=body.reason,
+            )
+
+    def restore_session_revision(
+        self,
+        session_id: int,
+        revision_id: int,
+        context: AccessContext,
+    ) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.restore_session_revision(
+                session_id,
+                revision_id,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
+    def execute_session(self, session_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.execute_session(
+                session_id,
+                body.model_dump(mode="json"),
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
+    def evaluate_session(
+        self,
+        session_id: int,
+        body: Any,
+        context: AccessContext,
+    ) -> list[dict[str, Any]]:
+        """Registra domínio da sessão sem exigir um evento de calendário."""
+
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.record_session_evaluations(
+                session_id,
+                [item.model_dump() for item in body.evaluations],
+                calendar_event_id=body.calendar_event_id,
+                change_summary=body.change_summary,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
     def plan(self, event_id: int, context: AccessContext) -> dict[str, Any]:
         self._require(context, Permission.PLAYBOOK_READ)
         team_ids = self._team_ids(context)
         published_only = self._published_only(context)
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             if published_only:
-                next_event_id = unit_of_work.playbook.next_training_event_id(team_ids)
+                next_event_id = unit_of_work.playbook.next_training_event_id(
+                    team_ids,
+                    player_visible_only=True,
+                )
                 if next_event_id != int(event_id):
-                    raise PermissionError("Atletas podem consultar apenas o plano do próximo treino aberto.")
+                    raise PermissionError("Atletas podem consultar apenas a sessão do próximo treino publicado e aberto.")
             return unit_of_work.playbook.plan_for_event(
                 event_id,
                 team_ids=team_ids,
                 published_only=published_only,
+                player_visible_only=published_only,
             )
 
     def save_plan(self, event_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
@@ -659,6 +861,19 @@ class PlaybookService:
         with self._unit_of_work_factory() as unit_of_work:
             plan_payload = unit_of_work.playbook.plan_for_event(event_id, team_ids=team_ids)
             event = plan_payload["event"]
+            selected_session_id = body.playbook_session_id
+            linked_session_ids = {
+                int(item["session"]["id"])
+                for item in plan_payload.get("sessions") or ()
+            }
+            if selected_session_id is None or int(selected_session_id) not in linked_session_ids:
+                raise PlaybookProblem(
+                    code="playbook.session_destination_required",
+                    title="Escolha a sessão do Playbook",
+                    message="O fechamento do evento exige uma sessão de destino vinculada a este treino.",
+                    suggestion="Selecione a sessão correspondente e tente novamente.",
+                    status_code=409,
+                )
             session_id = event.get("attendance_session_id")
             if session_id is None:
                 raise PlaybookProblem(
@@ -696,6 +911,7 @@ class PlaybookService:
                 [item.model_dump() for item in body.evaluations],
                 team_ids=team_ids,
                 actor_user_id=context.user_id,
+                session_id=int(selected_session_id),
             )
             completed_event = unit_of_work.calendar.transition_event(
                 event_id,

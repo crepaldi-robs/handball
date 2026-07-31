@@ -24,9 +24,14 @@ PLAYBOOK_TABLES = frozenset(
         "playbook_favorites",
         "playbook_recent_views",
         "playbook_training_plans",
+        "playbook_training_plan_revisions",
         "playbook_training_plan_items",
-        "playbook_plan_transfers",
-        "playbook_plan_evaluations",
+        "playbook_series",
+        "playbook_sessions",
+        "playbook_session_revisions",
+        "playbook_session_event_links",
+        "playbook_session_event_history",
+        "playbook_session_evaluations",
     }
 )
 
@@ -759,8 +764,9 @@ class PlaybookRepository:
                 for row in self.connection.execute(
                     f"""SELECT DISTINCT e.id,e.starts_at,e.title,e.status
                         FROM playbook_training_plan_items i
-                        JOIN playbook_training_plans p ON p.id=i.plan_id
-                        JOIN calendar_events e ON e.id=p.calendar_event_id
+                        JOIN playbook_sessions ps ON ps.plan_id=i.plan_id
+                        JOIN playbook_session_event_links l ON l.session_id=ps.id
+                        JOIN calendar_events e ON e.id=l.calendar_event_id
                         WHERE i.content_id IN ({content_placeholders})
                         ORDER BY e.starts_at,e.id""",
                     content_ids,
@@ -1692,9 +1698,12 @@ class PlaybookRepository:
         if content["status"] != "ARCHIVED":
             raise ValueError("Archive o conteúdo antes da exclusão definitiva para ter uma etapa reversível.")
         plan_rows = self.connection.execute(
-            """SELECT e.id,e.starts_at,e.title FROM playbook_training_plan_items i
-               JOIN playbook_training_plans p ON p.id=i.plan_id
-               JOIN calendar_events e ON e.id=p.calendar_event_id WHERE i.content_id=?""",
+            """SELECT DISTINCT e.id,e.starts_at,e.title
+               FROM playbook_training_plan_items i
+               JOIN playbook_sessions ps ON ps.plan_id=i.plan_id
+               JOIN playbook_session_event_links l ON l.session_id=ps.id
+               JOIN calendar_events e ON e.id=l.calendar_event_id
+               WHERE i.content_id=?""",
             (int(content_id),),
         ).fetchall()
         if plan_rows:
@@ -1703,7 +1712,8 @@ class PlaybookRepository:
                 "antes de excluí-lo definitivamente."
             )
         evaluation_rows = self.connection.execute(
-            """SELECT e.id,e.starts_at,e.title FROM playbook_plan_evaluations v
+            """SELECT DISTINCT e.id,e.starts_at,e.title
+               FROM playbook_session_evaluations v
                JOIN calendar_events e ON e.id=v.calendar_event_id
                WHERE v.content_id=? ORDER BY e.starts_at,e.id""",
             (int(content_id),),
@@ -2158,5 +2168,1470 @@ class PlaybookRepository:
             entity="calendar_event",
             target_id=event_id,
             after={"evaluations": result},
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # PB-3B / V10: plano independente, série e sessão com vínculo opcional
+    # ------------------------------------------------------------------
+    def _v10_event(
+        self,
+        event_id: int,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]:
+        allowed = _ids(team_ids)
+        if not allowed:
+            raise KeyError("Evento não encontrado.")
+        visibility_clause = " AND e.is_player_visible=1" if player_visible_only else ""
+        row = self.connection.execute(
+            f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,e.title,e.starts_at,
+                       e.ends_at,e.attendance_session_id,e.notes,e.version,e.is_player_visible,
+                       s.label season_label
+                FROM calendar_events e
+                JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
+                WHERE e.id=? AND e.team_id IN ({_placeholders(allowed)}){visibility_clause}""",
+            (int(event_id), *allowed),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Evento não encontrado na equipe autorizada.")
+        return dict(row)
+
+    def _v10_assert_training_event(
+        self,
+        event_id: int,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]:
+        event = self._v10_event(
+            event_id,
+            team_ids,
+            player_visible_only=player_visible_only,
+        )
+        if event["event_type"] != "TRAINING":
+            raise ValueError("A sessão do Playbook só pode ser ligada a um treino do Calendário.")
+        if event["status"] in {"CANCELLED", "RESCHEDULED"}:
+            raise ValueError("Treino cancelado ou remarcado não aceita vínculo ativo.")
+        return event
+
+    @staticmethod
+    def _v10_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _v10_decode(value: object, *, fallback: Any) -> Any:
+        try:
+            return json.loads(str(value or ""))
+        except (TypeError, ValueError):
+            return fallback
+
+    def _v10_plan(self, plan_id: int, team_ids: Iterable[int]) -> dict[str, Any]:
+        allowed = _ids(team_ids)
+        if not allowed:
+            raise KeyError("Plano não encontrado.")
+        row = self.connection.execute(
+            f"""SELECT * FROM playbook_training_plans
+                WHERE id=? AND team_id IN ({_placeholders(allowed)})""",
+            (int(plan_id), *allowed),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Plano não encontrado na equipe autorizada.")
+        return dict(row)
+
+    def _v10_session(
+        self,
+        session_id: int,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]:
+        allowed = _ids(team_ids)
+        if not allowed:
+            raise KeyError("Sessão não encontrada.")
+        player_clause = """
+            AND EXISTS(
+                SELECT 1 FROM playbook_session_event_links vl
+                JOIN calendar_events ve ON ve.id=vl.calendar_event_id
+                WHERE vl.session_id=ps.id AND vl.link_state='ACTIVE'
+                  AND ve.is_player_visible=1
+                  AND ve.event_type='TRAINING'
+                  AND ve.status IN('PLANNED','CONFIRMED')
+                  AND ve.ends_at>=?
+            )
+        """ if player_visible_only else ""
+        params: tuple[object, ...] = (int(session_id), *allowed)
+        if player_visible_only:
+            params = (*params, _now_iso())
+        row = self.connection.execute(
+            f"""SELECT ps.*,p.title plan_title,p.status plan_status,
+                       sr.title series_title
+                FROM playbook_sessions ps
+                JOIN playbook_training_plans p ON p.id=ps.plan_id
+                LEFT JOIN playbook_series sr ON sr.id=ps.series_id
+                WHERE ps.id=? AND ps.team_id IN ({_placeholders(allowed)})
+                  {player_clause}""",
+            params,
+        ).fetchone()
+        if row is None:
+            raise KeyError("Sessão não encontrada na equipe autorizada.")
+        return dict(row)
+
+    def _v10_plan_items(
+        self,
+        plan_id: int,
+        *,
+        published_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        filter_clause = " AND c.status='PUBLISHED'" if published_only else ""
+        rows = self.connection.execute(
+            f"""SELECT i.id,i.plan_id,i.content_id,i.sort_order,i.planned_minutes,i.notes,
+                       i.created_at,i.updated_at,c.title,c.status,c.perspective,
+                       c.objective,c.steps
+                FROM playbook_training_plan_items i
+                JOIN playbook_contents c ON c.id=i.content_id
+                WHERE i.plan_id=?{filter_clause}
+                ORDER BY i.sort_order,i.id""",
+            (int(plan_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _v10_plan_snapshot(self, plan_id: int) -> dict[str, Any]:
+        row = self.connection.execute(
+            """SELECT team_id,title,seasonal_objective,context_adjustment,notes,status
+               FROM playbook_training_plans WHERE id=?""",
+            (int(plan_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Plano não encontrado.")
+        return {
+            "plan": dict(row),
+            "items": [
+                {
+                    "content_id": int(item["content_id"]),
+                    "sort_order": int(item["sort_order"]),
+                    "planned_minutes": item["planned_minutes"],
+                    "notes": str(item["notes"]),
+                }
+                for item in self._v10_plan_items(plan_id)
+            ],
+        }
+
+    def _v10_session_links(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """SELECT l.*,e.team_id,e.event_type,e.status event_status,e.title event_title,
+                      e.starts_at event_starts_at,e.ends_at event_ends_at,
+                      e.is_player_visible
+               FROM playbook_session_event_links l
+               JOIN calendar_events e ON e.id=l.calendar_event_id
+               WHERE l.session_id=?
+               ORDER BY CASE l.link_state WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+                        l.link_order,l.id""",
+            (int(session_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _v10_session_snapshot(self, session_id: int) -> dict[str, Any]:
+        row = self.connection.execute(
+            """SELECT team_id,plan_id,series_id,title_override,starts_at,ends_at,
+                      local_overrides_json,execution_status,execution_notes
+               FROM playbook_sessions WHERE id=?""",
+            (int(session_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Sessão não encontrada.")
+        snapshot = dict(row)
+        snapshot["local_overrides"] = self._v10_decode(
+            snapshot.pop("local_overrides_json"), fallback={}
+        )
+        snapshot["event_links"] = self._v10_session_links(session_id)
+        return snapshot
+
+    def _v10_write_plan_revision(
+        self,
+        plan_id: int,
+        *,
+        actor_user_id: int,
+        change_summary: str,
+        restored_from_revision_id: int | None = None,
+    ) -> int:
+        row = self.connection.execute(
+            "SELECT COALESCE(MAX(revision_number),0)+1 FROM playbook_training_plan_revisions WHERE plan_id=?",
+            (int(plan_id),),
+        ).fetchone()
+        revision_number = int(row[0])
+        cursor = self.connection.execute(
+            """INSERT INTO playbook_training_plan_revisions(
+                   plan_id,revision_number,snapshot_json,change_summary,
+                   restored_from_revision_id,created_by_user_id,created_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                int(plan_id),
+                revision_number,
+                self._v10_json(self._v10_plan_snapshot(plan_id)),
+                str(change_summary or "").strip()[:500],
+                int(restored_from_revision_id) if restored_from_revision_id else None,
+                int(actor_user_id),
+                _now_iso(),
+            ),
+        )
+        self.connection.execute(
+            "UPDATE playbook_training_plans SET current_revision=? WHERE id=?",
+            (revision_number, int(plan_id)),
+        )
+        return int(cursor.lastrowid)
+
+    def _v10_write_session_revision(
+        self,
+        session_id: int,
+        *,
+        actor_user_id: int,
+        change_summary: str,
+        restored_from_revision_id: int | None = None,
+    ) -> int:
+        row = self.connection.execute(
+            "SELECT COALESCE(MAX(revision_number),0)+1 FROM playbook_session_revisions WHERE session_id=?",
+            (int(session_id),),
+        ).fetchone()
+        revision_number = int(row[0])
+        cursor = self.connection.execute(
+            """INSERT INTO playbook_session_revisions(
+                   session_id,revision_number,snapshot_json,change_summary,
+                   restored_from_revision_id,created_by_user_id,created_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                int(session_id),
+                revision_number,
+                self._v10_json(self._v10_session_snapshot(session_id)),
+                str(change_summary or "").strip()[:500],
+                int(restored_from_revision_id) if restored_from_revision_id else None,
+                int(actor_user_id),
+                _now_iso(),
+            ),
+        )
+        self.connection.execute(
+            "UPDATE playbook_sessions SET current_revision=? WHERE id=?",
+            (revision_number, int(session_id)),
+        )
+        return int(cursor.lastrowid)
+
+    def _v10_normalize_plan_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_id: int,
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for ordinal, raw in enumerate(list(payload.get("items") or ())):
+            content_id = int(raw["content_id"])
+            if content_id in seen:
+                raise ValueError("Um conteúdo só pode aparecer uma vez no plano.")
+            content = self._allowed_content(content_id, [int(team_id)])
+            if content["status"] == "ARCHIVED":
+                raise ValueError("Conteúdo arquivado não pode entrar no plano.")
+            minutes = raw.get("planned_minutes")
+            if minutes is not None and int(minutes) <= 0:
+                raise ValueError("A duração planejada deve ser positiva.")
+            seen.add(content_id)
+            normalized.append(
+                {
+                    "content_id": content_id,
+                    "sort_order": int(raw.get("sort_order", ordinal)),
+                    "planned_minutes": int(minutes) if minutes is not None else None,
+                    "notes": str(raw.get("notes") or "").strip()[:2000],
+                }
+            )
+        return normalized
+
+    def list_plans(
+        self,
+        *,
+        team_ids: Iterable[int],
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require_available()
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        archived_clause = "" if include_archived else " AND p.status='ACTIVE'"
+        rows = self.connection.execute(
+            f"""SELECT p.*,COUNT(DISTINCT i.id) item_count,COUNT(DISTINCT ps.id) session_count
+                FROM playbook_training_plans p
+                LEFT JOIN playbook_training_plan_items i ON i.plan_id=p.id
+                LEFT JOIN playbook_sessions ps ON ps.plan_id=p.id
+                WHERE p.team_id IN ({_placeholders(allowed)}){archived_clause}
+                GROUP BY p.id
+                ORDER BY p.updated_at DESC,p.id DESC""",
+            allowed,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def plan_detail(
+        self,
+        plan_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any]:
+        self._require_available()
+        plan = self._v10_plan(plan_id, team_ids)
+        revisions = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT id,revision_number,change_summary,restored_from_revision_id,
+                          created_by_user_id,created_at
+                   FROM playbook_training_plan_revisions WHERE plan_id=?
+                   ORDER BY revision_number DESC""",
+                (int(plan_id),),
+            ).fetchall()
+        ]
+        return {
+            "plan": plan,
+            "items": self._v10_plan_items(plan_id, published_only=published_only),
+            "revisions": revisions,
+        }
+
+    def save_independent_plan(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        plan_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require_available()
+        requested_team_id = int(payload.get("team_id") or 0)
+        if plan_id is None:
+            if requested_team_id not in _ids(team_ids):
+                raise PermissionError("A equipe escolhida está fora do escopo autorizado.")
+            self._assert_team_exists(requested_team_id)
+            before = None
+            now = _now_iso()
+            cursor = self.connection.execute(
+                """INSERT INTO playbook_training_plans(
+                       team_id,title,seasonal_objective,context_adjustment,notes,status,
+                       current_revision,created_by_user_id,updated_by_user_id,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,'ACTIVE',1,?,?,?,?)""",
+                (
+                    requested_team_id,
+                    str(payload.get("title") or "").strip()[:180],
+                    str(payload.get("seasonal_objective") or "").strip()[:2000],
+                    str(payload.get("context_adjustment") or "").strip()[:2000],
+                    str(payload.get("notes") or "").strip()[:4000],
+                    int(actor_user_id),
+                    int(actor_user_id),
+                    now,
+                    now,
+                ),
+            )
+            effective_plan_id = int(cursor.lastrowid)
+            team_id = requested_team_id
+        else:
+            existing = self._v10_plan(plan_id, team_ids)
+            team_id = int(existing["team_id"])
+            if requested_team_id and requested_team_id != team_id:
+                raise ValueError("Um plano não pode ser movido de equipe nesta operação.")
+            before = self.plan_detail(plan_id, team_ids=team_ids)
+            effective_plan_id = int(plan_id)
+            self.connection.execute(
+                """UPDATE playbook_training_plans
+                   SET title=?,seasonal_objective=?,context_adjustment=?,notes=?,
+                       updated_by_user_id=?,updated_at=? WHERE id=?""",
+                (
+                    str(payload.get("title") or "").strip()[:180],
+                    str(payload.get("seasonal_objective") or "").strip()[:2000],
+                    str(payload.get("context_adjustment") or "").strip()[:2000],
+                    str(payload.get("notes") or "").strip()[:4000],
+                    int(actor_user_id),
+                    _now_iso(),
+                    effective_plan_id,
+                ),
+            )
+            self.connection.execute(
+                "DELETE FROM playbook_training_plan_items WHERE plan_id=?",
+                (effective_plan_id,),
+            )
+        normalized = self._v10_normalize_plan_payload(payload, team_id=team_id)
+        now = _now_iso()
+        self.connection.executemany(
+            """INSERT INTO playbook_training_plan_items(
+                   plan_id,content_id,sort_order,planned_minutes,notes,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            [
+                (
+                    effective_plan_id,
+                    item["content_id"],
+                    item["sort_order"],
+                    item["planned_minutes"],
+                    item["notes"],
+                    now,
+                    now,
+                )
+                for item in normalized
+            ],
+        )
+        self._v10_write_plan_revision(
+            effective_plan_id,
+            actor_user_id=actor_user_id,
+            change_summary=str(payload.get("change_summary") or "Alteração do plano.").strip(),
+        )
+        after = self.plan_detail(effective_plan_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.plan.save_independent",
+            entity="playbook_training_plan",
+            target_id=effective_plan_id,
+            before=before,
+            after=after,
+        )
+        return after
+
+    def restore_plan_revision(
+        self,
+        plan_id: int,
+        revision_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        self._require_available()
+        plan = self._v10_plan(plan_id, team_ids)
+        row = self.connection.execute(
+            """SELECT * FROM playbook_training_plan_revisions
+               WHERE id=? AND plan_id=?""",
+            (int(revision_id), int(plan_id)),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Revisão do plano não encontrada.")
+        snapshot = self._v10_decode(row["snapshot_json"], fallback={})
+        values = snapshot.get("plan") if isinstance(snapshot, dict) else None
+        items = snapshot.get("items") if isinstance(snapshot, dict) else None
+        if not isinstance(values, dict) or not isinstance(items, list):
+            raise ValueError("A revisão escolhida não contém um retrato restaurável do plano.")
+        before = self.plan_detail(plan_id, team_ids=team_ids)
+        self.connection.execute(
+            """UPDATE playbook_training_plans
+               SET title=?,seasonal_objective=?,context_adjustment=?,notes=?,status=?,
+                   updated_by_user_id=?,updated_at=? WHERE id=?""",
+            (
+                str(values.get("title") or "")[:180],
+                str(values.get("seasonal_objective") or "")[:2000],
+                str(values.get("context_adjustment") or "")[:2000],
+                str(values.get("notes") or "")[:4000],
+                str(values.get("status") or plan["status"]),
+                int(actor_user_id),
+                _now_iso(),
+                int(plan_id),
+            ),
+        )
+        self.connection.execute("DELETE FROM playbook_training_plan_items WHERE plan_id=?", (int(plan_id),))
+        now = _now_iso()
+        normalized = self._v10_normalize_plan_payload({"items": items}, team_id=int(plan["team_id"]))
+        self.connection.executemany(
+            """INSERT INTO playbook_training_plan_items(
+                   plan_id,content_id,sort_order,planned_minutes,notes,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            [
+                (int(plan_id), item["content_id"], item["sort_order"], item["planned_minutes"], item["notes"], now, now)
+                for item in normalized
+            ],
+        )
+        self._v10_write_plan_revision(
+            int(plan_id),
+            actor_user_id=actor_user_id,
+            change_summary=f"Restauração da revisão {int(row['revision_number'])}.",
+            restored_from_revision_id=int(revision_id),
+        )
+        after = self.plan_detail(plan_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.plan.restore_revision",
+            entity="playbook_training_plan",
+            target_id=plan_id,
+            before=before,
+            after=after,
+        )
+        return after
+
+    def list_series(self, *, team_ids: Iterable[int], include_archived: bool = False) -> list[dict[str, Any]]:
+        self._require_available()
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        archived_clause = "" if include_archived else " AND s.status='ACTIVE'"
+        rows = self.connection.execute(
+            f"""SELECT s.*,p.title plan_title,COUNT(ps.id) session_count
+                FROM playbook_series s
+                LEFT JOIN playbook_training_plans p ON p.id=s.plan_id
+                LEFT JOIN playbook_sessions ps ON ps.series_id=s.id
+                WHERE s.team_id IN ({_placeholders(allowed)}){archived_clause}
+                GROUP BY s.id ORDER BY s.updated_at DESC,s.id DESC""",
+            allowed,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_series(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        series_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require_available()
+        requested_team_id = int(payload.get("team_id") or 0)
+        if series_id is None:
+            if requested_team_id not in _ids(team_ids):
+                raise PermissionError("A equipe escolhida está fora do escopo autorizado.")
+            self._assert_team_exists(requested_team_id)
+            team_id = requested_team_id
+        else:
+            existing = self.connection.execute(
+                "SELECT * FROM playbook_series WHERE id=?", (int(series_id),)
+            ).fetchone()
+            if existing is None or int(existing["team_id"]) not in _ids(team_ids):
+                raise KeyError("Série não encontrada na equipe autorizada.")
+            team_id = int(existing["team_id"])
+            if requested_team_id and requested_team_id != team_id:
+                raise ValueError("Uma série não pode ser movida de equipe nesta operação.")
+        plan_id = payload.get("plan_id")
+        if plan_id is not None:
+            plan = self._v10_plan(int(plan_id), [team_id])
+            if int(plan["team_id"]) != team_id:
+                raise ValueError("O plano da série precisa pertencer à mesma equipe.")
+        now = _now_iso()
+        values = (
+            int(plan_id) if plan_id is not None else None,
+            str(payload.get("title") or "").strip()[:180],
+            str(payload.get("recurrence_rule") or "").strip()[:500],
+            payload.get("starts_on"),
+            payload.get("ends_on"),
+            str(payload.get("notes") or "").strip()[:4000],
+            str(payload.get("status") or "ACTIVE"),
+        )
+        if values[-1] not in {"ACTIVE", "ARCHIVED"}:
+            raise ValueError("Status de série inválido.")
+        if series_id is None:
+            cursor = self.connection.execute(
+                """INSERT INTO playbook_series(
+                       team_id,plan_id,title,recurrence_rule,starts_on,ends_on,notes,status,
+                       created_by_user_id,updated_by_user_id,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (team_id, *values, int(actor_user_id), int(actor_user_id), now, now),
+            )
+            effective_id = int(cursor.lastrowid)
+        else:
+            effective_id = int(series_id)
+            self.connection.execute(
+                """UPDATE playbook_series
+                   SET plan_id=?,title=?,recurrence_rule=?,starts_on=?,ends_on=?,notes=?,status=?,
+                       updated_by_user_id=?,updated_at=? WHERE id=?""",
+                (*values, int(actor_user_id), now, effective_id),
+            )
+        row = self.connection.execute("SELECT * FROM playbook_series WHERE id=?", (effective_id,)).fetchone()
+        result = dict(row)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.series.save",
+            entity="playbook_series",
+            target_id=effective_id,
+            after=result,
+        )
+        return result
+
+    def session_detail(
+        self,
+        session_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]:
+        self._require_available()
+        session = self._v10_session(
+            session_id,
+            team_ids,
+            player_visible_only=player_visible_only,
+        )
+        plan = self._v10_plan(int(session["plan_id"]), team_ids)
+        revisions = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT id,revision_number,change_summary,restored_from_revision_id,
+                          created_by_user_id,created_at
+                   FROM playbook_session_revisions WHERE session_id=?
+                   ORDER BY revision_number DESC""",
+                (int(session_id),),
+            ).fetchall()
+        ]
+        evaluations = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT v.*,c.title content_title
+                   FROM playbook_session_evaluations v
+                   JOIN playbook_contents c ON c.id=v.content_id
+                   WHERE v.session_id=? ORDER BY v.evaluated_at DESC,v.id DESC""",
+                (int(session_id),),
+            ).fetchall()
+        ]
+        session["local_overrides"] = self._v10_decode(
+            session.pop("local_overrides_json"), fallback={}
+        )
+        return {
+            "session": session,
+            "plan": plan,
+            "items": self._v10_plan_items(int(plan["id"]), published_only=published_only),
+            "event_links": self._v10_session_links(session_id),
+            "history": [
+                dict(row)
+                for row in self.connection.execute(
+                    """SELECT * FROM playbook_session_event_history
+                       WHERE session_id=? ORDER BY occurred_at DESC,id DESC""",
+                    (int(session_id),),
+                ).fetchall()
+            ],
+            "evaluations": evaluations,
+            "revisions": revisions,
+        }
+
+    def list_sessions(
+        self,
+        *,
+        team_ids: Iterable[int],
+        event_id: int | None = None,
+        future_only: bool = False,
+        player_visible_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require_available()
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        clauses = [f"ps.team_id IN ({_placeholders(allowed)})"]
+        params: list[object] = list(allowed)
+        join = ""
+        if event_id is not None or player_visible_only or future_only:
+            join = """
+                JOIN playbook_session_event_links l ON l.session_id=ps.id AND l.link_state='ACTIVE'
+                JOIN calendar_events e ON e.id=l.calendar_event_id
+            """
+        if event_id is not None:
+            clauses.append("e.id=?")
+            params.append(int(event_id))
+        if future_only:
+            clauses.extend(("e.status IN('PLANNED','CONFIRMED')", "e.ends_at>=?"))
+            params.append(_now_iso())
+        if player_visible_only:
+            clauses.append("e.is_player_visible=1")
+        rows = self.connection.execute(
+            f"""SELECT DISTINCT ps.id
+                FROM playbook_sessions ps {join}
+                WHERE {' AND '.join(clauses)}
+                ORDER BY COALESCE(e.starts_at,ps.starts_at) ASC,ps.id ASC""",
+            tuple(params),
+        ).fetchall()
+        return [
+            self.session_detail(
+                int(row["id"]),
+                team_ids=allowed,
+                published_only=player_visible_only,
+                player_visible_only=player_visible_only,
+            )
+            for row in rows
+        ]
+
+    def save_session(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        self._require_available()
+        if session_id is None:
+            team_id = int(payload.get("team_id") or 0)
+            if team_id not in _ids(team_ids):
+                raise PermissionError("A equipe escolhida está fora do escopo autorizado.")
+            self._assert_team_exists(team_id)
+            plan_id = int(payload.get("plan_id") or 0)
+            self._v10_plan(plan_id, [team_id])
+            before = None
+            current_execution = "NOT_STARTED"
+        else:
+            existing = self._v10_session(session_id, team_ids)
+            team_id = int(existing["team_id"])
+            requested_team = payload.get("team_id")
+            if requested_team is not None and int(requested_team) != team_id:
+                raise ValueError("Uma sessão não pode ser movida de equipe nesta operação.")
+            plan_id = int(payload.get("plan_id") or existing["plan_id"])
+            self._v10_plan(plan_id, [team_id])
+            before = self.session_detail(session_id, team_ids=team_ids)
+            current_execution = str(existing["execution_status"])
+        series_id = payload.get("series_id")
+        if series_id is not None:
+            series = self.connection.execute(
+                "SELECT team_id FROM playbook_series WHERE id=?", (int(series_id),)
+            ).fetchone()
+            if series is None or int(series["team_id"]) != team_id:
+                raise ValueError("A série escolhida não pertence à mesma equipe da sessão.")
+        starts_at = payload.get("starts_at")
+        ends_at = payload.get("ends_at")
+        if starts_at and ends_at and str(ends_at) <= str(starts_at):
+            raise ValueError("O fim da sessão precisa ser posterior ao início.")
+        overrides = payload.get("local_overrides") or {}
+        if not isinstance(overrides, Mapping):
+            raise ValueError("As substituições locais da sessão precisam ser um objeto.")
+        now = _now_iso()
+        values = (
+            plan_id,
+            int(series_id) if series_id is not None else None,
+            str(payload.get("title_override") or "").strip()[:180],
+            starts_at,
+            ends_at,
+            self._v10_json(dict(overrides)),
+            str(payload.get("execution_notes") or "").strip()[:4000],
+        )
+        if session_id is None:
+            cursor = self.connection.execute(
+                """INSERT INTO playbook_sessions(
+                       team_id,plan_id,series_id,title_override,starts_at,ends_at,
+                       local_overrides_json,execution_status,execution_notes,current_revision,
+                       created_by_user_id,updated_by_user_id,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?, ?,?,1,?,?,?,?)""",
+                (
+                    team_id,
+                    *values[:6],
+                    current_execution,
+                    values[6],
+                    int(actor_user_id),
+                    int(actor_user_id),
+                    now,
+                    now,
+                ),
+            )
+            effective_id = int(cursor.lastrowid)
+        else:
+            effective_id = int(session_id)
+            self.connection.execute(
+                """UPDATE playbook_sessions
+                   SET plan_id=?,series_id=?,title_override=?,starts_at=?,ends_at=?,
+                       local_overrides_json=?,execution_notes=?,updated_by_user_id=?,updated_at=?
+                   WHERE id=?""",
+                (*values, int(actor_user_id), now, effective_id),
+            )
+        self._v10_write_session_revision(
+            effective_id,
+            actor_user_id=actor_user_id,
+            change_summary=str(payload.get("change_summary") or "Alteração da sessão.").strip(),
+        )
+        after = self.session_detail(effective_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.save",
+            entity="playbook_session",
+            target_id=effective_id,
+            before=before,
+            after=after,
+        )
+        return after
+
+    def link_session_event(
+        self,
+        session_id: int,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        self._require_available()
+        session = self._v10_session(session_id, team_ids)
+        event = self._v10_assert_training_event(event_id, [int(session["team_id"])])
+        active_link = self.connection.execute(
+            """SELECT * FROM playbook_session_event_links
+               WHERE session_id=? AND link_state='ACTIVE'""",
+            (int(session_id),),
+        ).fetchone()
+        if active_link is not None and int(active_link["calendar_event_id"]) == int(event_id):
+            return self.session_detail(session_id, team_ids=team_ids)
+        now = _now_iso()
+        if active_link is not None:
+            self.connection.execute(
+                """UPDATE playbook_session_event_links
+                   SET link_state='HISTORICAL',unlinked_by_user_id=?,unlinked_at=?,unlink_reason=?
+                   WHERE id=?""",
+                (int(actor_user_id), now, str(reason or "").strip()[:1000], int(active_link["id"])),
+            )
+            self.connection.execute(
+                """INSERT INTO playbook_session_event_history(
+                       session_id,from_event_id,to_event_id,action,reason,actor_user_id,occurred_at
+                   ) VALUES(?,?,NULL,'UNLINK',?,?,?)""",
+                (int(session_id), int(active_link["calendar_event_id"]), str(reason or "").strip()[:1000], int(actor_user_id), now),
+            )
+        order_row = self.connection.execute(
+            "SELECT COALESCE(MAX(link_order),-1)+1 FROM playbook_session_event_links WHERE calendar_event_id=?",
+            (int(event_id),),
+        ).fetchone()
+        self.connection.execute(
+            """INSERT INTO playbook_session_event_links(
+                   session_id,calendar_event_id,link_state,link_order,linked_by_user_id,linked_at
+               ) VALUES(?,?,'ACTIVE',?,?,?)""",
+            (int(session_id), int(event_id), int(order_row[0]), int(actor_user_id), now),
+        )
+        self.connection.execute(
+            """INSERT INTO playbook_session_event_history(
+                   session_id,from_event_id,to_event_id,action,reason,actor_user_id,occurred_at
+               ) VALUES(NULLIF(?,0),NULL,?,'LINK',?,?,?)""",
+            (int(session_id), int(event["id"]), str(reason or "").strip()[:1000], int(actor_user_id), now),
+        )
+        self._v10_write_session_revision(
+            session_id,
+            actor_user_id=actor_user_id,
+            change_summary="Vínculo de calendário atualizado.",
+        )
+        result = self.session_detail(session_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.link_calendar_event",
+            entity="playbook_session",
+            target_id=session_id,
+            after={"event_id": int(event_id), "session": result},
+        )
+        return result
+
+    def unlink_session_event(
+        self,
+        session_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        self._require_available()
+        self._v10_session(session_id, team_ids)
+        link = self.connection.execute(
+            """SELECT * FROM playbook_session_event_links
+               WHERE session_id=? AND link_state='ACTIVE'""",
+            (int(session_id),),
+        ).fetchone()
+        if link is None:
+            raise ValueError("A sessão não possui vínculo ativo com o Calendário.")
+        now = _now_iso()
+        clean_reason = str(reason or "").strip()[:1000]
+        self.connection.execute(
+            """UPDATE playbook_session_event_links
+               SET link_state='HISTORICAL',unlinked_by_user_id=?,unlinked_at=?,unlink_reason=?
+               WHERE id=?""",
+            (int(actor_user_id), now, clean_reason, int(link["id"])),
+        )
+        self.connection.execute(
+            """INSERT INTO playbook_session_event_history(
+                   session_id,from_event_id,to_event_id,action,reason,actor_user_id,occurred_at
+               ) VALUES(?,?,NULL,'UNLINK',?,?,?)""",
+            (int(session_id), int(link["calendar_event_id"]), clean_reason, int(actor_user_id), now),
+        )
+        self._v10_write_session_revision(
+            session_id,
+            actor_user_id=actor_user_id,
+            change_summary="Vínculo de calendário removido.",
+        )
+        return self.session_detail(session_id, team_ids=team_ids)
+
+    def restore_session_revision(
+        self,
+        session_id: int,
+        revision_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        self._require_available()
+        session = self._v10_session(session_id, team_ids)
+        row = self.connection.execute(
+            "SELECT * FROM playbook_session_revisions WHERE id=? AND session_id=?",
+            (int(revision_id), int(session_id)),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Revisão da sessão não encontrada.")
+        snapshot = self._v10_decode(row["snapshot_json"], fallback={})
+        if not isinstance(snapshot, dict):
+            raise ValueError("A revisão escolhida não contém um retrato restaurável da sessão.")
+        plan_id = int(snapshot.get("plan_id") or session["plan_id"])
+        self._v10_plan(plan_id, [int(session["team_id"])])
+        overrides = snapshot.get("local_overrides")
+        if not isinstance(overrides, Mapping):
+            overrides = self._v10_decode(snapshot.get("local_overrides_json"), fallback={})
+        self.connection.execute(
+            """UPDATE playbook_sessions
+               SET plan_id=?,series_id=?,title_override=?,starts_at=?,ends_at=?,
+                   local_overrides_json=?,execution_status=?,execution_notes=?,
+                   updated_by_user_id=?,updated_at=? WHERE id=?""",
+            (
+                plan_id,
+                snapshot.get("series_id"),
+                str(snapshot.get("title_override") or "")[:180],
+                snapshot.get("starts_at"),
+                snapshot.get("ends_at"),
+                self._v10_json(dict(overrides or {})),
+                str(snapshot.get("execution_status") or session["execution_status"]),
+                str(snapshot.get("execution_notes") or "")[:4000],
+                int(actor_user_id),
+                _now_iso(),
+                int(session_id),
+            ),
+        )
+        self._v10_write_session_revision(
+            session_id,
+            actor_user_id=actor_user_id,
+            change_summary=f"Restauração da revisão {int(row['revision_number'])}.",
+            restored_from_revision_id=int(revision_id),
+        )
+        result = self.session_detail(session_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.restore_revision",
+            entity="playbook_session",
+            target_id=session_id,
+            after=result,
+        )
+        return result
+
+    def execute_session(
+        self,
+        session_id: int,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        """Registra execução independente da conclusão do evento de calendário."""
+
+        self._require_available()
+        session = self._v10_session(session_id, team_ids)
+        status = str(payload.get("execution_status") or "COMPLETED").upper()
+        if status not in {"NOT_STARTED", "IN_PROGRESS", "COMPLETED", "CANCELLED"}:
+            raise ValueError("Status de execução inválido.")
+        before = self.session_detail(session_id, team_ids=team_ids)
+        self.connection.execute(
+            """UPDATE playbook_sessions
+               SET execution_status=?,execution_notes=?,updated_by_user_id=?,updated_at=?
+               WHERE id=?""",
+            (
+                status,
+                str(payload.get("execution_notes") or "").strip()[:4000],
+                int(actor_user_id),
+                _now_iso(),
+                int(session_id),
+            ),
+        )
+        self._v10_write_session_revision(
+            session_id,
+            actor_user_id=actor_user_id,
+            change_summary=str(payload.get("change_summary") or "Registro de execução da sessão.").strip(),
+        )
+        after = self.session_detail(session_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.execute",
+            entity="playbook_session",
+            target_id=session_id,
+            before=before,
+            after=after,
+        )
+        return after
+
+    # Os quatro métodos abaixo mantêm os endpoints PB-3A, agora como uma
+    # adaptação de sessão para evento. Assim, nenhum evento é dono do plano.
+    def plan_for_event(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]:
+        self._require_available()
+        event = self._v10_assert_training_event(
+            event_id,
+            team_ids,
+            player_visible_only=player_visible_only,
+        )
+        rows = self.connection.execute(
+            """SELECT l.session_id FROM playbook_session_event_links l
+               JOIN playbook_sessions ps ON ps.id=l.session_id
+               WHERE l.calendar_event_id=? AND l.link_state='ACTIVE'
+               ORDER BY l.link_order,l.id""",
+            (int(event_id),),
+        ).fetchall()
+        sessions = [
+            self.session_detail(
+                int(row["session_id"]),
+                team_ids=team_ids,
+                published_only=published_only,
+                player_visible_only=player_visible_only,
+            )
+            for row in rows
+        ]
+        primary = sessions[0] if sessions else None
+        transfers = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT * FROM playbook_session_event_history
+                   WHERE from_event_id=? OR to_event_id=?
+                   ORDER BY occurred_at DESC,id DESC""",
+                (int(event_id), int(event_id)),
+            ).fetchall()
+        ]
+        evaluations = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT v.content_id,v.mastery_stage,v.continuity_decision,v.notes,
+                          v.evaluated_at,v.session_id,c.title
+                   FROM playbook_session_evaluations v
+                   JOIN playbook_contents c ON c.id=v.content_id
+                   WHERE v.calendar_event_id=? ORDER BY c.title COLLATE NOCASE,v.id""",
+                (int(event_id),),
+            ).fetchall()
+        ]
+        return {
+            "event": event,
+            "plan": primary["plan"] if primary else None,
+            "items": primary["items"] if primary else [],
+            "sessions": sessions,
+            "availability": self._attendance_summary(event),
+            "transfers": transfers,
+            "evaluations": evaluations,
+        }
+
+    def next_training_event_id(
+        self,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> int | None:
+        self._require_available()
+        allowed = _ids(team_ids)
+        if not allowed:
+            return None
+        visible_clause = " AND is_player_visible=1" if player_visible_only else ""
+        row = self.connection.execute(
+            f"""SELECT id FROM calendar_events
+                WHERE team_id IN ({_placeholders(allowed)})
+                  AND event_type='TRAINING'
+                  AND status IN('PLANNED','CONFIRMED')
+                  AND ends_at>=?{visible_clause}
+                ORDER BY starts_at,id LIMIT 1""",
+            (*allowed, _now_iso()),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def save_plan(
+        self,
+        event_id: int,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        self._require_available()
+        event = self._v10_assert_training_event(event_id, team_ids)
+        existing = self.connection.execute(
+            """SELECT l.session_id,ps.plan_id FROM playbook_session_event_links l
+               JOIN playbook_sessions ps ON ps.id=l.session_id
+               WHERE l.calendar_event_id=? AND l.link_state='ACTIVE'
+               ORDER BY l.link_order,l.id LIMIT 1""",
+            (int(event_id),),
+        ).fetchone()
+        enriched = {**dict(payload), "team_id": int(event["team_id"])}
+        if existing is None:
+            saved = self.save_independent_plan(
+                enriched,
+                team_ids=team_ids,
+                actor_user_id=actor_user_id,
+            )
+            session = self.save_session(
+                {
+                    "team_id": int(event["team_id"]),
+                    "plan_id": int(saved["plan"]["id"]),
+                    "title_override": str(event["title"] or saved["plan"]["title"]),
+                    "starts_at": event["starts_at"],
+                    "ends_at": event["ends_at"],
+                    "change_summary": "Sessão criada pelo endpoint de evento legado.",
+                },
+                team_ids=team_ids,
+                actor_user_id=actor_user_id,
+            )
+            self.link_session_event(
+                int(session["session"]["id"]),
+                int(event_id),
+                team_ids=team_ids,
+                actor_user_id=actor_user_id,
+                reason="Vínculo criado pelo endpoint de plano do evento.",
+            )
+        else:
+            self.save_independent_plan(
+                enriched,
+                plan_id=int(existing["plan_id"]),
+                team_ids=team_ids,
+                actor_user_id=actor_user_id,
+            )
+        result = self.plan_for_event(event_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.plan.save_event_adapter",
+            entity="calendar_event",
+            target_id=event_id,
+            after=result,
+        )
+        return result
+
+    def reuse_plan(
+        self,
+        event_id: int,
+        *,
+        source_event_id: int,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        self._require_available()
+        if int(event_id) == int(source_event_id):
+            raise ValueError("Escolha outro treino como origem do plano.")
+        target_event = self._v10_assert_training_event(event_id, team_ids)
+        source = self.plan_for_event(source_event_id, team_ids=team_ids)
+        if source["plan"] is None:
+            raise ValueError("O treino de origem ainda não possui plano para reutilizar.")
+        session = self.save_session(
+            {
+                "team_id": int(target_event["team_id"]),
+                "plan_id": int(source["plan"]["id"]),
+                "title_override": str(target_event["title"] or source["plan"]["title"]),
+                "starts_at": target_event["starts_at"],
+                "ends_at": target_event["ends_at"],
+                "change_summary": f"Reuso do plano {int(source['plan']['id'])}.",
+            },
+            team_ids=team_ids,
+            actor_user_id=actor_user_id,
+        )
+        self.link_session_event(
+            int(session["session"]["id"]),
+            event_id,
+            team_ids=team_ids,
+            actor_user_id=actor_user_id,
+            reason=f"Reuso do plano do evento {int(source_event_id)}.",
+        )
+        result = self.plan_for_event(event_id, team_ids=team_ids)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.plan.reuse",
+            entity="playbook_training_plan",
+            target_id=source["plan"]["id"],
+            after={"source_event_id": int(source_event_id), "target_event_id": int(event_id)},
+        )
+        return result
+
+    def transfer_plan_for_reschedule(
+        self,
+        source_event_id: int,
+        replacement_event_id: int,
+        *,
+        actor_user_id: int,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        """Move vínculos, não o plano; preserva IDs e ordem históricos."""
+
+        if not self.is_available():
+            return None
+        source_links = self.connection.execute(
+            """SELECT l.*,ps.plan_id FROM playbook_session_event_links l
+               JOIN playbook_sessions ps ON ps.id=l.session_id
+               WHERE l.calendar_event_id=? AND l.link_state='ACTIVE'
+               ORDER BY link_order,id""",
+            (int(source_event_id),),
+        ).fetchall()
+        if not source_links:
+            return None
+        now = _now_iso()
+        next_order_row = self.connection.execute(
+            "SELECT COALESCE(MAX(link_order),-1)+1 FROM playbook_session_event_links WHERE calendar_event_id=?",
+            (int(replacement_event_id),),
+        ).fetchone()
+        next_order = int(next_order_row[0])
+        session_ids: list[int] = []
+        for offset, link in enumerate(source_links):
+            session_id = int(link["session_id"])
+            session_ids.append(session_id)
+            self.connection.execute(
+                """UPDATE playbook_session_event_links
+                   SET link_state='HISTORICAL',unlinked_by_user_id=?,unlinked_at=?,unlink_reason=?
+                   WHERE id=?""",
+                (int(actor_user_id), now, str(reason or "").strip()[:1000], int(link["id"])),
+            )
+            target_link = self.connection.execute(
+                """SELECT id FROM playbook_session_event_links
+                   WHERE session_id=? AND calendar_event_id=? AND link_state='ACTIVE'""",
+                (session_id, int(replacement_event_id)),
+            ).fetchone()
+            if target_link is None:
+                self.connection.execute(
+                    """INSERT INTO playbook_session_event_links(
+                           session_id,calendar_event_id,link_state,link_order,
+                           linked_by_user_id,linked_at
+                       ) VALUES(?,?,'ACTIVE',?,?,?)""",
+                    (session_id, int(replacement_event_id), next_order + offset, int(actor_user_id), now),
+                )
+            self.connection.execute(
+                """INSERT INTO playbook_session_event_history(
+                       session_id,from_event_id,to_event_id,action,reason,actor_user_id,occurred_at
+                   ) VALUES(?,?,?,'RESCHEDULE',?,?,?)""",
+                (session_id, int(source_event_id), int(replacement_event_id), str(reason or "").strip()[:1000], int(actor_user_id), now),
+            )
+            self._v10_write_session_revision(
+                session_id,
+                actor_user_id=actor_user_id,
+                change_summary="Vínculo movido durante reagendamento do Calendário.",
+            )
+        result = {
+            "plan_id": int(source_links[0]["plan_id"]),
+            "from_event_id": int(source_event_id),
+            "to_event_id": int(replacement_event_id),
+        }
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.transfer_on_reschedule",
+            entity="calendar_event",
+            target_id=source_event_id,
+            before={"event_id": int(source_event_id)},
+            after=result,
+        )
+        return result
+
+    def record_evaluations(
+        self,
+        event_id: int,
+        evaluations: Iterable[Mapping[str, Any]],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        session_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        self._require_available()
+        self._v10_assert_training_event(event_id, team_ids)
+        active_sessions = self.connection.execute(
+            """SELECT session_id FROM playbook_session_event_links
+               WHERE calendar_event_id=? AND link_state='ACTIVE'
+               ORDER BY link_order,id""",
+            (int(event_id),),
+        ).fetchall()
+        if session_id is None:
+            if len(active_sessions) != 1:
+                raise ValueError(
+                    "Escolha explicitamente a sessão de destino para registrar a avaliação deste evento."
+                )
+            effective_session_id = int(active_sessions[0]["session_id"])
+        else:
+            effective_session_id = int(session_id)
+            if effective_session_id not in {int(row["session_id"]) for row in active_sessions}:
+                raise ValueError("A sessão escolhida não está vinculada ativamente a este evento.")
+        session = self._v10_session(effective_session_id, team_ids)
+        planned_ids = {
+            int(row[0])
+            for row in self.connection.execute(
+                "SELECT content_id FROM playbook_training_plan_items WHERE plan_id=?",
+                (int(session["plan_id"]),),
+            ).fetchall()
+        }
+        normalized: list[tuple[int, str, str, str]] = []
+        seen: set[int] = set()
+        for raw in evaluations:
+            content_id = int(raw["content_id"])
+            if content_id not in planned_ids:
+                raise ValueError("Só é possível avaliar conteúdos que fazem parte do plano da sessão.")
+            if content_id in seen:
+                raise ValueError("Cada conteúdo pode receber uma única avaliação final.")
+            stage = str(raw.get("mastery_stage") or "").upper()
+            decision = str(raw.get("continuity_decision") or "").upper()
+            if stage not in {"STARTING", "IMPROVING", "REFINING", "CONSOLIDATED"}:
+                raise ValueError("Estágio de domínio inválido.")
+            if decision not in {"CONTINUE", "COMPLETE", "REVIEW"}:
+                raise ValueError("Decisão de continuidade inválida.")
+            seen.add(content_id)
+            normalized.append((content_id, stage, decision, str(raw.get("notes") or "").strip()[:2000]))
+        now = _now_iso()
+        for content_id, stage, decision, notes in normalized:
+            existing = self.connection.execute(
+                """SELECT id FROM playbook_session_evaluations
+                   WHERE session_id=? AND calendar_event_id=? AND content_id=?
+                   ORDER BY id DESC LIMIT 1""",
+                (effective_session_id, int(event_id), content_id),
+            ).fetchone()
+            if existing is None:
+                self.connection.execute(
+                    """INSERT INTO playbook_session_evaluations(
+                           session_id,calendar_event_id,content_id,mastery_stage,
+                           continuity_decision,notes,actor_user_id,evaluated_at
+                       ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (effective_session_id, int(event_id), content_id, stage, decision, notes, int(actor_user_id), now),
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE playbook_session_evaluations
+                       SET mastery_stage=?,continuity_decision=?,notes=?,actor_user_id=?,evaluated_at=?
+                       WHERE id=?""",
+                    (stage, decision, notes, int(actor_user_id), now, int(existing["id"])),
+                )
+        self._v10_write_session_revision(
+            effective_session_id,
+            actor_user_id=actor_user_id,
+            change_summary="Avaliações de domínio atualizadas.",
+        )
+        result = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT content_id,mastery_stage,continuity_decision,notes,evaluated_at,session_id
+                   FROM playbook_session_evaluations
+                   WHERE calendar_event_id=? AND session_id=? ORDER BY content_id,id""",
+                (int(event_id), effective_session_id),
+            ).fetchall()
+        ]
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.evaluate",
+            entity="playbook_session",
+            target_id=effective_session_id,
+            after={"event_id": int(event_id), "evaluations": result},
+        )
+        return result
+
+    def record_session_evaluations(
+        self,
+        session_id: int,
+        evaluations: Iterable[Mapping[str, Any]],
+        *,
+        calendar_event_id: int | None,
+        change_summary: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> list[dict[str, Any]]:
+        """Avalia uma sessão independente; o evento é contexto opcional.
+
+        Quando um evento é informado, ele precisa ser o vínculo ativo da sessão.
+        Sem esse contexto a avaliação continua válida e fica explicitamente com
+        ``calendar_event_id`` nulo, sem criar ou alterar nenhum evento.
+        """
+
+        self._require_available()
+        session = self._v10_session(session_id, team_ids)
+        effective_event_id = (
+            int(calendar_event_id) if calendar_event_id is not None else None
+        )
+        if effective_event_id is not None:
+            self._v10_assert_training_event(
+                effective_event_id,
+                [int(session["team_id"])],
+            )
+            linked = self.connection.execute(
+                """SELECT 1 FROM playbook_session_event_links
+                   WHERE session_id=? AND calendar_event_id=? AND link_state='ACTIVE'""",
+                (int(session_id), effective_event_id),
+            ).fetchone()
+            if linked is None:
+                raise ValueError(
+                    "O evento informado não é o vínculo ativo desta sessão."
+                )
+        planned_ids = {
+            int(row[0])
+            for row in self.connection.execute(
+                "SELECT content_id FROM playbook_training_plan_items WHERE plan_id=?",
+                (int(session["plan_id"]),),
+            ).fetchall()
+        }
+        normalized: list[tuple[int, str, str, str]] = []
+        seen: set[int] = set()
+        for raw in evaluations:
+            content_id = int(raw["content_id"])
+            if content_id not in planned_ids:
+                raise ValueError(
+                    "Só é possível avaliar conteúdos que fazem parte do plano da sessão."
+                )
+            if content_id in seen:
+                raise ValueError("Cada conteúdo pode receber uma única avaliação por sessão.")
+            stage = str(raw.get("mastery_stage") or "").upper()
+            decision = str(raw.get("continuity_decision") or "").upper()
+            if stage not in {"STARTING", "IMPROVING", "REFINING", "CONSOLIDATED"}:
+                raise ValueError("Estágio de domínio inválido.")
+            if decision not in {"CONTINUE", "COMPLETE", "REVIEW"}:
+                raise ValueError("Decisão de continuidade inválida.")
+            seen.add(content_id)
+            normalized.append(
+                (
+                    content_id,
+                    stage,
+                    decision,
+                    str(raw.get("notes") or "").strip()[:2000],
+                )
+            )
+        now = _now_iso()
+        for content_id, stage, decision, notes in normalized:
+            existing = self.connection.execute(
+                """SELECT id FROM playbook_session_evaluations
+                   WHERE session_id=? AND calendar_event_id IS ? AND content_id=?
+                   ORDER BY id DESC LIMIT 1""",
+                (int(session_id), effective_event_id, content_id),
+            ).fetchone()
+            if existing is None:
+                self.connection.execute(
+                    """INSERT INTO playbook_session_evaluations(
+                           session_id,calendar_event_id,content_id,mastery_stage,
+                           continuity_decision,notes,actor_user_id,evaluated_at
+                       ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        int(session_id),
+                        effective_event_id,
+                        content_id,
+                        stage,
+                        decision,
+                        notes,
+                        int(actor_user_id),
+                        now,
+                    ),
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE playbook_session_evaluations
+                       SET mastery_stage=?,continuity_decision=?,notes=?,
+                           actor_user_id=?,evaluated_at=?
+                       WHERE id=?""",
+                    (stage, decision, notes, int(actor_user_id), now, int(existing["id"])),
+                )
+        self._v10_write_session_revision(
+            int(session_id),
+            actor_user_id=actor_user_id,
+            change_summary=(
+                str(change_summary or "").strip()
+                or "Avaliações independentes da sessão atualizadas."
+            ),
+        )
+        result = [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT content_id,mastery_stage,continuity_decision,notes,
+                          evaluated_at,session_id,calendar_event_id
+                   FROM playbook_session_evaluations
+                   WHERE session_id=? AND calendar_event_id IS ?
+                   ORDER BY content_id,id""",
+                (int(session_id), effective_event_id),
+            ).fetchall()
+        ]
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.session.evaluate_independent",
+            entity="playbook_session",
+            target_id=int(session_id),
+            after={
+                "calendar_event_id": effective_event_id,
+                "evaluations": result,
+            },
         )
         return result

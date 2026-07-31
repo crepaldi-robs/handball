@@ -59,7 +59,9 @@
 .playbook-bulk-actions,
 .playbook-availability,
 .playbook-plan-item-inputs,
-.playbook-evaluation-fields {
+.playbook-evaluation-fields,
+.playbook-planning-header,
+.playbook-planning-actions {
   display: flex;
   align-items: center;
 }
@@ -100,6 +102,29 @@
   font-weight: 700;
 }
 .playbook-connection.is-offline { color: #fff3c4; border-color: #f4c96b; }
+.playbook-planning {
+  display: grid;
+  gap: 14px;
+  margin: 0 auto 18px;
+  padding: 18px;
+  border: 1px solid var(--playbook-line);
+  border-radius: 16px;
+  background: var(--playbook-surface);
+  box-shadow: 0 8px 24px rgba(25, 35, 48, .05);
+}
+.playbook-planning-header { justify-content: space-between; align-items: flex-start; gap: 16px; }
+.playbook-planning-header h2 { margin: 3px 0 5px; font-size: 1.15rem; }
+.playbook-planning-header p { max-width: 680px; margin: 0; color: var(--playbook-muted); font-size: .84rem; }
+.playbook-planning-actions { flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.playbook-planning-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.playbook-planning-column { min-width: 0; padding: 11px; border: 1px solid #e9e1d7; border-radius: 11px; background: #fffcf8; }
+.playbook-planning-column h3 { margin: 0 0 8px; font-size: .78rem; letter-spacing: .07em; text-transform: uppercase; }
+.playbook-planning-item { display: grid; gap: 5px; padding: 9px 0; border-top: 1px solid #eee6dc; }
+.playbook-planning-item:first-of-type { border-top: 0; }
+.playbook-planning-item strong { font-size: .86rem; }
+.playbook-planning-item small { color: var(--playbook-muted); line-height: 1.35; }
+.playbook-planning-item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.playbook-planning-item button { padding: 5px 7px; font-size: .72rem; }
 .playbook-icon-button,
 .playbook-soft-button,
 .playbook-primary-action,
@@ -1983,6 +2008,9 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 }
 
 @media (max-width: 620px) {
+  .playbook-planning-header { display: grid; }
+  .playbook-planning-actions { justify-content: flex-start; }
+  .playbook-planning-summary { grid-template-columns: 1fr; }
   .calendar-appbar { padding-inline: 13px; }
   .calendar-team-brand small,
   .calendar-appbar .calendar-connection { display: none; }

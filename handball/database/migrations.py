@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 9
+MAX_SUPPORTED_SCHEMA_VERSION = 10
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -580,6 +580,59 @@ MIGRATION_V9_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[9] = (MIGRATION_V9_NAME, MIGRATION_V9_CHECKSUM)
 
+# A V10 torna o planejamento uma entidade própria. As tabelas V8 são
+# renomeadas durante a migração, preservando seus IDs para a cópia auditável
+# dos dados; o código de migração abaixo materializa planos, sessões e seus
+# vínculos opcionais com o calendário sem alterar eventos ou chamadas.
+SCHEMA_V10_STATEMENTS = (
+    "ALTER TABLE calendar_events ADD COLUMN is_player_visible INTEGER NOT NULL DEFAULT 0 CHECK(is_player_visible IN(0,1))",
+    "CREATE INDEX idx_calendar_events_player_visible ON calendar_events(team_id,season_id,starts_at) WHERE is_player_visible=1",
+    "ALTER TABLE playbook_training_plan_items RENAME TO playbook_training_plan_items_v8",
+    "ALTER TABLE playbook_plan_transfers RENAME TO playbook_plan_transfers_v8",
+    "ALTER TABLE playbook_plan_evaluations RENAME TO playbook_plan_evaluations_v8",
+    "ALTER TABLE playbook_training_plans RENAME TO playbook_training_plans_v8",
+    "CREATE TABLE playbook_training_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', seasonal_objective TEXT NOT NULL DEFAULT '', context_adjustment TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN('ACTIVE','ARCHIVED')), current_revision INTEGER NOT NULL DEFAULT 1 CHECK(current_revision>=1), created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_training_plan_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, revision_number INTEGER NOT NULL CHECK(revision_number>=1), snapshot_json TEXT NOT NULL, change_summary TEXT NOT NULL DEFAULT '', restored_from_revision_id INTEGER, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(plan_id,revision_number), FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE CASCADE, FOREIGN KEY(restored_from_revision_id) REFERENCES playbook_training_plan_revisions(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_training_plan_items (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, content_id INTEGER NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, planned_minutes INTEGER CHECK(planned_minutes IS NULL OR planned_minutes>0), notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(plan_id,content_id), FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE CASCADE, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_series (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, plan_id INTEGER, title TEXT NOT NULL DEFAULT '', recurrence_rule TEXT NOT NULL DEFAULT '', starts_on TEXT, ends_on TEXT, notes TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN('ACTIVE','ARCHIVED')), created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, plan_id INTEGER NOT NULL, series_id INTEGER, title_override TEXT NOT NULL DEFAULT '', starts_at TEXT, ends_at TEXT, local_overrides_json TEXT NOT NULL DEFAULT '{}', execution_status TEXT NOT NULL DEFAULT 'NOT_STARTED' CHECK(execution_status IN('NOT_STARTED','IN_PROGRESS','COMPLETED','CANCELLED')), execution_notes TEXT NOT NULL DEFAULT '', current_revision INTEGER NOT NULL DEFAULT 1 CHECK(current_revision>=1), created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK(ends_at IS NULL OR starts_at IS NULL OR ends_at>starts_at), FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE RESTRICT, FOREIGN KEY(series_id) REFERENCES playbook_series(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_session_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, revision_number INTEGER NOT NULL CHECK(revision_number>=1), snapshot_json TEXT NOT NULL, change_summary TEXT NOT NULL DEFAULT '', restored_from_revision_id INTEGER, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id,revision_number), FOREIGN KEY(session_id) REFERENCES playbook_sessions(id) ON DELETE CASCADE, FOREIGN KEY(restored_from_revision_id) REFERENCES playbook_session_revisions(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_session_event_links (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, calendar_event_id INTEGER NOT NULL, link_state TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(link_state IN('ACTIVE','HISTORICAL')), link_order INTEGER NOT NULL DEFAULT 0, linked_by_user_id INTEGER NOT NULL, linked_at TEXT NOT NULL, unlinked_by_user_id INTEGER, unlinked_at TEXT, unlink_reason TEXT NOT NULL DEFAULT '', FOREIGN KEY(session_id) REFERENCES playbook_sessions(id) ON DELETE RESTRICT, FOREIGN KEY(calendar_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(linked_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(unlinked_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_session_event_history (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, from_event_id INTEGER, to_event_id INTEGER, action TEXT NOT NULL CHECK(action IN('LINK','UNLINK','RESCHEDULE','MERGE','MIGRATE')), reason TEXT NOT NULL DEFAULT '', actor_user_id INTEGER NOT NULL, occurred_at TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES playbook_sessions(id) ON DELETE RESTRICT, FOREIGN KEY(from_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(to_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_session_evaluations (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, calendar_event_id INTEGER, content_id INTEGER NOT NULL, mastery_stage TEXT NOT NULL CHECK(mastery_stage IN('STARTING','IMPROVING','REFINING','CONSOLIDATED')), continuity_decision TEXT NOT NULL CHECK(continuity_decision IN('CONTINUE','COMPLETE','REVIEW')), notes TEXT NOT NULL DEFAULT '', actor_user_id INTEGER NOT NULL, evaluated_at TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES playbook_sessions(id) ON DELETE RESTRICT, FOREIGN KEY(calendar_event_id) REFERENCES calendar_events(id) ON DELETE SET NULL, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE RESTRICT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_playbook_plans_team_updated ON playbook_training_plans(team_id,status,updated_at DESC)",
+    "CREATE INDEX idx_playbook_plan_revisions_plan_number ON playbook_training_plan_revisions(plan_id,revision_number DESC)",
+    "CREATE INDEX idx_playbook_plan_items_v10_plan_order ON playbook_training_plan_items(plan_id,sort_order,id)",
+    "CREATE INDEX idx_playbook_series_team_status ON playbook_series(team_id,status,updated_at DESC)",
+    "CREATE INDEX idx_playbook_sessions_team_schedule ON playbook_sessions(team_id,starts_at,id)",
+    "CREATE INDEX idx_playbook_sessions_plan ON playbook_sessions(plan_id,created_at DESC)",
+    "CREATE INDEX idx_playbook_session_revisions_session_number ON playbook_session_revisions(session_id,revision_number DESC)",
+    "CREATE UNIQUE INDEX idx_playbook_session_event_one_active ON playbook_session_event_links(session_id) WHERE link_state='ACTIVE'",
+    "CREATE INDEX idx_playbook_session_event_event_order ON playbook_session_event_links(calendar_event_id,link_state,link_order,id)",
+    "CREATE INDEX idx_playbook_session_event_history_session_time ON playbook_session_event_history(session_id,occurred_at,id)",
+    "CREATE INDEX idx_playbook_session_evaluations_session_content ON playbook_session_evaluations(session_id,content_id,evaluated_at DESC)",
+)
+MIGRATION_V10_NAME = "playbook_independent_plans_and_player_calendar_visibility"
+MIGRATION_V10_CHECKSUM = _migration_checksum(
+    10,
+    MIGRATION_V10_NAME,
+    SCHEMA_V10_STATEMENTS,
+    conditional_steps=(
+        {
+            "condition": "V8 playbook tables contain event-centric records",
+            "sql": "copy-v8-event-plans-to-independent-plans-and-sessions",
+        },
+    ),
+    canonical_contract={
+        "plans": "independent-versioned-reusable",
+        "series": "future-sessions-without-calendar-ownership",
+        "sessions": "optional-calendar-links-many-sessions-per-event",
+        "reschedule": "move-links-preserve-history-and-order",
+        "calendar_visibility": "private-by-default-player-visible-explicitly",
+    },
+)
+KNOWN_MIGRATIONS[10] = (MIGRATION_V10_NAME, MIGRATION_V10_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -648,6 +701,79 @@ V8_REQUIRED_COLUMNS = {
 
 V9_REQUIRED_COLUMNS = {
     "calendar_events": {"is_countdown_target"},
+}
+
+V10_REQUIRED_COLUMNS = {
+    "calendar_events": {"is_player_visible"},
+    "playbook_training_plans": {
+        "id",
+        "team_id",
+        "title",
+        "seasonal_objective",
+        "context_adjustment",
+        "notes",
+        "status",
+        "current_revision",
+    },
+    "playbook_training_plan_revisions": {
+        "id",
+        "plan_id",
+        "revision_number",
+        "snapshot_json",
+        "change_summary",
+    },
+    "playbook_training_plan_items": {
+        "id",
+        "plan_id",
+        "content_id",
+        "sort_order",
+        "planned_minutes",
+        "updated_at",
+    },
+    "playbook_series": {
+        "id",
+        "team_id",
+        "plan_id",
+        "recurrence_rule",
+        "status",
+    },
+    "playbook_sessions": {
+        "id",
+        "team_id",
+        "plan_id",
+        "series_id",
+        "starts_at",
+        "ends_at",
+        "local_overrides_json",
+        "execution_status",
+    },
+    "playbook_session_revisions": {
+        "id",
+        "session_id",
+        "revision_number",
+        "snapshot_json",
+    },
+    "playbook_session_event_links": {
+        "id",
+        "session_id",
+        "calendar_event_id",
+        "link_state",
+        "link_order",
+    },
+    "playbook_session_event_history": {
+        "id",
+        "session_id",
+        "from_event_id",
+        "to_event_id",
+        "action",
+    },
+    "playbook_session_evaluations": {
+        "id",
+        "session_id",
+        "calendar_event_id",
+        "content_id",
+        "mastery_stage",
+    },
 }
 
 
@@ -735,6 +861,270 @@ def _apply_schema_v9(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _v10_snapshot(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _apply_schema_v10(conn: sqlite3.Connection) -> None:
+    """Aplica o modelo independente e copia integralmente o modelo V8.
+
+    A V8 prendia um plano a um único evento. Em vez de descartar ou reescrever
+    os registros antigos, a V10 conserva os IDs de plano/item/transferência/
+    avaliação e cria uma sessão inicial para cada plano legado. O evento passa
+    a ser apenas um vínculo opcional da sessão.
+    """
+
+    for statement in SCHEMA_V10_STATEMENTS:
+        conn.execute(statement)
+
+    legacy_plans = _fetchall(
+        conn,
+        "SELECT * FROM playbook_training_plans_v8 ORDER BY id",
+    )
+    for legacy_plan in legacy_plans:
+        plan = dict(legacy_plan)
+        legacy_items = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM playbook_training_plan_items_v8 WHERE plan_id=? "
+                "ORDER BY sort_order,id",
+                (plan["id"],),
+            ).fetchall()
+        ]
+        event = _fetchone(
+            conn,
+            "SELECT id,status,starts_at,ends_at FROM calendar_events WHERE id=?",
+            (plan["calendar_event_id"],),
+        )
+        if event is None:
+            raise DatabaseSchemaError(
+                "Migração V10 recusada: plano V8 "
+                f"{plan['id']} referencia evento inexistente."
+            )
+        event_data = dict(event)
+        conn.execute(
+            """INSERT INTO playbook_training_plans(
+                   id,team_id,title,seasonal_objective,context_adjustment,notes,
+                   status,current_revision,created_by_user_id,updated_by_user_id,
+                   created_at,updated_at
+               ) VALUES(?,?,?,?,?,'','ACTIVE',1,?,?,?,?)""",
+            (
+                plan["id"],
+                plan["team_id"],
+                plan["title"],
+                plan["seasonal_objective"],
+                plan["context_adjustment"],
+                plan["created_by_user_id"],
+                plan["updated_by_user_id"],
+                plan["created_at"],
+                plan["updated_at"],
+            ),
+        )
+        # A coluna notes está no SELECT V8 e precisa ser mantida, mas a forma
+        # compacta acima evita duplicar a lista de colunas no INSERT inicial.
+        conn.execute(
+            "UPDATE playbook_training_plans SET notes=? WHERE id=?",
+            (plan["notes"], plan["id"]),
+        )
+        conn.execute(
+            """INSERT INTO playbook_training_plan_revisions(
+                   plan_id,revision_number,snapshot_json,change_summary,
+                   restored_from_revision_id,created_by_user_id,created_at
+               ) VALUES(?,?,?,?,NULL,?,?)""",
+            (
+                plan["id"],
+                1,
+                _v10_snapshot(
+                    {
+                        "source": "v8-event-centric-plan",
+                        "plan": {
+                            "title": plan["title"],
+                            "seasonal_objective": plan["seasonal_objective"],
+                            "context_adjustment": plan["context_adjustment"],
+                            "notes": plan["notes"],
+                        },
+                        "items": legacy_items,
+                    }
+                ),
+                "Migração automática PB-3B a partir do plano V8.",
+                plan["created_by_user_id"],
+                plan["created_at"],
+            ),
+        )
+        for item in legacy_items:
+            conn.execute(
+                """INSERT INTO playbook_training_plan_items(
+                       id,plan_id,content_id,sort_order,planned_minutes,notes,
+                       created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    item["id"],
+                    item["plan_id"],
+                    item["content_id"],
+                    item["sort_order"],
+                    item["planned_minutes"],
+                    item["notes"],
+                    item["created_at"],
+                    plan["updated_at"],
+                ),
+            )
+        execution_status = {
+            "COMPLETED": "COMPLETED",
+            "CANCELLED": "CANCELLED",
+            "RESCHEDULED": "CANCELLED",
+        }.get(str(event_data["status"]), "NOT_STARTED")
+        conn.execute(
+            """INSERT INTO playbook_sessions(
+                   id,team_id,plan_id,series_id,title_override,starts_at,ends_at,
+                   local_overrides_json,execution_status,execution_notes,
+                   current_revision,created_by_user_id,updated_by_user_id,
+                   created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,'{}',?,'',1,?,?,?,?)""",
+            (
+                plan["id"],
+                plan["team_id"],
+                plan["id"],
+                None,
+                plan["title"],
+                event_data["starts_at"],
+                event_data["ends_at"],
+                execution_status,
+                plan["created_by_user_id"],
+                plan["updated_by_user_id"],
+                plan["created_at"],
+                plan["updated_at"],
+            ),
+        )
+        session_snapshot = {
+            "source": "v8-event-centric-plan",
+            "plan_id": plan["id"],
+            "title_override": plan["title"],
+            "starts_at": event_data["starts_at"],
+            "ends_at": event_data["ends_at"],
+            "execution_status": execution_status,
+        }
+        conn.execute(
+            """INSERT INTO playbook_session_revisions(
+                   session_id,revision_number,snapshot_json,change_summary,
+                   restored_from_revision_id,created_by_user_id,created_at
+               ) VALUES(?,?,?,?,NULL,?,?)""",
+            (
+                plan["id"],
+                1,
+                _v10_snapshot(session_snapshot),
+                "Migração automática PB-3B da sessão vinculada ao evento V8.",
+                plan["created_by_user_id"],
+                plan["created_at"],
+            ),
+        )
+        link_state = (
+            "HISTORICAL"
+            if event_data["status"] in {"CANCELLED", "RESCHEDULED"}
+            else "ACTIVE"
+        )
+        conn.execute(
+            """INSERT INTO playbook_session_event_links(
+                   session_id,calendar_event_id,link_state,link_order,
+                   linked_by_user_id,linked_at
+               ) VALUES(?,?,?,?,?,?)""",
+            (
+                plan["id"],
+                plan["calendar_event_id"],
+                link_state,
+                0,
+                plan["updated_by_user_id"],
+                plan["updated_at"],
+            ),
+        )
+
+    legacy_transfers = _fetchall(
+        conn,
+        "SELECT * FROM playbook_plan_transfers_v8 ORDER BY id",
+    )
+    for transfer_row in legacy_transfers:
+        transfer = dict(transfer_row)
+        conn.execute(
+            """INSERT INTO playbook_session_event_history(
+                   id,session_id,from_event_id,to_event_id,action,reason,
+                   actor_user_id,occurred_at
+               ) VALUES(?,?,?,?,'RESCHEDULE',?,?,?)""",
+            (
+                transfer["id"],
+                transfer["plan_id"],
+                transfer["from_event_id"],
+                transfer["to_event_id"],
+                transfer["reason"],
+                transfer["actor_user_id"],
+                transfer["transferred_at"],
+            ),
+        )
+        for event_id in (transfer["from_event_id"], transfer["to_event_id"]):
+            existing_link = _fetchone(
+                conn,
+                """SELECT id FROM playbook_session_event_links
+                   WHERE session_id=? AND calendar_event_id=? LIMIT 1""",
+                (transfer["plan_id"], event_id),
+            )
+            if existing_link is None:
+                conn.execute(
+                    """INSERT INTO playbook_session_event_links(
+                           session_id,calendar_event_id,link_state,link_order,
+                           linked_by_user_id,linked_at,unlink_reason
+                       ) VALUES(?,?, 'HISTORICAL', ?, ?, ?, ?)""",
+                    (
+                        transfer["plan_id"],
+                        event_id,
+                        transfer["id"],
+                        transfer["actor_user_id"],
+                        transfer["transferred_at"],
+                        "Vínculo histórico migrado da transferência V8.",
+                    ),
+                )
+
+    legacy_evaluations = _fetchall(
+        conn,
+        "SELECT * FROM playbook_plan_evaluations_v8 ORDER BY id",
+    )
+    for evaluation_row in legacy_evaluations:
+        evaluation = dict(evaluation_row)
+        source_plan = _fetchone(
+            conn,
+            """SELECT id FROM playbook_training_plans_v8
+               WHERE calendar_event_id=? ORDER BY id LIMIT 1""",
+            (evaluation["calendar_event_id"],),
+        )
+        if source_plan is None:
+            source_plan = _fetchone(
+                conn,
+                """SELECT plan_id AS id FROM playbook_plan_transfers_v8
+                   WHERE from_event_id=? OR to_event_id=?
+                   ORDER BY transferred_at DESC,id DESC LIMIT 1""",
+                (evaluation["calendar_event_id"], evaluation["calendar_event_id"]),
+            )
+        if source_plan is None:
+            raise DatabaseSchemaError(
+                "Migração V10 recusada: avaliação V8 "
+                f"{evaluation['id']} não possui plano de origem preservável."
+            )
+        conn.execute(
+            """INSERT INTO playbook_session_evaluations(
+                   id,session_id,calendar_event_id,content_id,mastery_stage,
+                   continuity_decision,notes,actor_user_id,evaluated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                evaluation["id"],
+                source_plan["id"],
+                evaluation["calendar_event_id"],
+                evaluation["content_id"],
+                evaluation["mastery_stage"],
+                evaluation["continuity_decision"],
+                evaluation["notes"],
+                evaluation["actor_user_id"],
+                evaluation["evaluated_at"],
+            ),
+        )
+
+
 def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
@@ -773,6 +1163,14 @@ def _record_schema_v9(conn: sqlite3.Connection, *, app_version: str, origin: str
         (9, MIGRATION_V9_NAME, MIGRATION_V9_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 9").close()
+
+
+def _record_schema_v10(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (10, MIGRATION_V10_NAME, MIGRATION_V10_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 10").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1344,7 +1742,7 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
-        if current_version >= 8:
+        if 8 <= current_version < 10:
             required_v8 = set(V8_REQUIRED_COLUMNS)
             base_problems.extend(
                 f"Tabela do Playbook obrigatória ausente: {table}."
@@ -1368,6 +1766,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                 if missing_columns:
                     base_problems.append(
                         f"Colunas do contador ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
+        if current_version >= 10:
+            required_v10 = set(V10_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela PB-3B obrigatória ausente: {table}."
+                for table in sorted(required_v10 - tables)
+            )
+            for table, required_columns in V10_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas PB-3B ausentes em {table}: "
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
@@ -1694,6 +2108,11 @@ class DatabaseMigrator:
             if effective_version >= 8 and effective_version < 9:
                 _apply_schema_v9(conn)
                 _record_schema_v9(conn, app_version=app_version, origin=origin)
+                effective_version = 9
+            if effective_version >= 9 and effective_version < 10:
+                _apply_schema_v10(conn)
+                _record_schema_v10(conn, app_version=app_version, origin=origin)
+                effective_version = 10
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1778,6 +2197,8 @@ class DatabaseMigrator:
                 _record_schema_v8(conn, app_version=app_version, origin=origin)
                 _apply_schema_v9(conn)
                 _record_schema_v9(conn, app_version=app_version, origin=origin)
+                _apply_schema_v10(conn)
+                _record_schema_v10(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

@@ -64,6 +64,9 @@ class CalendarRepository:
     def supports_countdown_targets(self) -> bool:
         return self._column_exists("calendar_events", "is_countdown_target")
 
+    def supports_player_visibility(self) -> bool:
+        return self._column_exists("calendar_events", "is_player_visible")
+
     def _professional_projection(self) -> str:
         if self.supports_professional_calendar():
             return (
@@ -79,6 +82,13 @@ class CalendarRepository:
             "e.is_countdown_target,"
             if self.supports_countdown_targets()
             else "0 AS is_countdown_target,"
+        )
+
+    def _player_visibility_projection(self) -> str:
+        return (
+            "e.is_player_visible,"
+            if self.supports_player_visibility()
+            else "0 AS is_player_visible,"
         )
 
     def list_options(self, team_ids: Iterable[int]) -> dict[str, list[dict[str, Any]]]:
@@ -118,6 +128,7 @@ class CalendarRepository:
         event_types: Iterable[str] = (),
         statuses: Iterable[str] = (),
         query: str | None = None,
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]:
         allowed = _ids(team_ids)
         if not allowed:
@@ -163,14 +174,19 @@ class CalendarRepository:
                     "(e.location LIKE ? COLLATE NOCASE OR e.notes LIKE ? COLLATE NOCASE)"
                 )
                 parameters.extend((term, term))
+        if player_visible_only:
+            if not self.supports_player_visibility():
+                return []
+            filter_clauses.append("e.is_player_visible=1")
         filters = "".join(f" AND {clause}" for clause in filter_clauses)
         professional_projection = self._professional_projection()
         countdown_projection = self._countdown_projection()
+        visibility_projection = self._player_visibility_projection()
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
-                       {professional_projection}{countdown_projection}
+                       {professional_projection}{countdown_projection}{visibility_projection}
                        s.label season_label,s.starts_on season_starts_on,
                        s.ends_on season_ends_on,t.display_name team_name,
                        ts.training_date attendance_training_date,
@@ -190,6 +206,8 @@ class CalendarRepository:
         self,
         event_id: int,
         team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
     ) -> dict[str, Any] | None:
         allowed = _ids(team_ids)
         if not allowed:
@@ -197,11 +215,15 @@ class CalendarRepository:
         placeholders = _placeholders(allowed)
         professional_projection = self._professional_projection()
         countdown_projection = self._countdown_projection()
+        visibility_projection = self._player_visibility_projection()
+        if player_visible_only and not self.supports_player_visibility():
+            return None
+        visible_clause = " AND e.is_player_visible=1" if player_visible_only else ""
         row = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
-                       {professional_projection}{countdown_projection}
+                       {professional_projection}{countdown_projection}{visibility_projection}
                        s.label season_label,t.display_name team_name,
                        ts.training_date attendance_training_date,
                        ts.is_finalized attendance_is_finalized,
@@ -210,7 +232,7 @@ class CalendarRepository:
                 JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
                 JOIN teams t ON t.id=e.team_id
                 LEFT JOIN training_sessions ts ON ts.id=e.attendance_session_id
-                WHERE e.id=? AND e.team_id IN ({placeholders})""",
+                WHERE e.id=? AND e.team_id IN ({placeholders}){visible_clause}""",
             (int(event_id), *allowed),
         ).fetchone()
         return dict(row) if row else None
@@ -220,6 +242,7 @@ class CalendarRepository:
         team_ids: Iterable[int],
         *,
         season_id: int | None = None,
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]:
         allowed = _ids(team_ids)
         if not allowed:
@@ -232,17 +255,21 @@ class CalendarRepository:
             parameters.append(int(season_id))
         professional_projection = self._professional_projection()
         countdown_projection = self._countdown_projection()
+        visibility_projection = self._player_visibility_projection()
+        if player_visible_only and not self.supports_player_visibility():
+            return []
+        visible_clause = " AND e.is_player_visible=1" if player_visible_only else ""
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,
-                       e.attendance_session_id,{professional_projection}{countdown_projection}
+                       e.attendance_session_id,{professional_projection}{countdown_projection}{visibility_projection}
                        s.label season_label,
                        ts.training_date,ts.is_finalized
                 FROM calendar_events e
                 JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
                 LEFT JOIN training_sessions ts ON ts.id=e.attendance_session_id
                 WHERE e.event_type='TRAINING' AND e.team_id IN ({placeholders})
-                      {season_clause}
+                      {season_clause}{visible_clause}
                 ORDER BY e.starts_at,e.id""",
             parameters,
         ).fetchall()
@@ -311,8 +338,16 @@ class CalendarRepository:
                 return event
         return None
 
-    def active_training_event(self, team_ids: Iterable[int]) -> dict[str, Any] | None:
-        for event in self.list_training_events(team_ids):
+    def active_training_event(
+        self,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any] | None:
+        for event in self.list_training_events(
+            team_ids,
+            player_visible_only=player_visible_only,
+        ):
             if event["status"] not in ATTENDANCE_OPEN_STATUSES:
                 continue
             if event["attendance_session_id"] is None or not bool(event["is_finalized"]):
@@ -580,7 +615,39 @@ class CalendarRepository:
         self._validate_event_payload(payload)
         now = _now_iso()
         try:
-            if self.supports_professional_calendar():
+            if self.supports_professional_calendar() and self.supports_player_visibility():
+                cursor = self.connection.execute(
+                    """INSERT INTO calendar_events(
+                           team_id,season_id,event_type,status,starts_at,ends_at,
+                           location,notes,restriction_kind,attendance_session_id,
+                           created_by_user_id,updated_by_user_id,created_at,updated_at,
+                           title,opponent,all_day,version,series_id,is_countdown_target,
+                           is_player_visible
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        actor_user_id,
+                        now,
+                        now,
+                        str(payload.get("title") or ""),
+                        str(payload.get("opponent") or ""),
+                        int(bool(payload.get("all_day"))),
+                        payload.get("series_id"),
+                        int(bool(payload.get("is_countdown_target"))),
+                        int(bool(payload.get("is_player_visible"))),
+                    ),
+                )
+            elif self.supports_professional_calendar():
                 cursor = self.connection.execute(
                     """INSERT INTO calendar_events(
                            team_id,season_id,event_type,status,starts_at,ends_at,
@@ -677,8 +744,43 @@ class CalendarRepository:
             raise ValueError(
                 "Um treino com chamada vinculada não pode mudar de dia; cancele/remarque e crie um novo treino."
             )
+        visibility_value = (
+            int(bool(before.get("is_player_visible")))
+            if payload.get("is_player_visible") is None
+            else int(bool(payload.get("is_player_visible")))
+        )
         try:
-            if self.supports_professional_calendar():
+            if self.supports_professional_calendar() and self.supports_player_visibility():
+                self.connection.execute(
+                    """UPDATE calendar_events
+                       SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
+                           ends_at=?,location=?,notes=?,restriction_kind=?,
+                           attendance_session_id=?,updated_by_user_id=?,updated_at=?,
+                           title=?,opponent=?,all_day=?,is_countdown_target=?,
+                           is_player_visible=?,version=version+1
+                       WHERE id=?""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        _now_iso(),
+                        str(payload.get("title") or ""),
+                        str(payload.get("opponent") or ""),
+                        int(bool(payload.get("all_day"))),
+                        int(bool(payload.get("is_countdown_target"))),
+                        visibility_value,
+                        int(event_id),
+                    ),
+                )
+            elif self.supports_professional_calendar():
                 self.connection.execute(
                     """UPDATE calendar_events
                        SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
@@ -791,6 +893,48 @@ class CalendarRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def set_player_visibility(
+        self,
+        event_id: int,
+        *,
+        is_player_visible: bool,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        base_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Altera somente a publicação do evento para atletas, com auditoria."""
+
+        if not self.supports_player_visibility():
+            raise CalendarProblem(
+                code="calendar.upgrade_required",
+                title="Atualização do calendário necessária",
+                message="A publicação de eventos para atletas depende da migração V10.",
+                suggestion="Aplique a migração controlada antes de usar esta opção.",
+                status_code=409,
+            )
+        before = self.get_event(event_id, team_ids)
+        if before is None:
+            raise KeyError("Evento não encontrado na equipe autorizada.")
+        self._assert_base_version(before, base_version)
+        self.connection.execute(
+            """UPDATE calendar_events
+               SET is_player_visible=?,version=version+1,updated_by_user_id=?,updated_at=?
+               WHERE id=?""",
+            (int(bool(is_player_visible)), int(actor_user_id), _now_iso(), int(event_id)),
+        )
+        after = self.get_event(event_id, team_ids)
+        if after is None:
+            raise RuntimeError("Evento atualizado não pôde ser relido.")
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="calendar.event.set_player_visibility",
+            entity="calendar_event",
+            target_id=event_id,
+            before=before,
+            after=after,
+        )
+        return after
+
     def get_command_receipt(
         self,
         operation_id: str,
@@ -864,11 +1008,18 @@ class CalendarRepository:
             )
         self._assert_base_version(before, base_version)
         current = str(before["status"])
-        if (
-            action == "COMPLETE"
-            and str(before["event_type"]) == "TRAINING"
-            and before["attendance_session_id"] is not None
-        ):
+        if action == "COMPLETE" and str(before["event_type"]) == "TRAINING":
+            if before["attendance_session_id"] is None:
+                raise CalendarProblem(
+                    code="calendar.attendance_required",
+                    title="Abra e encerre a chamada antes de concluir o treino",
+                    message=(
+                        "Todo treino precisa de uma chamada concluída antes do "
+                        "fechamento, inclusive quando ninguém compareceu."
+                    ),
+                    suggestion="Abra a chamada do treino, registre as presenças e encerre-a.",
+                    status_code=409,
+                )
             session = self.connection.execute(
                 "SELECT is_finalized FROM training_sessions WHERE id=?",
                 (int(before["attendance_session_id"]),),
@@ -1045,8 +1196,13 @@ class CalendarRepository:
         event_id: int,
         *,
         team_ids: Iterable[int],
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]:
-        if self.get_event(event_id, team_ids) is None:
+        if self.get_event(
+            event_id,
+            team_ids,
+            player_visible_only=player_visible_only,
+        ) is None:
             raise KeyError("Evento não encontrado na equipe autorizada.")
         if not self._table_exists("calendar_event_transitions"):
             return []
@@ -1335,6 +1491,11 @@ class CalendarRepository:
         if not allowed:
             raise PermissionError("Conta sem equipe ativa.")
         placeholders = _placeholders(allowed)
+        visibility_clause = (
+            " AND e.is_player_visible=1"
+            if self.supports_player_visibility()
+            else ""
+        )
         row = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.event_type
                 FROM calendar_events e
@@ -1345,7 +1506,7 @@ class CalendarRepository:
                  AND tm.team_id=e.team_id
                  AND tm.season_id=e.season_id
                  AND tm.status='ACTIVE'
-                WHERE e.id=? AND e.team_id IN ({placeholders})""",
+                WHERE e.id=? AND e.team_id IN ({placeholders}){visibility_clause}""",
             (int(player_member_id), int(user_id), int(event_id), *allowed),
         ).fetchone()
         if row is None:

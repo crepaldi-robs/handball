@@ -113,7 +113,10 @@ class AttendanceService:
         self, *, team_ids: Iterable[int], player_member_id: int, actor_user_id: int
     ) -> dict[str, Any] | None:
         with self._unit_of_work_factory() as unit_of_work:
-            event = unit_of_work.calendar.active_training_event(team_ids)
+            event = unit_of_work.calendar.active_training_event(
+                team_ids,
+                player_visible_only=True,
+            )
             if event is None:
                 return None
             linked = unit_of_work.calendar.get_or_create_attendance_session(
@@ -145,7 +148,10 @@ class AttendanceService:
         actor_user_id: int,
     ) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
-            active = unit_of_work.calendar.active_training_event(team_ids)
+            active = unit_of_work.calendar.active_training_event(
+                team_ids,
+                player_visible_only=True,
+            )
             if active is None or int(active["id"]) != int(event_id):
                 raise ValueError("Este não é mais o treino ativo para confirmação.")
             linked = unit_of_work.calendar.get_or_create_attendance_session(

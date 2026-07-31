@@ -150,15 +150,23 @@ class CalendarRepositoryContract(Protocol):
         event_types: Iterable[str] = (),
         statuses: Iterable[str] = (),
         query: str | None = None,
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]: ...
 
-    def get_event(self, event_id: int, team_ids: Iterable[int]) -> dict[str, Any] | None: ...
+    def get_event(
+        self,
+        event_id: int,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any] | None: ...
 
     def list_training_events(
         self,
         team_ids: Iterable[int],
         *,
         season_id: int | None = None,
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     def list_countdown_targets(
@@ -191,6 +199,16 @@ class CalendarRepositoryContract(Protocol):
         payload: Mapping[str, Any],
         *,
         actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def set_player_visibility(
+        self,
+        event_id: int,
+        *,
+        is_player_visible: bool,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        base_version: int | None = None,
     ) -> dict[str, Any]: ...
 
     def check_conflicts(
@@ -248,6 +266,7 @@ class CalendarRepositoryContract(Protocol):
         event_id: int,
         *,
         team_ids: Iterable[int],
+        player_visible_only: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     def create_series(
@@ -335,7 +354,12 @@ class PlaybookRepositoryContract(Protocol):
         published_only: bool,
     ) -> dict[str, list[dict[str, Any]]]: ...
 
-    def next_training_event_id(self, team_ids: Iterable[int]) -> int | None: ...
+    def next_training_event_id(
+        self,
+        team_ids: Iterable[int],
+        *,
+        player_visible_only: bool = False,
+    ) -> int | None: ...
 
     def plan_for_event(
         self,
@@ -343,6 +367,7 @@ class PlaybookRepositoryContract(Protocol):
         *,
         team_ids: Iterable[int],
         published_only: bool = False,
+        player_visible_only: bool = False,
     ) -> dict[str, Any]: ...
 
     def content_detail(
@@ -551,6 +576,119 @@ class PlaybookRepositoryContract(Protocol):
         published_only: bool,
     ) -> list[dict[str, Any]]: ...
 
+    def list_plans(
+        self,
+        *,
+        team_ids: Iterable[int],
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def plan_detail(
+        self,
+        plan_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def save_independent_plan(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        plan_id: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def restore_plan_revision(
+        self,
+        plan_id: int,
+        revision_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def list_series(
+        self,
+        *,
+        team_ids: Iterable[int],
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def save_series(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        series_id: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def list_sessions(
+        self,
+        *,
+        team_ids: Iterable[int],
+        event_id: int | None = None,
+        future_only: bool = False,
+        player_visible_only: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def session_detail(
+        self,
+        session_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+        player_visible_only: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def save_session(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        session_id: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def link_session_event(
+        self,
+        session_id: int,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str = "",
+    ) -> dict[str, Any]: ...
+
+    def unlink_session_event(
+        self,
+        session_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str,
+    ) -> dict[str, Any]: ...
+
+    def execute_session(
+        self,
+        session_id: int,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def restore_session_revision(
+        self,
+        session_id: int,
+        revision_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
     def save_plan(
         self,
         event_id: int,
@@ -574,6 +712,18 @@ class PlaybookRepositoryContract(Protocol):
         event_id: int,
         evaluations: Iterable[Mapping[str, Any]],
         *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        session_id: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def record_session_evaluations(
+        self,
+        session_id: int,
+        evaluations: Iterable[Mapping[str, Any]],
+        *,
+        calendar_event_id: int | None,
+        change_summary: str,
         team_ids: Iterable[int],
         actor_user_id: int,
     ) -> list[dict[str, Any]]: ...

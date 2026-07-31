@@ -25,6 +25,7 @@ from .schemas import (
     CalendarRescheduleInput,
     CalendarSeriesEditInput,
     CalendarSeriesInput,
+    CalendarVisibilityInput,
 )
 from .service import ACTIVE_SEASON_LABEL, CalendarService
 
@@ -205,6 +206,21 @@ def create_router(
     ) -> dict[str, Any]:
         try:
             return service.update_event(event_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/calendar/events/{event_id}/player-visibility")
+    def set_player_visibility(
+        event_id: int,
+        request: Request,
+        body: CalendarVisibilityInput,
+        context: Annotated[
+            AccessContext,
+            Depends(_write_permission(Permission.CALENDAR_VISIBILITY_MANAGE)),
+        ],
+    ) -> dict[str, Any]:
+        try:
+            return service.set_player_visibility(event_id, body, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

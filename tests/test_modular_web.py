@@ -168,7 +168,7 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v11"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v12"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert '["/app/calendario", "/app/calendario"]' in worker

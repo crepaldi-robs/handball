@@ -25,6 +25,7 @@ class CalendarEventInput(BaseModel):
     opponent: str = Field(default="", max_length=180)
     all_day: bool = False
     is_countdown_target: bool = False
+    is_player_visible: bool | None = None
     version: int | None = Field(default=None, ge=1)
     restriction_kind: CollectiveRestrictionKind | None = None
     attendance_session_id: int | None = Field(default=None, gt=0)
@@ -76,11 +77,17 @@ class CalendarEventInput(BaseModel):
 class CalendarActionInput(BaseModel):
     reason: str = Field(default="", max_length=1000)
     base_version: int | None = Field(default=None, ge=1)
+    playbook_session_id: int | None = Field(default=None, gt=0)
 
     @field_validator("reason")
     @classmethod
     def strip_reason(cls, value: str) -> str:
         return value.strip()
+
+
+class CalendarVisibilityInput(BaseModel):
+    is_player_visible: bool
+    base_version: int | None = Field(default=None, ge=1)
 
 
 class CalendarRescheduleInput(CalendarActionInput):

@@ -25,8 +25,15 @@ from .schemas import (
     FolderRenameInput,
     FolderReorderInput,
     GuidedFinishInput,
+    IndependentPlanInput,
     PermanentDeleteInput,
+    PlaybookSeriesInput,
     PlanReuseInput,
+    PlaybookSessionInput,
+    SessionEventLinkInput,
+    SessionEvaluationInput,
+    SessionExecutionInput,
+    SessionUnlinkInput,
     TrainingPlanInput,
 )
 from .service import MEDIA_LIMITS, PlaybookService
@@ -500,6 +507,208 @@ def create_router(service: PlaybookService, templates: Jinja2Templates) -> APIRo
     ) -> dict[str, Any]:
         try:
             return service.offline_manifest(context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    # PB-3B: entidades independentes do Calendário. Os endpoints de evento
+    # abaixo continuam existindo como adaptadores de compatibilidade.
+    @router.get("/api/v1/playbook/plans")
+    def independent_plans(
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+        team_id: int | None = None,
+        include_archived: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            return {"items": service.list_plans(context, team_id=team_id, include_archived=include_archived)}
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/plans", status_code=201)
+    def create_independent_plan(
+        request: Request,
+        body: IndependentPlanInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_independent_plan(body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/plans/{plan_id}")
+    def independent_plan_detail(
+        plan_id: int,
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.plan_detail(plan_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/plans/{plan_id}")
+    def update_independent_plan(
+        plan_id: int,
+        request: Request,
+        body: IndependentPlanInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_independent_plan(body, context, plan_id=plan_id)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/plans/{plan_id}/revisions/{revision_id}/restore")
+    def restore_independent_plan_revision(
+        plan_id: int,
+        revision_id: int,
+        request: Request,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.restore_plan_revision(plan_id, revision_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/series")
+    def series(
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+        team_id: int | None = None,
+        include_archived: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            return {"items": service.list_series(context, team_id=team_id, include_archived=include_archived)}
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/series", status_code=201)
+    def create_series(
+        request: Request,
+        body: PlaybookSeriesInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_series(body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/series/{series_id}")
+    def update_series(
+        series_id: int,
+        request: Request,
+        body: PlaybookSeriesInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_series(body, context, series_id=series_id)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/sessions")
+    def sessions(
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+        team_id: int | None = None,
+        event_id: int | None = None,
+        future_only: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            return {"items": service.list_sessions(context, team_id=team_id, event_id=event_id, future_only=future_only)}
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions", status_code=201)
+    def create_session(
+        request: Request,
+        body: PlaybookSessionInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_session(body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/sessions/{session_id}")
+    def session_detail(
+        session_id: int,
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.session_detail(session_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/sessions/{session_id}")
+    def update_session(
+        session_id: int,
+        request: Request,
+        body: PlaybookSessionInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_session(body, context, session_id=session_id)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/calendar-link")
+    def link_session_to_calendar(
+        session_id: int,
+        request: Request,
+        body: SessionEventLinkInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.link_session_event(session_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/calendar-unlink")
+    def unlink_session_from_calendar(
+        session_id: int,
+        request: Request,
+        body: SessionUnlinkInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.unlink_session_event(session_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/execute")
+    def execute_session(
+        session_id: int,
+        request: Request,
+        body: SessionExecutionInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.execute_session(session_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/evaluations")
+    def evaluate_session(
+        session_id: int,
+        request: Request,
+        body: SessionEvaluationInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return {"items": service.evaluate_session(session_id, body, context)}
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/revisions/{revision_id}/restore")
+    def restore_session_revision(
+        session_id: int,
+        revision_id: int,
+        request: Request,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.restore_session_revision(session_id, revision_id, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

@@ -24,6 +24,7 @@ if (playbookRoot) {
     selectedFolder: null,
     planEventId: Number(new URLSearchParams(window.location.search).get("event_id")) || null,
     plan: null,
+    planning: { plans: [], series: [], sessions: [] },
     online: navigator.onLine,
   };
 
@@ -47,6 +48,7 @@ if (playbookRoot) {
     contentForm: document.querySelector("#playbook-content-form"),
     planDialog: document.querySelector("#playbook-plan-dialog"),
     planForm: document.querySelector("#playbook-plan-form"),
+    planning: document.querySelector("#playbook-planning-summary"),
     problemDialog: document.querySelector("#playbook-problem-dialog"),
   };
 
@@ -524,6 +526,7 @@ if (playbookRoot) {
     renderItems();
     renderBulkActions();
     renderNextTraining();
+    if (canManage) loadPlanning().catch(showProblem);
     state.selectedFolder = state.folderId ? folderById(state.folderId) : null;
     if (elements.folderActions) elements.folderActions.disabled = !state.selectedFolder;
   }
@@ -725,6 +728,145 @@ if (playbookRoot) {
     } catch (error) { showProblem(error); }
   }
 
+  function planningEmpty(label) {
+    return `<p class="playbook-form-hint">${escapeHtml(label)}</p>`;
+  }
+
+  function renderPlanning() {
+    if (!elements.planning) return;
+    const planning = state.planning || { plans: [], series: [], sessions: [] };
+    const plans = planning.plans || [];
+    const series = planning.series || [];
+    const sessions = planning.sessions || [];
+    const planCards = plans.length ? plans.map((plan) => `
+      <article class="playbook-planning-item">
+        <strong>${escapeHtml(plan.title || `Plano #${plan.id}`)}</strong>
+        <small>${Number(plan.item_count || 0)} bloco(s) · ${Number(plan.session_count || 0)} sessão(ões) · revisão ${Number(plan.current_revision || 1)}</small>
+        <div class="playbook-planning-item-actions"><button type="button" data-planning-plan-history="${plan.id}">Histórico/restaurar</button></div>
+      </article>`).join("") : planningEmpty("Nenhum plano independente nesta equipe.");
+    const seriesCards = series.length ? series.map((seriesItem) => `
+      <article class="playbook-planning-item">
+        <strong>${escapeHtml(seriesItem.title || `Série #${seriesItem.id}`)}</strong>
+        <small>${escapeHtml(seriesItem.plan_title || "Sem plano-base")} · ${Number(seriesItem.session_count || 0)} sessão(ões)</small>
+      </article>`).join("") : planningEmpty("Nenhuma série futura criada.");
+    const sessionCards = sessions.length ? sessions.map((entry) => {
+      const session = entry.session || {};
+      const active = (entry.event_links || []).find((link) => link.link_state === "ACTIVE");
+      const linked = active ? `${active.event_title || "Treino"} · ${new Date(active.event_starts_at).toLocaleString("pt-BR")}` : "Sem evento de calendário";
+      return `<article class="playbook-planning-item">
+        <strong>${escapeHtml(session.title_override || session.plan_title || `Sessão #${session.id}`)}</strong>
+        <small>${escapeHtml(linked)} · ${escapeHtml(session.execution_status || "NOT_STARTED")}</small>
+        <div class="playbook-planning-item-actions">
+          <button type="button" data-planning-session-link="${session.id}">${active ? "Trocar evento" : "Vincular evento"}</button>
+          <button type="button" data-planning-session-execute="${session.id}">Executar</button>
+          <button type="button" data-planning-session-history="${session.id}">Histórico/restaurar</button>
+        </div>
+      </article>`;
+    }).join("") : planningEmpty("Crie uma sessão mesmo antes de haver evento no Calendário.");
+    elements.planning.innerHTML = `
+      <section class="playbook-planning-column"><h3>Planos reutilizáveis</h3>${planCards}</section>
+      <section class="playbook-planning-column"><h3>Séries futuras</h3>${seriesCards}</section>
+      <section class="playbook-planning-column"><h3>Sessões e calendário</h3>${sessionCards}</section>`;
+    elements.planning.querySelectorAll("[data-planning-plan-history]").forEach((button) => button.addEventListener("click", () => restoreIndependentPlan(Number(button.dataset.planningPlanHistory))));
+    elements.planning.querySelectorAll("[data-planning-session-link]").forEach((button) => button.addEventListener("click", () => linkPlanningSession(Number(button.dataset.planningSessionLink))));
+    elements.planning.querySelectorAll("[data-planning-session-execute]").forEach((button) => button.addEventListener("click", () => executePlanningSession(Number(button.dataset.planningSessionExecute))));
+    elements.planning.querySelectorAll("[data-planning-session-history]").forEach((button) => button.addEventListener("click", () => restorePlanningSession(Number(button.dataset.planningSessionHistory))));
+  }
+
+  async function loadPlanning() {
+    if (!canManage || !elements.planning || !state.teamId) return;
+    const params = new URLSearchParams({ team_id: String(state.teamId) });
+    const [plans, series, sessions] = await Promise.all([
+      request(`/api/v1/playbook/plans?${params}`),
+      request(`/api/v1/playbook/series?${params}`),
+      request(`/api/v1/playbook/sessions?${params}`),
+    ]);
+    state.planning = { plans: plans.items || [], series: series.items || [], sessions: sessions.items || [] };
+    renderPlanning();
+  }
+
+  async function createIndependentPlan() {
+    const title = window.prompt("Título do plano reutilizável:", "Novo plano de treino");
+    if (!title) return;
+    try {
+      await request("/api/v1/playbook/plans", { method: "POST", body: JSON.stringify({ team_id: state.teamId, title, items: [], change_summary: "Plano criado pela interface." }) });
+      showMessage("Plano independente criado. Agora ele pode ser reutilizado por várias sessões.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function createPlanningSeries() {
+    const title = window.prompt("Nome da série futura:", "Ciclo de treinos");
+    if (!title) return;
+    const planId = window.prompt("ID do plano-base (opcional; veja a coluna Planos):", "");
+    try {
+      await request("/api/v1/playbook/series", { method: "POST", body: JSON.stringify({ team_id: state.teamId, title, plan_id: planId ? Number(planId) : null, recurrence_rule: "" }) });
+      showMessage("Série criada. As sessões podem ser programadas sem calendário.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function createPlanningSession() {
+    const plans = state.planning?.plans || [];
+    if (!plans.length) {
+      showMessage("Crie primeiro um plano reutilizável.", "warning");
+      return;
+    }
+    const planId = window.prompt(`ID do plano para a sessão (${plans.map((plan) => `${plan.id}: ${plan.title || "sem título"}`).join(" · ")}):`, String(plans[0].id));
+    if (!planId) return;
+    const title = window.prompt("Nome local da sessão (opcional):", "") ?? "";
+    try {
+      await request("/api/v1/playbook/sessions", { method: "POST", body: JSON.stringify({ team_id: state.teamId, plan_id: Number(planId), title_override: title, change_summary: "Sessão futura criada pela interface." }) });
+      showMessage("Sessão criada sem depender do Calendário. Vincule um treino quando ele existir.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function linkPlanningSession(sessionId) {
+    const eventId = window.prompt("ID do evento de treino do Calendário para esta sessão:", "");
+    if (!eventId) return;
+    const reason = window.prompt("Motivo do vínculo (opcional):", "") ?? "";
+    try {
+      await request(`/api/v1/playbook/sessions/${sessionId}/calendar-link`, { method: "POST", body: JSON.stringify({ event_id: Number(eventId), reason }) });
+      showMessage("Sessão vinculada ao evento. A visibilidade para atletas continua sendo controlada no Calendário.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function executePlanningSession(sessionId) {
+    const notes = window.prompt("Registro de execução da sessão:", "");
+    if (notes === null) return;
+    try {
+      await request(`/api/v1/playbook/sessions/${sessionId}/execute`, { method: "POST", body: JSON.stringify({ execution_status: "COMPLETED", execution_notes: notes, change_summary: "Execução registrada pela interface." }) });
+      showMessage("Execução da sessão registrada sem alterar o estado do evento.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function restoreIndependentPlan(planId) {
+    try {
+      const detail = await request(`/api/v1/playbook/plans/${planId}`);
+      const options = (detail.revisions || []).map((revision) => `${revision.id} (r${revision.revision_number})`).join(", ");
+      const revisionId = window.prompt(`ID da revisão para restaurar (${options}):`, "");
+      if (!revisionId) return;
+      await request(`/api/v1/playbook/plans/${planId}/revisions/${Number(revisionId)}/restore`, { method: "POST", body: "{}" });
+      showMessage("Plano restaurado em uma nova revisão auditável.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
+  async function restorePlanningSession(sessionId) {
+    try {
+      const detail = await request(`/api/v1/playbook/sessions/${sessionId}`);
+      const options = (detail.revisions || []).map((revision) => `${revision.id} (r${revision.revision_number})`).join(", ");
+      const revisionId = window.prompt(`ID da revisão para restaurar (${options}):`, "");
+      if (!revisionId) return;
+      await request(`/api/v1/playbook/sessions/${sessionId}/revisions/${Number(revisionId)}/restore`, { method: "POST", body: "{}" });
+      showMessage("Sessão restaurada em uma nova revisão; o histórico de eventos foi preservado.");
+      await loadPlanning();
+    } catch (error) { showProblem(error); }
+  }
+
   function planAvailability(availability) {
     if (!availability) return "<p>A chamada ainda não foi aberta. A disponibilidade aparecerá automaticamente quando ela existir.</p>";
     const positions = Object.entries(availability.positions || {}).map(([position, count]) => `<span>${escapeHtml(position)} <strong>${count}</strong></span>`).join("");
@@ -801,9 +943,20 @@ if (playbookRoot) {
       continuity_decision: document.querySelector(`[data-evaluation-decision=\"${item.content_id}\"]`)?.value || "CONTINUE",
       notes: "",
     }));
+    const linkedSessions = state.plan.sessions || [];
+    if (!linkedSessions.length) {
+      showProblem(new PlaybookRequestError({ title: "Sessão do Playbook ausente", message: "Crie ou vincule uma sessão antes de concluir este treino.", suggestion: "Use o painel de planejamento para criar uma sessão e vinculá-la ao evento." }, 409));
+      return;
+    }
+    const sessionChoices = linkedSessions.map((item) => {
+      const session = item.session || {};
+      return `${session.id}: ${session.title_override || session.plan_title || "Sessão"}`;
+    }).join(" · ");
+    const selectedSessionId = Number(window.prompt(`Sessão de destino do fechamento (${sessionChoices}):`, String(linkedSessions[0].session.id)));
+    if (!selectedSessionId) return;
     if (!window.confirm("Encerrar a chamada oficial, registrar as avaliações e concluir este treino? Esta etapa só continua se a chamada puder ser finalizada.")) return;
     try {
-      await request(`/api/v1/playbook/events/${state.planEventId}/finish`, { method: "POST", body: JSON.stringify({ session_notes: sessionNotes, finalize_attendance: true, evaluations }) });
+      await request(`/api/v1/playbook/events/${state.planEventId}/finish`, { method: "POST", body: JSON.stringify({ playbook_session_id: selectedSessionId, session_notes: sessionNotes, finalize_attendance: true, evaluations }) });
       closeDialog(elements.planDialog);
       showMessage("Treino concluído com chamada, avaliação e histórico preservados.");
       await loadLibrary();
@@ -863,6 +1016,10 @@ if (playbookRoot) {
       document.querySelector("#playbook-clear-selection")?.addEventListener("click", () => { state.selected.clear(); renderItems(); renderBulkActions(); });
       elements.planForm.addEventListener("submit", savePlan);
       document.querySelector("#playbook-finish-training")?.addEventListener("click", finishTraining);
+      document.querySelector("#playbook-planning-refresh")?.addEventListener("click", () => loadPlanning().catch(showProblem));
+      document.querySelector("#playbook-new-plan")?.addEventListener("click", createIndependentPlan);
+      document.querySelector("#playbook-new-series")?.addEventListener("click", createPlanningSeries);
+      document.querySelector("#playbook-new-session")?.addEventListener("click", createPlanningSession);
     }
     window.addEventListener("online", async () => { setConnection(true); showMessage("Conexão restabelecida."); try { await loadLibrary(); } catch (error) { showProblem(error); } });
     window.addEventListener("offline", () => { setConnection(false); showMessage("Sem conexão: consulte os itens que já foram abertos neste dispositivo.", "warning"); });

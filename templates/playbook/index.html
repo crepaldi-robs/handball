@@ -75,6 +75,25 @@
       {% endif %}
     </section>
 
+    {% if can_manage %}
+    <section id="playbook-planning" class="playbook-planning" aria-labelledby="playbook-planning-title">
+      <header class="playbook-planning-header">
+        <div>
+          <span class="playbook-kicker">PB-3B · INDEPENDENTE DO CALENDÁRIO</span>
+          <h2 id="playbook-planning-title">Planos, séries e sessões</h2>
+          <p>Crie o plano uma vez, programe sessões futuras e só então associe cada sessão a um evento de treino.</p>
+        </div>
+        <div class="playbook-planning-actions">
+          <button id="playbook-planning-refresh" class="playbook-soft-button" type="button">Atualizar</button>
+          <button id="playbook-new-plan" class="playbook-soft-button" type="button">＋ Plano</button>
+          <button id="playbook-new-series" class="playbook-soft-button" type="button">＋ Série</button>
+          <button id="playbook-new-session" class="playbook-primary-action" type="button">＋ Sessão</button>
+        </div>
+      </header>
+      <div id="playbook-planning-summary" class="playbook-planning-summary" aria-live="polite">Carregando planejamento…</div>
+    </section>
+    {% endif %}
+
     <section class="playbook-layout">
       <aside class="playbook-sidebar" aria-label="Pastas e coleções">
         <div class="playbook-sidebar-heading">

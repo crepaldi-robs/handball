@@ -758,6 +758,7 @@ if (calendarRoot) {
       localStorage.getItem(`${cachePrefix}location`) || ""
     );
     document.querySelector("#calendar-is-countdown-target").checked = false;
+    document.querySelector("#calendar-is-player-visible").checked = false;
     selectEventType("TRAINING");
     document.querySelector("#calendar-save-event span").textContent = "Salvar evento";
   }
@@ -789,6 +790,7 @@ if (calendarRoot) {
       document.querySelector("#calendar-notes").value = event.notes || "";
       document.querySelector("#calendar-restriction-kind").value = event.restriction_kind || "";
       document.querySelector("#calendar-is-countdown-target").checked = Boolean(event.is_countdown_target);
+      document.querySelector("#calendar-is-player-visible").checked = Boolean(event.is_player_visible);
       document.querySelector("#event-editor-title").textContent = duplicate
         ? "Duplicar evento"
         : "Editar evento";
@@ -819,6 +821,7 @@ if (calendarRoot) {
       restriction_kind: document.querySelector("#calendar-restriction-kind").value || null,
       all_day: false,
       is_countdown_target: document.querySelector("#calendar-is-countdown-target").checked,
+      is_player_visible: document.querySelector("#calendar-is-player-visible").checked,
       version: Number(document.querySelector("#calendar-event-version").value) || null,
     };
   }
