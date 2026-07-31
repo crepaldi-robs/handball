@@ -4,6 +4,17 @@
 > de produto com foco na rotina do CT. Itens ainda não validados estão marcados
 > como decisões pendentes, não como requisitos fechados.
 
+## 0. Governança de implementação
+
+- `[ ]` significa pendente; `[-]`, em progresso; e `[x]`, concluído na
+  implementação.
+- Um item só recebe `[x]` quando a alteração correspondente estiver em um
+  commit Git local verificável; o hash do commit deve ser registrado no próprio
+  item.
+- Ativação de `DB_MIGRATION`, implantação em produção e validação de uso real
+  são estados operacionais distintos. Eles não alteram, por si só, o status da
+  implementação versionada.
+
 ## 1. Direção do produto
 
 A plataforma deve reduzir o trabalho operacional do time e transformar
@@ -24,19 +35,31 @@ Princípios:
 
 ## 2. Sequência aprovada das próximas trilhas
 
-1. [ ] Consolidar a jornada operacional do calendário e da chamada. **Em validação**
-2. Implementar o módulo de Playbook.
-3. Implementar o módulo dos DMs — Diretores de Modalidade.
-4. Avaliar o acervo do Drive quando o arquivo `.zip` for disponibilizado.
-5. Decidir entre manter referências ao Drive, importar parte do acervo ou fazer
+1. [x] Consolidar a jornada operacional do calendário e da chamada
+   (`e847ae9`). A validação de uso autenticado pelo CT em navegador e celular
+   permanece pendente.
+2. [x] Vincular a chamada somente ao treino oficial do Calendário, de forma
+   idempotente (`f34fda8`).
+3. [x] Implementar PB-1, PB-2 e a integração inicial PB-3A do Playbook
+   (`f595a4f`). A migração v8 está versionada, mas ainda não foi ativada no
+   banco persistente.
+4. [ ] Implementar PB-3B: planejamento independente e séries futuras.
+5. [ ] Ativar a migração v8 do Playbook no banco persistente pelo fluxo
+   `DB_MIGRATION` autorizado. Isso é uma etapa operacional, não um novo status
+   de implementação.
+6. [ ] Implementar o módulo dos DMs — Diretores de Modalidade.
+7. [ ] Avaliar o acervo do Drive quando o arquivo `.zip` for disponibilizado.
+8. [ ] Decidir entre manter referências ao Drive, importar parte do acervo ou fazer
    uma migração completa.
 
 ## 3. Jornada real do CT já identificada
 
 ### 3.1 Planejamento sazonal
 
-O planejamento do treino não nasce isoladamente em cada evento. O CT espera
-trabalhar uma técnica ou conceito por uma sequência de treinos:
+O planejamento nasce no Playbook e pode existir antes, depois ou sem um evento
+do Calendário. Quando fizer sentido, uma sessão ou plano poderá ser ligado a
+um evento por referência opcional. O CT espera trabalhar uma técnica ou
+conceito por uma sequência de treinos:
 
 1. começar;
 2. melhorar;
@@ -87,7 +110,10 @@ Na conversa final, o CT deve conseguir:
 
 ### 3.5 Implicação para o produto
 
-O evento do calendário deve funcionar como ponto de encontro entre:
+Quando houver vínculo, o evento do Calendário funciona como ponto de encontro
+operacional, mas não é dono do conteúdo nem do plano. O Playbook preserva a
+autoria da biblioteca, dos planos, das sessões e das séries; o evento apenas
+mantém a referência opcional por identificador permanente entre:
 
 - disponibilidade dos atletas;
 - chamada;
@@ -97,22 +123,27 @@ O evento do calendário deve funcionar como ponto de encontro entre:
 - aprendizado do jogo anterior;
 - avaliação pós-treino.
 
-### 3.6 Entregas em execução — Calendário e chamada
+### 3.6 Entregas implementadas e pendentes — Calendário e chamada
 
 - [x] Jornada de eventos: criação, confirmação, cancelamento reversível,
-  remarcação, histórico, conflitos e séries recorrentes.
+  remarcação, histórico, conflitos e séries recorrentes (`e847ae9`).
 - [x] Vínculo idempotente entre treino oficial e chamada, sem criar chamadas a
-  partir de datas arbitrárias.
+  partir de datas arbitrárias (`f34fda8`).
 - [x] Resumo de disponibilidade no detalhe do treino: confirmações, ausências,
-  pendências e composição por posição.
+  pendências e composição por posição (`e847ae9`).
 - [x] Briefing de poucas horas antes: destacar novas ausências, quem permanece
-  sem resposta e a variação da composição por posição.
+  sem resposta e a variação da composição por posição (`e847ae9`).
 - [x] Encerramento guiado do treino: observação geral, fechamento explícito da
-  chamada e conclusão do evento somente depois de a chamada ser encerrada.
+  chamada e conclusão do evento somente depois de a chamada ser encerrada
+  (`e847ae9`).
+- [x] Integração inicial entre evento e Playbook: plano vinculado ao evento,
+  transferência auditada na remarcação e encerramento guiado via Playbook
+  (`f595a4f`). A ativação persistente da migração v8 continua pendente.
 - [ ] Validação de uso autenticado pelo CT em navegador e celular. **Pendente de
   uma sessão CT já autenticada**
 - [ ] Objetivo sazonal, estágio de domínio, conteúdo tático e decisão de
-  continuidade: dependência da integração PB-3/PB-4 do Playbook.
+  continuidade: a estrutura inicial está em `f595a4f`, mas depende da ativação
+  v8 e da conclusão de PB-3B/PB-4.
 - [ ] Ajuste por adversário e aprendizado de jogo anterior: dependência da
   trilha DMs e do Playbook.
 
@@ -353,6 +384,9 @@ erros acidentais, não restrições à autonomia do CT.
 
 ### 4.3 Release PB-0 — Descoberta e arquitetura de conteúdo
 
+**Estado:** [ ] Pendente de validação real com o CT. O modelo inicial foi
+documentado, mas o entregável exige exemplos reais e validação do time.
+
 Definir com o CT:
 
 - lista inicial dos fundamentos técnicos de Handball;
@@ -372,6 +406,10 @@ Definir com o CT:
 Entregável: modelo de conteúdo validado com exemplos reais do time.
 
 ### 4.4 Release PB-1 — Biblioteca consultável
+
+**Estado de implementação:** [x] Implementado e commitado em `f595a4f`. A
+ativação da migração v8 no banco persistente permanece pendente e não altera
+este status.
 
 Primeira versão de uso:
 
@@ -403,6 +441,10 @@ organiza a navegação e aponta diretamente para os materiais, sem duplicá-los.
 
 ### 4.5 Release PB-2 — Edição e publicação pelo CT
 
+**Estado de implementação:** [x] Implementado e commitado em `f595a4f`. A
+ativação da migração v8 no banco persistente permanece pendente e não altera
+este status.
+
 - criar conteúdo a partir de um modelo;
 - adicionar objetivo, quando usar e pré-requisitos;
 - descrever passo a passo;
@@ -419,19 +461,42 @@ organiza a navegação e aponta diretamente para os materiais, sem duplicá-los.
 - publicar, substituir versão e arquivar;
 - manter histórico de versões sem expor complexidade ao atleta.
 
-### 4.6 Release PB-3 — Integração com calendário e treino
+### 4.6 Release PB-3A — Integração inicial por evento
 
-- vincular conteúdos do Playbook a um evento;
-- montar o plano de treino a partir de blocos;
-- reutilizar o plano do treino anterior;
-- apresentar o plano junto das confirmações no dia anterior;
-- sinalizar impacto de ausências por posição;
-- mostrar em quadra somente o roteiro essencial;
-- registrar o estágio de domínio após o treino;
-- sugerir continuidade no próximo evento;
-- distinguir objetivo sazonal de ajuste pontual por adversário ou jogo passado.
+**Estado de implementação:** [x] Implementado e commitado em `f595a4f`. Esta
+é deliberadamente uma integração centrada no evento e não satisfaz PB-3B. A
+ativação da migração v8 no banco persistente permanece pendente.
 
-### 4.7 Release PB-4 — Ciclos de evolução
+- vincular conteúdos do Playbook a um evento de treino;
+- montar e reutilizar um plano vinculado ao evento;
+- apresentar o plano ligado ao evento junto das confirmações;
+- transferir a referência do plano na remarcação, preservando o histórico;
+- encerrar chamada e treino pelo fluxo guiado do Playbook;
+- registrar avaliação de domínio e decisão inicial de continuidade após o
+  treino.
+
+### 4.7 Release PB-3B — Planejamento independente e séries futuras
+
+**Estado:** [ ] Pendente. Nenhum código desta release está sendo alterado neste
+marco.
+
+- conteúdo do Playbook jamais exige treino, evento, chamada ou confirmação;
+- plano, série e sessão podem existir sem evento do Calendário e sem
+  confirmação de presença;
+- a ligação entre Plano/Playbook e Calendário é opcional e usa identificador
+  permanente, sem transferir a propriedade do conteúdo ou do plano;
+- uma série organiza várias sessões futuras, mesmo quando ainda não há eventos
+  no Calendário;
+- a remarcação de evento move apenas a referência opcional e registra o
+  histórico; ela não move, recria nem torna o Calendário dono do plano;
+- alterações são edição simples com histórico de data, autor e resumo, além de
+  restauração, sem um workflow burocrático;
+- quando houver evento, o plano pode ser apresentado com confirmações,
+  disponibilidade por posição e o roteiro essencial em quadra.
+
+### 4.8 Release PB-4 — Ciclos de evolução
+
+**Estado:** [ ] Pendente.
 
 - criar ciclos com início, objetivo e previsão de duração;
 - associar conteúdos do Playbook ao ciclo;
@@ -441,7 +506,9 @@ organiza a navegação e aponta diretamente para os materiais, sem duplicá-los.
 - relacionar o próximo adversário a adaptações específicas;
 - apresentar uma linha do tempo simples da evolução.
 
-### 4.8 Release PB-5 — Apresentações
+### 4.9 Release PB-5 — Apresentações
+
+**Estado:** [ ] Pendente.
 
 Duas capacidades devem ser tratadas separadamente:
 
@@ -452,7 +519,7 @@ A geração automática deve ser posterior à biblioteca e à edição. Ela só 
 boa qualidade quando textos, imagens, passos e posições já estiverem
 estruturados.
 
-### 4.9 Critérios de sucesso da trilha
+### 4.10 Critérios de sucesso da trilha
 
 - localizar uma jogada conhecida em até 10 segundos;
 - reorganizar a árvore sem alterar código ou executar implantação;
@@ -461,6 +528,11 @@ estruturados.
 - recuperar facilmente uma pasta movida ou arquivada por engano;
 - abrir o conteúdo ligado ao próximo treino em até dois toques;
 - montar um plano reaproveitando conteúdo existente sem redigitação;
+- criar, editar e restaurar plano ou série sem cadastrar evento, chamada ou
+  confirmação;
+- vincular opcionalmente um plano a um evento sem transferir a propriedade do
+  conteúdo para o Calendário;
+- remarcar um evento sem alterar o conteúdo, o plano ou a série do Playbook;
 - atleta compreender objetivo, execução e responsabilidade da sua posição;
 - CT registrar o resultado do treino sem abrir uma tela administrativa
   separada.
@@ -656,9 +728,13 @@ Todo erro apresentado ao usuário deve:
 
 ### 6.5 Integração sem duplicação
 
-- calendário fornece eventos e datas;
-- presença fornece confirmação e chamada;
-- Playbook fornece conteúdos e ciclos;
+- Playbook é dono da biblioteca, dos planos, das sessões e das séries; nenhum
+  conteúdo exige Calendário, chamada ou confirmação;
+- calendário fornece eventos e datas e pode manter referência opcional, por ID
+  permanente, a um plano ou sessão do Playbook; ele não é dono do conteúdo nem
+  do plano;
+- presença fornece confirmação e chamada somente quando houver evento oficial
+  correspondente;
 - DMs fornecem demandas, comunicações e processos administrativos;
 - documentos podem permanecer no Drive enquanto a aplicação mantém contexto e
   navegação.
