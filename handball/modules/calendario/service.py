@@ -117,6 +117,16 @@ class CalendarService:
                 )
                 else []
             )
+            countdown_targets = unit_of_work.calendar.list_countdown_targets(
+                allowed,
+                season_id=season_id,
+                season_label=effective_season_label,
+            )
+            training_events = unit_of_work.calendar.list_training_events(allowed)
+        countdown_by_event, countdowns = self._countdowns(
+            countdown_targets,
+            training_events,
+        )
         own_by_event = {int(item["event_id"]): item for item in justifications}
         now = self._now_factory().astimezone(UTC)
         groups: dict[str, list[dict[str, Any]]] = {
@@ -148,6 +158,8 @@ class CalendarService:
             item = dict(event)
             item["period"] = period
             item["own_justification"] = own_by_event.get(int(event["id"]))
+            if int(event["id"]) in countdown_by_event:
+                item["countdown"] = countdown_by_event[int(event["id"])]
             item.update(
                 self._event_presentation(
                     item,
@@ -164,7 +176,44 @@ class CalendarService:
             "items": decorated_events,
             "groups": groups,
             "own_justifications": justifications,
+            "countdown": countdowns[0] if len(countdowns) == 1 else None,
+            "countdowns": countdowns,
         }
+
+    @staticmethod
+    def _countdowns(
+        targets: Iterable[Mapping[str, Any]],
+        training_events: Iterable[Mapping[str, Any]],
+    ) -> tuple[dict[int, dict[str, int]], list[dict[str, Any]]]:
+        """Calcula preparação por alvo sem depender do título do campeonato."""
+        by_event: dict[int, dict[str, int]] = {}
+        countdowns: list[dict[str, Any]] = []
+        trainings = tuple(training_events)
+        for target in targets:
+            target_start = datetime.fromisoformat(str(target["starts_at"])).astimezone(UTC)
+            eligible = [
+                event for event in trainings
+                if int(event["team_id"]) == int(target["team_id"])
+                and int(event["season_id"]) == int(target["season_id"])
+                and str(event["status"]) in {"PLANNED", "CONFIRMED"}
+                and datetime.fromisoformat(str(event["starts_at"])).astimezone(UTC) < target_start
+            ]
+            total = len(eligible)
+            target_data = {
+                "event_id": int(target["id"]),
+                "title": CalendarService._event_title(target),
+                "starts_at": str(target["starts_at"]),
+                "total_trainings": total,
+            }
+            countdowns.append(target_data)
+            for position, event in enumerate(eligible, start=1):
+                by_event[int(event["id"])] = {
+                    "target_event_id": int(target["id"]),
+                    "position": position,
+                    "total_trainings": total,
+                    "remaining_trainings": total - position + 1,
+                }
+        return by_event, countdowns
 
     @staticmethod
     def _event_title(event: Mapping[str, Any]) -> str:

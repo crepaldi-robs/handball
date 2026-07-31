@@ -54,6 +54,8 @@
       </article>
     </section>
 
+    <section id="calendar-countdown" class="calendar-countdown" aria-live="polite" hidden></section>
+
     <section class="calendar-control-deck" aria-label="Controles do calendário">
       <div class="calendar-context-selects">
         <label><span>Equipe</span><select id="calendar-team"></select></label>
@@ -137,6 +139,7 @@
         <label><span>Início</span><input id="calendar-starts-at" type="datetime-local" required></label>
         <label><span>Fim</span><input id="calendar-ends-at" type="datetime-local" required></label>
         <label class="calendar-location-field"><span>Local</span><input id="calendar-location" maxlength="300" placeholder="Ex.: CEPEUSP"></label>
+        <label id="calendar-countdown-target-field" class="calendar-countdown-target" hidden><input id="calendar-is-countdown-target" type="checkbox"><span>Este campeonato é o alvo da contagem de treinos</span></label>
         <label id="calendar-restriction-field" hidden><span>Motivo da restrição</span><select id="calendar-restriction-kind"></select></label>
       </div>
 

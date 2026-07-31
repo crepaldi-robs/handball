@@ -61,6 +61,9 @@ class CalendarRepository:
             and self._column_exists("calendar_events", "version")
         )
 
+    def supports_countdown_targets(self) -> bool:
+        return self._column_exists("calendar_events", "is_countdown_target")
+
     def _professional_projection(self) -> str:
         if self.supports_professional_calendar():
             return (
@@ -69,6 +72,13 @@ class CalendarRepository:
         return (
             "'' AS title,'' AS opponent,0 AS all_day,1 AS version,"
             "NULL AS series_id,"
+        )
+
+    def _countdown_projection(self) -> str:
+        return (
+            "e.is_countdown_target,"
+            if self.supports_countdown_targets()
+            else "0 AS is_countdown_target,"
         )
 
     def list_options(self, team_ids: Iterable[int]) -> dict[str, list[dict[str, Any]]]:
@@ -155,11 +165,12 @@ class CalendarRepository:
                 parameters.extend((term, term))
         filters = "".join(f" AND {clause}" for clause in filter_clauses)
         professional_projection = self._professional_projection()
+        countdown_projection = self._countdown_projection()
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
-                       {professional_projection}
+                       {professional_projection}{countdown_projection}
                        s.label season_label,s.starts_on season_starts_on,
                        s.ends_on season_ends_on,t.display_name team_name,
                        ts.training_date attendance_training_date,
@@ -185,11 +196,12 @@ class CalendarRepository:
             return None
         placeholders = _placeholders(allowed)
         professional_projection = self._professional_projection()
+        countdown_projection = self._countdown_projection()
         row = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
-                       {professional_projection}
+                       {professional_projection}{countdown_projection}
                        s.label season_label,t.display_name team_name,
                        ts.training_date attendance_training_date,
                        ts.is_finalized attendance_is_finalized,
@@ -219,10 +231,11 @@ class CalendarRepository:
             season_clause = " AND e.season_id=?"
             parameters.append(int(season_id))
         professional_projection = self._professional_projection()
+        countdown_projection = self._countdown_projection()
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,
-                       e.attendance_session_id,{professional_projection}
+                       e.attendance_session_id,{professional_projection}{countdown_projection}
                        s.label season_label,
                        ts.training_date,ts.is_finalized
                 FROM calendar_events e
@@ -252,6 +265,41 @@ class CalendarRepository:
             )
             result.append(item)
         return result
+
+    def list_countdown_targets(
+        self,
+        team_ids: Iterable[int],
+        *,
+        season_id: int | None = None,
+        season_label: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if not self.supports_countdown_targets():
+            return []
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        parameters: list[Any] = [*allowed]
+        season_clause = ""
+        if season_id is not None:
+            season_clause = " AND e.season_id=?"
+            parameters.append(int(season_id))
+        elif season_label:
+            season_clause = " AND s.label=?"
+            parameters.append(season_label)
+        rows = self.connection.execute(
+            f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,e.starts_at,e.ends_at,
+                       e.title,e.location,e.notes,s.label AS season_label,t.display_name AS team_name
+                FROM calendar_events e
+                JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
+                JOIN teams t ON t.id=e.team_id
+                WHERE e.team_id IN ({_placeholders(allowed)})
+                  AND e.is_countdown_target=1
+                  AND e.status IN('PLANNED','CONFIRMED')
+                  {season_clause}
+                ORDER BY e.starts_at,e.id""",
+            parameters,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_training_event_for_session(
         self,
@@ -420,6 +468,8 @@ class CalendarRepository:
             )
         if payload.get("opponent") and event_type is not CalendarEventType.GAME:
             raise ValueError("Adversário só se aplica a jogos.")
+        if bool(payload.get("is_countdown_target")) and event_type is not CalendarEventType.CHAMPIONSHIP:
+            raise ValueError("O alvo da contagem deve ser um campeonato.")
         if payload.get("attendance_session_id") is not None:
             if event_type is not CalendarEventType.TRAINING:
                 raise ValueError("Somente treino pode referenciar uma presença.")
@@ -536,8 +586,8 @@ class CalendarRepository:
                            team_id,season_id,event_type,status,starts_at,ends_at,
                            location,notes,restriction_kind,attendance_session_id,
                            created_by_user_id,updated_by_user_id,created_at,updated_at,
-                           title,opponent,all_day,version,series_id
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+                           title,opponent,all_day,version,series_id,is_countdown_target
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
                     (
                         int(payload["team_id"]),
                         int(payload["season_id"]),
@@ -557,6 +607,7 @@ class CalendarRepository:
                         str(payload.get("opponent") or ""),
                         int(bool(payload.get("all_day"))),
                         payload.get("series_id"),
+                        int(bool(payload.get("is_countdown_target"))),
                     ),
                 )
             else:
@@ -633,7 +684,7 @@ class CalendarRepository:
                        SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
                            ends_at=?,location=?,notes=?,restriction_kind=?,
                            attendance_session_id=?,updated_by_user_id=?,updated_at=?,
-                           title=?,opponent=?,all_day=?,version=version+1
+                           title=?,opponent=?,all_day=?,is_countdown_target=?,version=version+1
                        WHERE id=?""",
                     (
                         int(payload["team_id"]),
@@ -651,6 +702,7 @@ class CalendarRepository:
                         str(payload.get("title") or ""),
                         str(payload.get("opponent") or ""),
                         int(bool(payload.get("all_day"))),
+                        int(bool(payload.get("is_countdown_target"))),
                         int(event_id),
                     ),
                 )
@@ -878,9 +930,10 @@ class CalendarRepository:
         now = _now_iso()
         self.connection.execute(
             """UPDATE calendar_events
-               SET status=?,version=version+1,updated_by_user_id=?,updated_at=?
+               SET status=?,is_countdown_target=CASE WHEN ?='CANCEL' THEN 0 ELSE is_countdown_target END,
+                   version=version+1,updated_by_user_id=?,updated_at=?
                WHERE id=?""",
-            (target, actor_user_id, now, int(event_id)),
+            (target, action, actor_user_id, now, int(event_id)),
         )
         after = self.get_event(event_id, allowed)
         if after is None:
@@ -946,6 +999,11 @@ class CalendarRepository:
             "version": None,
             "series_id": None,
         }
+        if bool(before.get("is_countdown_target")):
+            self.connection.execute(
+                "UPDATE calendar_events SET is_countdown_target=0 WHERE id=?",
+                (int(event_id),),
+            )
         replacement = self.create_event(
             replacement_payload,
             actor_user_id=actor_user_id,

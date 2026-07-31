@@ -161,6 +161,14 @@ class CalendarRepositoryContract(Protocol):
         season_id: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def list_countdown_targets(
+        self,
+        team_ids: Iterable[int],
+        *,
+        season_id: int | None = None,
+        season_label: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def get_or_create_attendance_session(
         self,
         event_id: int,

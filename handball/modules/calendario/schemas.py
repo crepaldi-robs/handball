@@ -24,6 +24,7 @@ class CalendarEventInput(BaseModel):
     title: str = Field(default="", max_length=180)
     opponent: str = Field(default="", max_length=180)
     all_day: bool = False
+    is_countdown_target: bool = False
     version: int | None = Field(default=None, ge=1)
     restriction_kind: CollectiveRestrictionKind | None = None
     attendance_session_id: int | None = Field(default=None, gt=0)
@@ -56,6 +57,11 @@ class CalendarEventInput(BaseModel):
             raise ValueError("Somente treino pode referenciar uma presença.")
         if self.opponent and self.event_type is not CalendarEventType.GAME:
             raise ValueError("Adversário só se aplica a jogos.")
+        if (
+            self.is_countdown_target
+            and self.event_type is not CalendarEventType.CHAMPIONSHIP
+        ):
+            raise ValueError("O alvo da contagem deve ser um campeonato.")
         if (
             self.event_type is CalendarEventType.CANCELLATION_RESCHEDULING
             and self.status

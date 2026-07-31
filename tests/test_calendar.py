@@ -10,6 +10,7 @@ from handball.database.migrations import (
     MIGRATION_V4_CHECKSUM,
     MIGRATION_V7_CHECKSUM,
     MIGRATION_V8_CHECKSUM,
+    MIGRATION_V9_CHECKSUM,
     logical_fingerprint,
     verify_database,
 )
@@ -61,7 +62,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 8
+    assert status.current_version == 9
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -78,6 +79,9 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         ).fetchone()
         v8_row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=8"
+        ).fetchone()
+        v9_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=9"
         ).fetchone()
         season = connection.execute(
             "SELECT label,starts_on,ends_on FROM seasons WHERE label='2026.2'"
@@ -99,6 +103,8 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
     assert v7_row["checksum_sha256"] == MIGRATION_V7_CHECKSUM
     assert v8_row["name"] == "playbook_library_and_training_plans"
     assert v8_row["checksum_sha256"] == MIGRATION_V8_CHECKSUM
+    assert v9_row["name"] == "calendar_countdown_targets"
+    assert v9_row["checksum_sha256"] == MIGRATION_V9_CHECKSUM
     assert {
         "calendar_events",
         "calendar_justifications",
@@ -106,7 +112,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         "calendar_event_transitions",
         "calendar_command_receipts",
     } <= tables
-    assert client.get("/ready").json()["schema_version"] == 8
+    assert client.get("/ready").json()["schema_version"] == 9
     assert data["before_ids"]
 
 
@@ -162,6 +168,81 @@ def test_ct_manages_scoped_events_without_creating_attendance(
         }
     assert after_sessions == before_sessions
     assert audit_actions == {"calendar.event.create", "calendar.event.update"}
+
+
+def test_countdown_target_counts_only_active_trainings_before_championship(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+
+    for starts_at, ends_at, status in (
+        ("2026-11-10T19:00:00-03:00", "2026-11-10T21:00:00-03:00", "PLANNED"),
+        ("2026-11-17T19:00:00-03:00", "2026-11-17T21:00:00-03:00", "CONFIRMED"),
+        ("2026-11-18T19:00:00-03:00", "2026-11-18T21:00:00-03:00", "CANCELLED"),
+        ("2026-11-24T19:00:00-03:00", "2026-11-24T21:00:00-03:00", "PLANNED"),
+    ):
+        response = client.post(
+            "/api/v1/calendar/events",
+            json=_event(
+                team_id,
+                season_id,
+                status=status,
+                starts_at=starts_at,
+                ends_at=ends_at,
+            ),
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 201, response.text
+
+    bife = client.post(
+        "/api/v1/calendar/events",
+        json={
+            **_event(
+                team_id,
+                season_id,
+                event_type="CHAMPIONSHIP",
+                starts_at="2026-11-20T00:00:00-03:00",
+                ends_at="2026-11-23T00:00:00-03:00",
+            ),
+            "title": "BIFE",
+            "is_countdown_target": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert bife.status_code == 201, bife.text
+
+    payload = client.get(
+        f"/api/v1/calendar?team_id={team_id}&season_id={season_id}"
+    ).json()
+    assert payload["countdown"] == {
+        "event_id": bife.json()["id"],
+        "title": "BIFE",
+        "starts_at": "2026-11-20T03:00:00+00:00",
+        "total_trainings": 2,
+    }
+    counted = [item["countdown"] for item in payload["items"] if item.get("countdown")]
+    assert counted == [
+        {"target_event_id": bife.json()["id"], "position": 1, "total_trainings": 2, "remaining_trainings": 2},
+        {"target_event_id": bife.json()["id"], "position": 2, "total_trainings": 2, "remaining_trainings": 1},
+    ]
+
+    second_target = client.post(
+        "/api/v1/calendar/events",
+        json={
+            **_event(
+                team_id,
+                season_id,
+                event_type="CHAMPIONSHIP",
+                starts_at="2026-12-01T00:00:00-03:00",
+                ends_at="2026-12-02T00:00:00-03:00",
+            ),
+            "is_countdown_target": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert second_target.status_code == 400
 
 
 def test_past_present_future_restrictions_and_calendar_page(

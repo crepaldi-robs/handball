@@ -150,8 +150,10 @@ def test_bootstrap_creates_formally_versioned_current_schema(tmp_path):
 
     assert status.state == "migration_required"
     assert status.current_version == 1
-    assert status.latest_version == 8
-    assert status.pending_versions == (2, 3, 4, 5, 6, 7, 8)
+    assert status.latest_version == migrations.LATEST_SCHEMA_VERSION
+    assert status.pending_versions == tuple(
+        range(2, migrations.LATEST_SCHEMA_VERSION + 1)
+    )
     assert status.versioned and status.compatible
     assert verification["quick_check"] == "ok"
     assert verification["foreign_key_check"] == []

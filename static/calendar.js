@@ -441,6 +441,23 @@ if (calendarRoot) {
     };
   }
 
+  function renderCountdown() {
+    const container = document.querySelector("#calendar-countdown");
+    const countdown = state.calendar?.countdown;
+    if (!countdown) {
+      container.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    const total = Number(countdown.total_trainings || 0);
+    container.hidden = false;
+    container.innerHTML = `
+      <span class="calendar-kicker">PREPARAÇÃO PARA ${escapeHtml(countdown.title)}</span>
+      <strong>Faltam ${total} ${total === 1 ? "treino" : "treinos"} para o BIFE</strong>
+      <small>Meta: ${escapeHtml(localDateTime(countdown.starts_at))}</small>
+    `;
+  }
+
   function statusClass(status) {
     return `is-${String(status).toLowerCase()}`;
   }
@@ -486,6 +503,7 @@ if (calendarRoot) {
         </div>
         <h3>${escapeHtml(event.display_title)}</h3>
         <p>${escapeHtml(event.location || "Local a definir")}</p>
+        ${event.countdown ? `<small class="calendar-training-count">Treino ${event.countdown.position} de ${event.countdown.total_trainings} até o BIFE · faltam ${event.countdown.remaining_trainings}</small>` : ""}
       </div>
       <button class="calendar-card-more" type="button" aria-label="Mais ações para ${escapeHtml(event.display_title)}">•••</button>
     `;
@@ -590,6 +608,7 @@ if (calendarRoot) {
   function renderCalendar() {
     loading.hidden = true;
     renderNextEvent();
+    renderCountdown();
     renderAgenda();
     renderMonth();
     setConnection(state.online);
@@ -705,11 +724,13 @@ if (calendarRoot) {
     });
     document.querySelector("#calendar-opponent-field").hidden = type !== "GAME";
     document.querySelector("#calendar-restriction-field").hidden = type !== "COLLECTIVE_RESTRICTION";
+    document.querySelector("#calendar-countdown-target-field").hidden = type !== "CHAMPIONSHIP";
     document.querySelector("#calendar-open-series").hidden = type !== "TRAINING";
     if (type !== "GAME") document.querySelector("#calendar-opponent").value = "";
     if (type !== "COLLECTIVE_RESTRICTION") {
       document.querySelector("#calendar-restriction-kind").value = "";
     }
+    if (type !== "CHAMPIONSHIP") document.querySelector("#calendar-is-countdown-target").checked = false;
   }
 
   function smartInterval() {
@@ -736,6 +757,7 @@ if (calendarRoot) {
     document.querySelector("#calendar-location").value = (
       localStorage.getItem(`${cachePrefix}location`) || ""
     );
+    document.querySelector("#calendar-is-countdown-target").checked = false;
     selectEventType("TRAINING");
     document.querySelector("#calendar-save-event span").textContent = "Salvar evento";
   }
@@ -766,6 +788,7 @@ if (calendarRoot) {
       document.querySelector("#calendar-location").value = event.location || "";
       document.querySelector("#calendar-notes").value = event.notes || "";
       document.querySelector("#calendar-restriction-kind").value = event.restriction_kind || "";
+      document.querySelector("#calendar-is-countdown-target").checked = Boolean(event.is_countdown_target);
       document.querySelector("#event-editor-title").textContent = duplicate
         ? "Duplicar evento"
         : "Editar evento";
@@ -795,6 +818,7 @@ if (calendarRoot) {
       opponent: document.querySelector("#calendar-opponent").value,
       restriction_kind: document.querySelector("#calendar-restriction-kind").value || null,
       all_day: false,
+      is_countdown_target: document.querySelector("#calendar-is-countdown-target").checked,
       version: Number(document.querySelector("#calendar-event-version").value) || null,
     };
   }

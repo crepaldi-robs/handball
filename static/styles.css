@@ -1241,6 +1241,19 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 }
 .calendar-next-card strong { font-size: 1.15rem; }
 .calendar-next-card small { margin-top: 8px; color: var(--calendar-muted); line-height: 1.45; }
+.calendar-countdown {
+  margin: 0 0 22px;
+  padding: 15px 18px;
+  border: 1px solid #d79812;
+  border-radius: 14px;
+  color: #624500;
+  background: #fff7d6;
+}
+.calendar-countdown strong, .calendar-countdown small { display: block; }
+.calendar-countdown strong { font-size: 1.08rem; }
+.calendar-countdown small { margin-top: 5px; }
+.calendar-countdown-target { grid-column: 1 / -1; display: flex; gap: 9px; align-items: center; font-size: .85rem; }
+.calendar-countdown-target input { width: auto; min-height: auto; }
 
 .calendar-control-deck {
   position: sticky;
@@ -1486,6 +1499,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .calendar-card-time strong,
 .calendar-card-time span { display: block; }
 .calendar-card-time strong { font-size: 1.05rem; }
+.calendar-training-count { display: block; margin-top: 6px; color: #795500; font-size: .72rem; font-weight: 800; }
 .calendar-card-time span { margin-top: 3px; color: var(--calendar-muted); font-size: .72rem; }
 .calendar-card-icon {
   width: 44px;

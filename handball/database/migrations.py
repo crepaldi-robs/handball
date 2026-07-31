@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 8
+MAX_SUPPORTED_SCHEMA_VERSION = 9
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -563,6 +563,23 @@ MIGRATION_V8_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[8] = (MIGRATION_V8_NAME, MIGRATION_V8_CHECKSUM)
 
+SCHEMA_V9_STATEMENTS = (
+    "ALTER TABLE calendar_events ADD COLUMN is_countdown_target INTEGER NOT NULL DEFAULT 0 CHECK(is_countdown_target IN(0,1) AND (is_countdown_target=0 OR event_type='CHAMPIONSHIP'))",
+    "CREATE UNIQUE INDEX idx_calendar_events_countdown_target ON calendar_events(team_id,season_id) WHERE is_countdown_target=1",
+)
+MIGRATION_V9_NAME = "calendar_countdown_targets"
+MIGRATION_V9_CHECKSUM = _migration_checksum(
+    9,
+    MIGRATION_V9_NAME,
+    SCHEMA_V9_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "countdown_target": "one-championship-per-team-season",
+        "training_count": "planned-or-confirmed-before-target",
+    },
+)
+KNOWN_MIGRATIONS[9] = (MIGRATION_V9_NAME, MIGRATION_V9_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -627,6 +644,10 @@ V8_REQUIRED_COLUMNS = {
     "playbook_training_plan_items": {"id", "plan_id", "content_id", "sort_order"},
     "playbook_plan_transfers": {"id", "plan_id", "from_event_id", "to_event_id"},
     "playbook_plan_evaluations": {"id", "calendar_event_id", "content_id", "mastery_stage", "continuity_decision"},
+}
+
+V9_REQUIRED_COLUMNS = {
+    "calendar_events": {"is_countdown_target"},
 }
 
 
@@ -709,6 +730,11 @@ def _apply_schema_v8(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _apply_schema_v9(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V9_STATEMENTS:
+        conn.execute(statement)
+
+
 def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
@@ -739,6 +765,14 @@ def _record_schema_v8(conn: sqlite3.Connection, *, app_version: str, origin: str
         (8, MIGRATION_V8_NAME, MIGRATION_V8_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 8").close()
+
+
+def _record_schema_v9(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (9, MIGRATION_V9_NAME, MIGRATION_V9_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 9").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1326,6 +1360,17 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 9:
+            for table, required_columns in V9_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas do contador ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1645,6 +1690,10 @@ class DatabaseMigrator:
             if effective_version >= 7 and effective_version < 8:
                 _apply_schema_v8(conn)
                 _record_schema_v8(conn, app_version=app_version, origin=origin)
+                effective_version = 8
+            if effective_version >= 8 and effective_version < 9:
+                _apply_schema_v9(conn)
+                _record_schema_v9(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1727,6 +1776,8 @@ class DatabaseMigrator:
                 _record_schema_v7(conn, app_version=app_version, origin=origin)
                 _apply_schema_v8(conn)
                 _record_schema_v8(conn, app_version=app_version, origin=origin)
+                _apply_schema_v9(conn)
+                _record_schema_v9(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

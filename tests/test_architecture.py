@@ -133,7 +133,7 @@ def test_schema_v1_identity_is_unchanged() -> None:
         MIGRATION_V1_CHECKSUM,
     )
 
-    assert LATEST_SCHEMA_VERSION == 8
+    assert LATEST_SCHEMA_VERSION == 9
     assert FINGERPRINT_FORMAT == "crepaldi-handball-logical-sqlite/v1"
     assert MIGRATION_V1_CHECKSUM == (
         "0369209bf3d35a2b752f2041a050c268"
