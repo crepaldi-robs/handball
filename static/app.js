@@ -718,7 +718,9 @@ async function loadCalendarTrainings(preferredEventId = null) {
   state.trainings = data.items || [];
   const queryEvent = Number(new URLSearchParams(window.location.search).get("calendar_event_id")) || null;
   const preferred = Number(preferredEventId || queryEvent) || null;
-  const upcoming = state.trainings.find((item) => item.status === "CONFIRMED" || item.status === "PLANNED");
+  const openTrainings = state.trainings.filter((item) => item.status === "CONFIRMED" || item.status === "PLANNED");
+  const now = new Date();
+  const upcoming = openTrainings.find((item) => new Date(item.ends_at) >= now) || openTrainings[0] || null;
   const selected = state.trainings.find((item) => item.id === preferred) || upcoming || state.trainings[0] || null;
   state.currentEventId = selected?.id || null;
   renderTrainingPicker();

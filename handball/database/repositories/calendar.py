@@ -344,15 +344,25 @@ class CalendarRepository:
         *,
         player_visible_only: bool = False,
     ) -> dict[str, Any] | None:
-        for event in self.list_training_events(
-            team_ids,
-            player_visible_only=player_visible_only,
-        ):
-            if event["status"] not in ATTENDANCE_OPEN_STATUSES:
-                continue
-            if event["attendance_session_id"] is None or not bool(event["is_finalized"]):
-                return event
-        return None
+        candidates = [
+            event
+            for event in self.list_training_events(
+                team_ids,
+                player_visible_only=player_visible_only,
+            )
+            if event["status"] in ATTENDANCE_OPEN_STATUSES
+            and (event["attendance_session_id"] is None or not bool(event["is_finalized"]))
+        ]
+        now = datetime.now(UTC)
+        upcoming = next(
+            (
+                event
+                for event in candidates
+                if datetime.fromisoformat(str(event["ends_at"])).astimezone(UTC) >= now
+            ),
+            None,
+        )
+        return upcoming or (candidates[0] if candidates else None)
 
     def own_justification(
         self, event_id: int, *, player_member_id: int
