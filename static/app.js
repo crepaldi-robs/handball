@@ -4,6 +4,10 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const athleteNameCollator = new Intl.Collator("pt-BR", {
+  numeric: true,
+  sensitivity: "base",
+});
 
 const state = {
   csrf: "",
@@ -35,6 +39,16 @@ function localIsoDate(offsetDays = 0) {
 
 function escapeText(value) {
   return String(value ?? "");
+}
+
+function sortAthletesByName(records) {
+  return [...records].sort((left, right) => {
+    const byName = athleteNameCollator.compare(
+      String(left.name || ""),
+      String(right.name || ""),
+    );
+    return byName || Number(left.member_id) - Number(right.member_id);
+  });
 }
 
 function setAlert(message, kind = "success", timeout = 5000) {
@@ -339,7 +353,7 @@ function computeSummary(records) {
 }
 
 function namesBy(records, predicate) {
-  const values = records.filter(predicate).map((record) => record.name);
+  const values = sortAthletesByName(records.filter(predicate)).map((record) => record.name);
   return values.length ? values.join(", ") : "nenhum";
 }
 
@@ -379,7 +393,9 @@ function classifyPositionCategories(position) {
 
 function namesWithPos(records) {
   if (!records || !records.length) return "nenhum";
-  return records.map((r) => r.position ? `${r.name} (${r.position})` : r.name).join(", ");
+  return sortAthletesByName(records)
+    .map((r) => r.position ? `${r.name} (${r.position})` : r.name)
+    .join(", ");
 }
 
 function buildTacticalInsights(goleiros, pontas, meias, pivos, totalConfirmed) {
@@ -532,7 +548,7 @@ function renderMetricDetails() {
     return;
   }
 
-  const records = state.records.filter(definition.matches);
+  const records = sortAthletesByName(state.records.filter(definition.matches));
   panel.hidden = false;
   panel.dataset.metric = definition.key;
   $("#metric-details-title").textContent = definition.label;
@@ -566,7 +582,7 @@ function markDirty(memberId, card) {
 function renderAthletes() {
   const container = $("#athlete-list");
   const labels = state.payload?.confirmation_labels || {};
-  container.replaceChildren(...state.records.map((record) => {
+  container.replaceChildren(...sortAthletesByName(state.records).map((record) => {
     const card = document.createElement("article");
     card.className = "athlete-card";
     card.dataset.memberId = record.member_id;

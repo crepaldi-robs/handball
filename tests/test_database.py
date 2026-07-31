@@ -21,6 +21,8 @@ def test_initialization_and_audit(tmp_path):
     session_id = int(session["id"])
     records = repo.get_session_records(session_id)
     assert len(records) == 19
+    names = [record["name"] for record in records]
+    assert names == sorted(names, key=str.casefold)
 
     first = records[0]
     changed = repo.save_records(

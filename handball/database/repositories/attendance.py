@@ -504,12 +504,7 @@ class AttendanceRepository:
                 FROM attendance_records ar
                 JOIN team_members tm ON tm.id = ar.member_id
                 WHERE ar.session_id = ?
-                ORDER BY
-                    CASE tm.position
-                        WHEN 'GOL' THEN 1
-                        ELSE 2
-                    END,
-                    tm.name COLLATE NOCASE
+                ORDER BY tm.name COLLATE NOCASE, tm.id
                 """,
                 (session_id,),
             ).fetchall()
