@@ -1072,12 +1072,22 @@ if (calendarRoot) {
     });
     const actions = detailContainer.querySelector("#calendar-detail-actions");
     const available = (event.available_actions || ["view"]).filter((action) => action !== "view");
-    if (!available.length) {
-      actions.innerHTML = '<button class="calendar-soft-button" data-detail-close-footer type="button">Fechar</button>';
-      actions.querySelector("button").addEventListener("click", () => closeDialog(detailDialog));
-    } else {
-      for (const action of available) actions.append(detailActionButton(action, event));
+    if (event.event_type === "TRAINING") {
+      const playbookLink = document.createElement("a");
+      playbookLink.className = "calendar-soft-button calendar-event-action";
+      playbookLink.href = `/app/playbook?event_id=${event.id}`;
+      playbookLink.textContent = "Abrir plano no Playbook";
+      actions.append(playbookLink);
     }
+    if (!available.length) {
+      const closeButton = document.createElement("button");
+      closeButton.className = "calendar-soft-button";
+      closeButton.type = "button";
+      closeButton.textContent = "Fechar";
+      closeButton.addEventListener("click", () => closeDialog(detailDialog));
+      actions.append(closeButton);
+    }
+    for (const action of available) actions.append(detailActionButton(action, event));
     void loadAttendanceSnapshot(event);
     if (!detailDialog.open) detailDialog.showModal();
   }
@@ -1138,19 +1148,38 @@ if (calendarRoot) {
       `,
       async (data) => {
         const notes = String(data.get("notes") || "").trim();
-        if (notes !== existingNotes) {
-          await request(`/api/v1/sessions/${event.attendance_session_id}/notes`, {
-            method: "PUT",
-            body: JSON.stringify({ notes }),
+        let usedPlaybook = true;
+        try {
+          await request(`/api/v1/playbook/events/${event.id}/finish`, {
+            method: "POST",
+            body: JSON.stringify({
+              session_notes: notes,
+              finalize_attendance: true,
+              evaluations: [],
+            }),
           });
+        } catch (error) {
+          // Uma ativação APP_ONLY ainda pode estar sobre uma base v7. O
+          // Playbook nunca impede o encerramento já concluído do Calendário;
+          // nesse caso mantemos o fluxo histórico até a DB_MIGRATION.
+          if (!(error instanceof CalendarRequestError) || error.problem.code !== "playbook.upgrade_required") throw error;
+          usedPlaybook = false;
+          if (notes !== existingNotes) {
+            await request(`/api/v1/sessions/${event.attendance_session_id}/notes`, {
+              method: "PUT",
+              body: JSON.stringify({ notes }),
+            });
+          }
+          await request(`/api/v1/sessions/${event.attendance_session_id}/finalize`, {
+            method: "POST",
+          });
+          await transition(event, "complete");
         }
-        await request(`/api/v1/sessions/${event.attendance_session_id}/finalize`, {
-          method: "POST",
-        });
-        await transition(event, "complete");
         closeDialog(detailDialog);
         await loadCalendar();
-        showMessage("Chamada encerrada e treino concluído.");
+        showMessage(usedPlaybook
+          ? "Chamada encerrada e treino concluído pelo Playbook."
+          : "Chamada encerrada e treino concluído. O Playbook será integrado após a migração da base.");
       },
       "Encerrar chamada e concluir",
     );

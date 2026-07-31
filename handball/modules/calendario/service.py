@@ -378,7 +378,7 @@ class CalendarService:
     ) -> dict[str, Any]:
         self._require(context, Permission.CALENDAR_MANAGE)
         with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.calendar.reschedule_event(
+            result = unit_of_work.calendar.reschedule_event(
                 event_id,
                 team_ids=self._team_ids(context),
                 actor_user_id=context.user_id,
@@ -387,6 +387,18 @@ class CalendarService:
                 reason=body.reason,
                 base_version=body.base_version,
             )
+            # O Calendário continua dono da remarcação. Quando a migração do
+            # Playbook já estiver ativa, apenas deslocamos o vínculo do plano na
+            # mesma UnitOfWork e registramos o histórico próprio do plano.
+            result["playbook_plan_transfer"] = (
+                unit_of_work.playbook.transfer_plan_for_reschedule(
+                    event_id,
+                    int(result["replacement"]["id"]),
+                    actor_user_id=context.user_id,
+                    reason=body.reason,
+                )
+            )
+            return result
 
     def event_history(
         self,

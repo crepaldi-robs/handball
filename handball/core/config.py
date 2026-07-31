@@ -49,6 +49,10 @@ class AppSettings:
     session_max_age_seconds: int = 12 * 60 * 60
     release_id: str = "development"
     maintenance_file: Path | None = None
+    # Os arquivos do Playbook são dados operacionais, nunca assets da release.
+    # Quando não vier explícito da configuração, ficam ao lado dela; na
+    # instalação formal isso resulta em ``data\\playbook-media``.
+    playbook_media_root: Path | None = None
     # Peers cujo cabeçalho de IP original pode ser aceito. Atrás do túnel, todas
     # as requisições chegam do loopback: sem isto o limitador de login vira um
     # balde único global em vez de um balde por cliente.
@@ -107,6 +111,16 @@ class AppSettings:
                 if os.environ.get("ATTENDANCE_MAINTENANCE_FILE")
                 else None
             ),
+            playbook_media_root=(
+                Path(str(data["playbook_media_root"]))
+                if isinstance(data.get("playbook_media_root"), str)
+                and str(data["playbook_media_root"]).strip()
+                else (
+                    Path(os.environ["ATTENDANCE_PLAYBOOK_MEDIA_ROOT"])
+                    if os.environ.get("ATTENDANCE_PLAYBOOK_MEDIA_ROOT")
+                    else None
+                )
+            ),
             trusted_proxies=_as_proxy_set(
                 os.environ.get(
                     "ATTENDANCE_TRUSTED_PROXIES", data.get("trusted_proxies")
@@ -133,6 +147,7 @@ class AppSettings:
             session_max_age_seconds=int(settings.session_max_age_seconds),
             release_id=str(getattr(settings, "release_id", "development")),
             maintenance_file=getattr(settings, "maintenance_file", None),
+            playbook_media_root=getattr(settings, "playbook_media_root", None),
             trusted_proxies=_as_proxy_set(
                 getattr(settings, "trusted_proxies", None)
             ),

@@ -10,7 +10,7 @@ function lockOfflineRuntime() {
   if (!("caches" in window)) return Promise.resolve();
   return caches.keys().then((keys) => Promise.all(
     keys
-      .filter((key) => key.startsWith("handball-shell-"))
+      .filter((key) => key.startsWith("handball-shell-") || key.startsWith("handball-playbook-"))
       .map((key) => caches.delete(key)),
   ));
 }

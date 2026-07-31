@@ -9,6 +9,7 @@ from handball.database.migrations import (
     MIGRATION_V3_CHECKSUM,
     MIGRATION_V4_CHECKSUM,
     MIGRATION_V7_CHECKSUM,
+    MIGRATION_V8_CHECKSUM,
     logical_fingerprint,
     verify_database,
 )
@@ -60,7 +61,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 7
+    assert status.current_version == 8
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -74,6 +75,9 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         ).fetchone()
         v7_row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=7"
+        ).fetchone()
+        v8_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=8"
         ).fetchone()
         season = connection.execute(
             "SELECT label,starts_on,ends_on FROM seasons WHERE label='2026.2'"
@@ -93,6 +97,8 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
     assert tuple(season) == ("2026.2", None, None)
     assert v7_row["name"] == "calendar_professional_workflow"
     assert v7_row["checksum_sha256"] == MIGRATION_V7_CHECKSUM
+    assert v8_row["name"] == "playbook_library_and_training_plans"
+    assert v8_row["checksum_sha256"] == MIGRATION_V8_CHECKSUM
     assert {
         "calendar_events",
         "calendar_justifications",
@@ -100,7 +106,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         "calendar_event_transitions",
         "calendar_command_receipts",
     } <= tables
-    assert client.get("/ready").json()["schema_version"] == 7
+    assert client.get("/ready").json()["schema_version"] == 8
     assert data["before_ids"]
 
 

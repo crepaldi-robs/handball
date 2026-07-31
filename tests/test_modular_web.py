@@ -60,6 +60,7 @@ def login(client: TestClient):
         "/app/presencas",
         "/app/estatisticas",
         "/app/calendario",
+        "/app/playbook",
         "/app/consultas",
     ),
 )
@@ -83,6 +84,7 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     assert 'href="/app/presencas"' in response.text
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
+    assert 'href="/app/playbook"' in response.text
     assert 'href="/app/consultas"' in response.text
     assert "Disponível" in response.text
     assert response.text.count("Em preparação") == 1
@@ -122,6 +124,7 @@ def test_authenticated_skeletons_are_read_only_and_share_navigation(
         "/app/presencas",
         "/app/estatisticas",
         "/app/calendario",
+        "/app/playbook",
         "/app/consultas",
     ),
 )
@@ -165,11 +168,13 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v10"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v11"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert '["/app/calendario", "/app/calendario"]' in worker
+    assert '["/app/playbook", "/app/playbook"]' in worker
     assert '"/static/calendar.js"' in worker
+    assert '"/static/playbook.js"' in worker
     assert '"/static/hm-ime-logo.jpg"' in worker
     assert 'pathname === "/app/estatisticas"' in worker
     assert 'pathname === "/app/calendario"' not in worker

@@ -1,14 +1,16 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v10";
+const CACHE_NAME = "handball-shell-v11";
 const SHELL = [
   "/app",
   "/app/presencas",
+  "/app/playbook",
   "/static/styles.css",
   "/static/platform.js",
   "/static/app.js",
   "/static/player-attendance.js",
   "/static/calendar.js",
+  "/static/playbook.js",
   "/static/hm-ime-logo.jpg",
   "/static/manifest.webmanifest",
   "/static/icon-192.png",
@@ -19,6 +21,7 @@ const OFFLINE_NAVIGATIONS = new Map([
   ["/app", "/app"],
   ["/app/presencas", "/app/presencas"],
   ["/app/calendario", "/app/calendario"],
+  ["/app/playbook", "/app/playbook"],
 ]);
 
 function isNetworkOnly(pathname) {

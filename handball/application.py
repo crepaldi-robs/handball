@@ -29,6 +29,8 @@ from handball.modules.estatisticas.router import (
 )
 from handball.modules.estatisticas.service import StatisticsService
 from handball.modules.hub.router import create_router as create_hub_router
+from handball.modules.playbook.router import create_router as create_playbook_router
+from handball.modules.playbook.service import PlaybookService
 from handball.modules.presencas.router import create_router as create_attendance_router
 from handball.modules.presencas.service import AttendanceService
 from handball.modules.usuarios.router import create_router as create_users_router
@@ -61,6 +63,10 @@ def create_app(
     )
     statistics_service = StatisticsService()
     calendar_service = CalendarService(unit_of_work_factory)
+    playbook_service = PlaybookService(
+        unit_of_work_factory,
+        settings.playbook_media_root or settings.config_path.parent / "playbook-media",
+    )
     sql_explorer_service = SqlExplorerService(unit_of_work_factory, database_manager)
     identity_service = IdentityService(unit_of_work_factory)
 
@@ -75,6 +81,7 @@ def create_app(
     application.state.auth = auth_manager
     application.state.attendance_service = attendance_service
     application.state.identity_service = identity_service
+    application.state.playbook_service = playbook_service
     application.mount(
         "/static",
         StaticFiles(directory=ROOT_DIR / "static"),
@@ -152,6 +159,7 @@ def create_app(
     application.include_router(create_attendance_router(attendance_service, templates))
     application.include_router(create_statistics_router(statistics_service, templates))
     application.include_router(create_calendar_router(calendar_service, templates))
+    application.include_router(create_playbook_router(playbook_service, templates))
     application.include_router(create_sql_explorer_router(sql_explorer_service, templates))
     application.include_router(create_users_router(identity_service, templates))
     return application

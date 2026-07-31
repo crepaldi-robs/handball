@@ -27,22 +27,27 @@ class Permission(StrEnum):
     CALENDAR_READ_TEAM = "calendar.read.team"
     CALENDAR_MANAGE = "calendar.manage"
     CALENDAR_JUSTIFICATION_SELF = "calendar.justification.self"
+    PLAYBOOK_READ = "playbook.read"
+    PLAYBOOK_MANAGE = "playbook.manage"
     SQL_EXPLORE = "sql.explore"
     SQL_ADMIN = "sql.admin"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "DEV": frozenset({Permission.USERS_MANAGE, Permission.SESSIONS_REVOKE, Permission.DIAGNOSTICS_READ,
+                      Permission.PLAYBOOK_READ, Permission.PLAYBOOK_MANAGE,
                       Permission.SQL_ADMIN}),
     "CT": frozenset({Permission.ATTENDANCE_READ_TEAM, Permission.ATTENDANCE_WRITE,
                      Permission.ATTENDANCE_FINALIZE, Permission.ATTENDANCE_REOPEN,
                      Permission.MEMBERS_READ_TEAM, Permission.MEMBERS_MANAGE,
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
                      Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
-                     Permission.CALENDAR_MANAGE, Permission.SQL_EXPLORE}),
+                     Permission.CALENDAR_MANAGE, Permission.PLAYBOOK_READ,
+                     Permission.PLAYBOOK_MANAGE, Permission.SQL_EXPLORE}),
     "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.ATTENDANCE_WRITE_SELF, Permission.REPORTS_READ_SELF,
                          Permission.CALENDAR_READ_TEAM,
-                         Permission.CALENDAR_JUSTIFICATION_SELF}),
+                         Permission.CALENDAR_JUSTIFICATION_SELF,
+                         Permission.PLAYBOOK_READ}),
 }
 
 

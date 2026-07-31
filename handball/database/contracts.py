@@ -289,6 +289,306 @@ class CalendarRepositoryContract(Protocol):
     ) -> dict[str, Any]: ...
 
 
+@runtime_checkable
+class PlaybookRepositoryContract(Protocol):
+    """Contrato de persistência consumido pelo módulo Playbook."""
+
+    def is_available(self) -> bool: ...
+
+    def active_team_ids(self) -> tuple[int, ...]: ...
+
+    def teams(self, team_ids: Iterable[int]) -> list[dict[str, Any]]: ...
+
+    def tree(
+        self,
+        team_ids: Iterable[int],
+        *,
+        include_archived: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def list_contents(
+        self,
+        team_ids: Iterable[int],
+        *,
+        folder_id: int | None = None,
+        query: str | None = None,
+        perspective: str | None = None,
+        position: str | None = None,
+        published_only: bool = False,
+        include_archived: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    def user_collections(
+        self,
+        *,
+        user_id: int,
+        team_ids: Iterable[int],
+        published_only: bool,
+    ) -> dict[str, list[dict[str, Any]]]: ...
+
+    def next_training_event_id(self, team_ids: Iterable[int]) -> int | None: ...
+
+    def plan_for_event(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def content_detail(
+        self,
+        content_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def mark_recent_view(
+        self,
+        content_id: int,
+        *,
+        user_id: int,
+        team_ids: Iterable[int],
+        published_only: bool,
+    ) -> None: ...
+
+    def seed_initial_taxonomy(
+        self, team_id: int, *, actor_user_id: int
+    ) -> dict[str, Any]: ...
+
+    def create_folder(
+        self,
+        team_id: int,
+        *,
+        name: str,
+        parent_id: int | None,
+        actor_user_id: int,
+        sort_order: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def update_folder(
+        self,
+        folder_id: int,
+        *,
+        name: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def move_folder(
+        self,
+        folder_id: int,
+        *,
+        parent_id: int | None,
+        sort_order: int | None,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def copy_folder_structure(
+        self,
+        folder_id: int,
+        *,
+        parent_id: int | None,
+        name: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def reorder_folders(
+        self,
+        folder_ids: Iterable[int],
+        *,
+        parent_id: int | None,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> list[dict[str, Any]]: ...
+
+    def folder_impact(
+        self, folder_id: int, *, team_ids: Iterable[int]
+    ) -> dict[str, Any]: ...
+
+    def archive_folder(
+        self,
+        folder_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        restore: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def hard_delete_folder(
+        self,
+        folder_id: int,
+        *,
+        confirmation: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def create_content(
+        self,
+        team_id: int,
+        payload: Mapping[str, Any],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def update_content(
+        self,
+        content_id: int,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        change_note: str = "",
+    ) -> dict[str, Any]: ...
+
+    def move_contents(
+        self,
+        content_ids: Iterable[int],
+        *,
+        folder_id: int,
+        operation: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> list[dict[str, Any]]: ...
+
+    def set_content_status(
+        self,
+        content_id: int,
+        *,
+        status: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def list_revisions(
+        self, content_id: int, *, team_ids: Iterable[int]
+    ) -> list[dict[str, Any]]: ...
+
+    def restore_revision(
+        self,
+        content_id: int,
+        revision_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def set_relations(
+        self,
+        content_id: int,
+        relations: Iterable[Mapping[str, Any]],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> list[dict[str, Any]]: ...
+
+    def add_drive_attachment(
+        self,
+        content_id: int,
+        *,
+        url: str,
+        label: str,
+        offline_essential: bool,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def add_local_attachment(
+        self,
+        content_id: int,
+        *,
+        storage_key: str,
+        label: str,
+        mime_type: str,
+        size_bytes: int,
+        offline_essential: bool,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def attachment(
+        self,
+        attachment_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def delete_attachment(
+        self,
+        attachment_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def toggle_favorite(
+        self,
+        content_id: int,
+        *,
+        user_id: int,
+        team_ids: Iterable[int],
+        published_only: bool,
+    ) -> bool: ...
+
+    def offline_essential_attachments(
+        self,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool,
+    ) -> list[dict[str, Any]]: ...
+
+    def save_plan(
+        self,
+        event_id: int,
+        payload: Mapping[str, Any],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def reuse_plan(
+        self,
+        event_id: int,
+        *,
+        source_event_id: int,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def record_evaluations(
+        self,
+        event_id: int,
+        evaluations: Iterable[Mapping[str, Any]],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> list[dict[str, Any]]: ...
+
+    def hard_delete_content(
+        self,
+        content_id: int,
+        *,
+        confirmation: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def transfer_plan_for_reschedule(
+        self,
+        source_event_id: int,
+        replacement_event_id: int,
+        *,
+        actor_user_id: int,
+        reason: str,
+    ) -> dict[str, Any] | None: ...
+
+
 @dataclass(frozen=True)
 class BackupDownload:
     """Artefato de download que não revela o caminho persistente ao consumidor."""
@@ -323,6 +623,9 @@ class UnitOfWorkContract(Protocol):
 
     @property
     def calendar(self) -> CalendarRepositoryContract: ...
+
+    @property
+    def playbook(self) -> PlaybookRepositoryContract: ...
 
     @property
     def sql_explorer(self) -> Any: ...

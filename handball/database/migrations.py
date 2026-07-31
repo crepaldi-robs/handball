@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 7
+MAX_SUPPORTED_SCHEMA_VERSION = 8
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -518,6 +518,51 @@ MIGRATION_V7_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[7] = (MIGRATION_V7_NAME, MIGRATION_V7_CHECKSUM)
 
+# O Playbook não fixa a taxonomia esportiva no esquema. Pastas, conteúdos e
+# vínculos são dados do time, sempre identificados por IDs permanentes.
+SCHEMA_V8_STATEMENTS = (
+    "CREATE TABLE playbook_folders (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, parent_id INTEGER, name TEXT NOT NULL CHECK(length(trim(name))>0), sort_order INTEGER NOT NULL DEFAULT 0, archived_at TEXT, archived_by_user_id INTEGER, created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(parent_id) REFERENCES playbook_folders(id) ON DELETE RESTRICT, FOREIGN KEY(archived_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_contents (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, title TEXT NOT NULL CHECK(length(trim(title))>0), content_kind TEXT NOT NULL DEFAULT 'CONTENT', status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN('DRAFT','PUBLISHED','ARCHIVED')), perspective TEXT CHECK(perspective IN('ATTACK','DEFENSE','NEUTRAL') OR perspective IS NULL), objective TEXT NOT NULL DEFAULT '', when_to_use TEXT NOT NULL DEFAULT '', prerequisites TEXT NOT NULL DEFAULT '', steps TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', current_revision INTEGER NOT NULL DEFAULT 1 CHECK(current_revision>=1), published_at TEXT, published_by_user_id INTEGER, archived_at TEXT, archived_by_user_id INTEGER, created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(published_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(archived_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_content_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, content_id INTEGER NOT NULL, revision_number INTEGER NOT NULL CHECK(revision_number>=1), snapshot_json TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', restored_from_revision_id INTEGER, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(content_id,revision_number), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(restored_from_revision_id) REFERENCES playbook_content_revisions(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_content_folders (content_id INTEGER NOT NULL, folder_id INTEGER NOT NULL, placement_kind TEXT NOT NULL DEFAULT 'PLACEMENT' CHECK(placement_kind IN('PLACEMENT','SHORTCUT')), sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY(content_id,folder_id), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(folder_id) REFERENCES playbook_folders(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_content_aliases (content_id INTEGER NOT NULL, alias TEXT NOT NULL COLLATE NOCASE CHECK(length(trim(alias))>0), PRIMARY KEY(content_id,alias), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE)",
+    "CREATE TABLE playbook_content_positions (content_id INTEGER NOT NULL, position TEXT NOT NULL COLLATE NOCASE CHECK(length(trim(position))>0), PRIMARY KEY(content_id,position), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE)",
+    "CREATE TABLE playbook_content_relations (id INTEGER PRIMARY KEY AUTOINCREMENT, source_content_id INTEGER NOT NULL, target_content_id INTEGER NOT NULL, relation_type TEXT NOT NULL CHECK(relation_type IN('PROPOSAL','RESPONSE','COUNTERRESPONSE','VARIATION')), created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, CHECK(source_content_id<>target_content_id), UNIQUE(source_content_id,target_content_id,relation_type), FOREIGN KEY(source_content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(target_content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT, content_id INTEGER NOT NULL, storage_kind TEXT NOT NULL CHECK(storage_kind IN('DRIVE_LINK','LOCAL_FILE')), label TEXT NOT NULL DEFAULT '', url TEXT, storage_key TEXT, mime_type TEXT NOT NULL DEFAULT '', size_bytes INTEGER, offline_essential INTEGER NOT NULL DEFAULT 0 CHECK(offline_essential IN(0,1)), created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, CHECK((storage_kind='DRIVE_LINK' AND url IS NOT NULL AND storage_key IS NULL) OR (storage_kind='LOCAL_FILE' AND url IS NULL AND storage_key IS NOT NULL)), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_favorites (user_id INTEGER NOT NULL, content_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(user_id,content_id), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE)",
+    "CREATE TABLE playbook_recent_views (user_id INTEGER NOT NULL, content_id INTEGER NOT NULL, last_viewed_at TEXT NOT NULL, view_count INTEGER NOT NULL DEFAULT 1 CHECK(view_count>=1), PRIMARY KEY(user_id,content_id), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE)",
+    "CREATE TABLE playbook_training_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, calendar_event_id INTEGER NOT NULL UNIQUE, team_id INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', seasonal_objective TEXT NOT NULL DEFAULT '', context_adjustment TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_by_user_id INTEGER NOT NULL, updated_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(calendar_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_training_plan_items (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, content_id INTEGER NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, planned_minutes INTEGER CHECK(planned_minutes IS NULL OR planned_minutes>0), notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(plan_id,content_id), FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE CASCADE, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_plan_transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, from_event_id INTEGER NOT NULL, to_event_id INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', actor_user_id INTEGER NOT NULL, transferred_at TEXT NOT NULL, FOREIGN KEY(plan_id) REFERENCES playbook_training_plans(id) ON DELETE RESTRICT, FOREIGN KEY(from_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(to_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_plan_evaluations (id INTEGER PRIMARY KEY AUTOINCREMENT, calendar_event_id INTEGER NOT NULL, content_id INTEGER NOT NULL, mastery_stage TEXT NOT NULL CHECK(mastery_stage IN('STARTING','IMPROVING','REFINING','CONSOLIDATED')), continuity_decision TEXT NOT NULL CHECK(continuity_decision IN('CONTINUE','COMPLETE','REVIEW')), notes TEXT NOT NULL DEFAULT '', actor_user_id INTEGER NOT NULL, evaluated_at TEXT NOT NULL, UNIQUE(calendar_event_id,content_id), FOREIGN KEY(calendar_event_id) REFERENCES calendar_events(id) ON DELETE RESTRICT, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE RESTRICT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_playbook_folders_team_parent_order ON playbook_folders(team_id,parent_id,sort_order,id)",
+    "CREATE INDEX idx_playbook_contents_team_status ON playbook_contents(team_id,status,updated_at DESC)",
+    "CREATE INDEX idx_playbook_placements_folder_order ON playbook_content_folders(folder_id,sort_order,content_id)",
+    "CREATE INDEX idx_playbook_aliases_alias ON playbook_content_aliases(alias)",
+    "CREATE INDEX idx_playbook_relations_target ON playbook_content_relations(target_content_id,relation_type)",
+    "CREATE INDEX idx_playbook_attachments_content ON playbook_attachments(content_id,id)",
+    "CREATE INDEX idx_playbook_recent_user_time ON playbook_recent_views(user_id,last_viewed_at DESC)",
+    "CREATE INDEX idx_playbook_plan_items_plan_order ON playbook_training_plan_items(plan_id,sort_order,id)",
+    "CREATE INDEX idx_playbook_transfers_from_event ON playbook_plan_transfers(from_event_id,transferred_at DESC)",
+    "CREATE INDEX idx_playbook_evaluations_event ON playbook_plan_evaluations(calendar_event_id,content_id)",
+)
+MIGRATION_V8_NAME = "playbook_library_and_training_plans"
+MIGRATION_V8_CHECKSUM = _migration_checksum(
+    8,
+    MIGRATION_V8_NAME,
+    SCHEMA_V8_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "folders": "dynamic-permanent-ids",
+        "content": "versioned-multi-folder",
+        "media": "metadata-only-with-protected-local-storage",
+        "plans": "calendar-reference-no-event-duplication",
+        "reschedule": "transactional-transfer-audited",
+        "cycles": "out-of-scope",
+    },
+)
+KNOWN_MIGRATIONS[8] = (MIGRATION_V8_NAME, MIGRATION_V8_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -565,6 +610,23 @@ V3_REQUIRED_COLUMNS = {
         "created_at",
         "updated_at",
     },
+}
+
+V8_REQUIRED_COLUMNS = {
+    "playbook_folders": {"id", "team_id", "parent_id", "name", "sort_order", "archived_at"},
+    "playbook_contents": {"id", "team_id", "title", "status", "current_revision", "published_at"},
+    "playbook_content_revisions": {"id", "content_id", "revision_number", "snapshot_json"},
+    "playbook_content_folders": {"content_id", "folder_id", "placement_kind", "sort_order"},
+    "playbook_content_aliases": {"content_id", "alias"},
+    "playbook_content_positions": {"content_id", "position"},
+    "playbook_content_relations": {"id", "source_content_id", "target_content_id", "relation_type"},
+    "playbook_attachments": {"id", "content_id", "storage_kind", "url", "storage_key", "offline_essential"},
+    "playbook_favorites": {"user_id", "content_id"},
+    "playbook_recent_views": {"user_id", "content_id", "last_viewed_at"},
+    "playbook_training_plans": {"id", "calendar_event_id", "team_id", "seasonal_objective", "context_adjustment"},
+    "playbook_training_plan_items": {"id", "plan_id", "content_id", "sort_order"},
+    "playbook_plan_transfers": {"id", "plan_id", "from_event_id", "to_event_id"},
+    "playbook_plan_evaluations": {"id", "calendar_event_id", "content_id", "mastery_stage", "continuity_decision"},
 }
 
 
@@ -642,6 +704,11 @@ def _apply_schema_v7(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _apply_schema_v8(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V8_STATEMENTS:
+        conn.execute(statement)
+
+
 def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
@@ -664,6 +731,14 @@ def _record_schema_v7(conn: sqlite3.Connection, *, app_version: str, origin: str
         (7, MIGRATION_V7_NAME, MIGRATION_V7_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 7").close()
+
+
+def _record_schema_v8(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (8, MIGRATION_V8_NAME, MIGRATION_V8_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 8").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1235,6 +1310,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 8:
+            required_v8 = set(V8_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela do Playbook obrigatória ausente: {table}."
+                for table in sorted(required_v8 - tables)
+            )
+            for table, required_columns in V8_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas do Playbook ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1550,6 +1641,10 @@ class DatabaseMigrator:
             if effective_version >= 6 and effective_version < 7:
                 _apply_schema_v7(conn)
                 _record_schema_v7(conn, app_version=app_version, origin=origin)
+                effective_version = 7
+            if effective_version >= 7 and effective_version < 8:
+                _apply_schema_v8(conn)
+                _record_schema_v8(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1630,6 +1725,8 @@ class DatabaseMigrator:
                 _record_schema_v6(conn, app_version=app_version, origin=origin)
                 _apply_schema_v7(conn)
                 _record_schema_v7(conn, app_version=app_version, origin=origin)
+                _apply_schema_v8(conn)
+                _record_schema_v8(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

@@ -39,3 +39,30 @@ class CalendarProblem(ModuleOperationError):
             "recoverable": self.recoverable,
             "request_id": request_id,
         }
+
+
+@dataclass(frozen=True)
+class PlaybookProblem(ModuleOperationError):
+    """Erro recuperável do módulo Playbook, consistente com o Calendário."""
+
+    code: str
+    title: str
+    message: str
+    suggestion: str
+    status_code: int = 400
+    field: str | None = None
+    recoverable: bool = True
+
+    def __str__(self) -> str:
+        return self.message
+
+    def to_detail(self, *, request_id: str | None = None) -> dict[str, object]:
+        return {
+            "code": self.code,
+            "title": self.title,
+            "message": self.message,
+            "suggestion": self.suggestion,
+            "field": self.field,
+            "recoverable": self.recoverable,
+            "request_id": request_id,
+        }

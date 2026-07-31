@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <title>Playbook · {{ organization.display_name }}</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+  <script src="/static/playbook.js" defer></script>
+</head>
+<body
+  class="platform-body playbook-app theme-hm-ime"
+  data-playbook
+  data-csrf-token="{{ session.csrf_token }}"
+  data-user-id="{{ session.user_id }}"
+  data-can-manage="{{ 'true' if can_manage else 'false' }}"
+  data-team-ids='{{ team_ids|tojson }}'
+  data-upgrade-required="{{ 'true' if upgrade_required else 'false' }}"
+>
+  <header class="playbook-appbar">
+    <a class="playbook-brand" href="/app" aria-label="Voltar ao Hub Handebol">
+      <span class="playbook-brand-mark" aria-hidden="true">{{ team_theme.monogram }}</span>
+      <span><strong>{{ organization.display_name }}</strong><small>Playbook do time</small></span>
+    </a>
+    <div class="playbook-appbar-actions">
+      <span id="playbook-connection" class="playbook-connection" aria-live="polite">Online</span>
+      <a class="playbook-icon-button" href="/app/calendario" aria-label="Abrir calendário">□</a>
+      <form method="post" action="/logout" data-platform-logout>
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <button class="playbook-icon-button" type="submit" aria-label="Sair">↗</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="playbook-workspace">
+    <section class="playbook-hero" aria-labelledby="playbook-title">
+      <div>
+        <span class="playbook-kicker">BIBLIOTECA E TREINO</span>
+        <h1 id="playbook-title">O que o time precisa executar, no momento certo.</h1>
+        <p>Encontre a jogada, monte o plano e leve somente o roteiro essencial para a quadra.</p>
+      </div>
+      <aside id="playbook-next-training" class="playbook-next-training" aria-live="polite">
+        <span>PRÓXIMO TREINO</span>
+        <strong>Carregando…</strong>
+      </aside>
+    </section>
+
+    {% if upgrade_required %}
+    <section id="playbook-upgrade" class="playbook-upgrade" role="status">
+      <strong>O módulo está pronto, mas a base ainda não recebeu a migração controlada.</strong>
+      <span>Nada foi criado automaticamente. A biblioteca ficará disponível após a janela DB_MIGRATION.</span>
+    </section>
+    {% endif %}
+
+    <div id="playbook-message" class="playbook-toast" role="status" aria-live="polite" hidden></div>
+
+    <section class="playbook-command-bar" aria-label="Ferramentas da biblioteca">
+      <label class="playbook-search">
+        <span class="sr-only">Buscar no Playbook</span>
+        <input id="playbook-search" type="search" maxlength="220" placeholder="Buscar jogada, apelido ou palavra-chave">
+      </label>
+      <select id="playbook-team" aria-label="Equipe"></select>
+      <div class="playbook-view-toggle" role="group" aria-label="Visualização">
+        <button type="button" data-playbook-view="cards" class="is-active" aria-pressed="true">▦ Cartões</button>
+        <button type="button" data-playbook-view="list" aria-pressed="false">☷ Lista</button>
+      </div>
+      <button id="playbook-offline" class="playbook-soft-button" type="button">↓ Essenciais offline</button>
+      {% if can_manage %}
+      <button id="playbook-new-content" class="playbook-primary-action" type="button">＋ Novo conteúdo</button>
+      {% endif %}
+    </section>
+
+    <section class="playbook-layout">
+      <aside class="playbook-sidebar" aria-label="Pastas e coleções">
+        <div class="playbook-sidebar-heading">
+          <div><span class="playbook-kicker">EXPLORADOR</span><h2>Biblioteca</h2></div>
+          {% if can_manage %}<button id="playbook-new-folder" class="playbook-icon-button light" type="button" aria-label="Criar pasta">＋</button>{% endif %}
+        </div>
+        <nav class="playbook-collections" aria-label="Coleções pessoais">
+          <button type="button" data-playbook-collection="all" class="is-active">Todos os conteúdos</button>
+          <button type="button" data-playbook-collection="frequent">Mais consultados</button>
+          <button type="button" data-playbook-collection="favorites">★ Favoritos</button>
+          <button type="button" data-playbook-collection="recent">◷ Vistos recentemente</button>
+        </nav>
+        <div id="playbook-tree" class="playbook-tree" aria-live="polite"><p>Carregando pastas…</p></div>
+        {% if can_manage %}
+        <div class="playbook-folder-tools">
+          <button id="playbook-seed-taxonomy" class="playbook-soft-button" type="button">Criar estrutura inicial</button>
+          <button id="playbook-folder-actions" class="playbook-soft-button" type="button" disabled>Gerenciar pasta</button>
+        </div>
+        {% endif %}
+      </aside>
+
+      <section class="playbook-library" aria-labelledby="playbook-library-title">
+        <header class="playbook-library-header">
+          <div>
+            <nav id="playbook-breadcrumb" class="playbook-breadcrumb" aria-label="Caminho da pasta"><button type="button">Biblioteca</button></nav>
+            <h2 id="playbook-library-title">Conteúdos</h2>
+            <p id="playbook-library-summary">Carregando biblioteca…</p>
+          </div>
+          <div class="playbook-filter-row" aria-label="Filtros rápidos">
+            <button type="button" data-playbook-filter="ALL" class="is-active">Todos</button>
+            <button type="button" data-playbook-filter="ATTACK">Ataque</button>
+            <button type="button" data-playbook-filter="DEFENSE">Defesa</button>
+            <button type="button" data-playbook-filter="NEUTRAL">Neutro</button>
+          </div>
+        </header>
+        <div id="playbook-bulk-actions" class="playbook-bulk-actions" hidden>
+          <span id="playbook-selection-count">0 selecionados</span>
+          {% if can_manage %}
+          <button id="playbook-bulk-move" class="playbook-soft-button" type="button">Mover para…</button>
+          <button id="playbook-bulk-shortcut" class="playbook-soft-button" type="button">Criar atalho</button>
+          {% endif %}
+          <button id="playbook-clear-selection" class="playbook-text-button" type="button">Limpar</button>
+        </div>
+        <div id="playbook-library-items" class="playbook-card-grid" aria-live="polite"></div>
+      </section>
+
+      <aside id="playbook-detail" class="playbook-detail" aria-live="polite">
+        <div class="playbook-detail-empty">
+          <span aria-hidden="true">▤</span>
+          <h2>Abra um conteúdo</h2>
+          <p>Objetivo, passos, materiais e relações aparecem aqui sem tirar você da biblioteca.</p>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <dialog id="playbook-folder-dialog" class="playbook-dialog">
+    <form id="playbook-folder-form" class="playbook-form">
+      <header><div><span class="playbook-kicker">ORGANIZAÇÃO</span><h2 id="playbook-folder-dialog-title">Nova pasta</h2></div><button type="button" data-playbook-close="playbook-folder-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <label><span>Nome</span><input id="playbook-folder-name" name="name" maxlength="160" required autocomplete="off"></label>
+      <label><span>Pasta pai</span><select id="playbook-folder-parent" name="parent_id"></select></label>
+      <input id="playbook-folder-mode" type="hidden" value="create">
+      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-folder-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Salvar pasta</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="playbook-content-dialog" class="playbook-dialog playbook-content-dialog">
+    <form id="playbook-content-form" class="playbook-form">
+      <header><div><span class="playbook-kicker">CONTEÚDO</span><h2 id="playbook-content-dialog-title">Novo conteúdo</h2></div><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <input id="playbook-content-id" type="hidden">
+      <div class="playbook-form-grid">
+        <label><span>Título</span><input id="playbook-content-title" name="title" maxlength="220" required></label>
+        <label><span>Tipo</span><input id="playbook-content-kind" name="content_kind" maxlength="80" value="Jogada"></label>
+        <label><span>Perspectiva</span><select id="playbook-content-perspective" name="perspective"><option value="">Não se aplica</option><option value="ATTACK">Ataque</option><option value="DEFENSE">Defesa</option><option value="NEUTRAL">Neutro</option></select></label>
+        <label><span>Posições <small>separe por vírgula</small></span><input id="playbook-content-positions" name="positions" maxlength="1000" placeholder="Armador, Pivô"></label>
+      </div>
+      <label><span>Objetivo</span><textarea id="playbook-content-objective" name="objective" maxlength="4000" rows="2"></textarea></label>
+      <label><span>Quando usar</span><textarea id="playbook-content-when" name="when_to_use" maxlength="4000" rows="2"></textarea></label>
+      <label><span>Pré-requisitos</span><textarea id="playbook-content-prerequisites" name="prerequisites" maxlength="4000" rows="2"></textarea></label>
+      <label><span>Passo a passo</span><textarea id="playbook-content-steps" name="steps" maxlength="24000" rows="7" required></textarea></label>
+      <label><span>Observações</span><textarea id="playbook-content-notes" name="notes" maxlength="8000" rows="3"></textarea></label>
+      <label><span>Apelidos <small>separe por vírgula</small></span><input id="playbook-content-aliases" name="aliases" maxlength="3000"></label>
+      <fieldset><legend>Pastas de navegação</legend><div id="playbook-content-folders" class="playbook-folder-picker"></div></fieldset>
+      <label><span>Nota desta versão <small>opcional</small></span><input id="playbook-content-change-note" name="change_note" maxlength="500"></label>
+      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Salvar rascunho</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="playbook-plan-dialog" class="playbook-dialog playbook-plan-dialog">
+    <form id="playbook-plan-form" class="playbook-form">
+      <header><div><span class="playbook-kicker">PLANO DO TREINO</span><h2 id="playbook-plan-title">Plano</h2></div><button type="button" data-playbook-close="playbook-plan-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <div id="playbook-plan-context" class="playbook-plan-context"></div>
+      <label><span>Título do treino</span><input id="playbook-plan-name" maxlength="180"></label>
+      <label><span>Objetivo sazonal</span><textarea id="playbook-plan-seasonal-objective" maxlength="2000" rows="2" placeholder="O aprendizado que esta sequência de treinos quer consolidar"></textarea></label>
+      <label><span>Ajuste pontual <small>adversário, jogo anterior ou situação do dia</small></span><textarea id="playbook-plan-context-adjustment" maxlength="2000" rows="2" placeholder="O que muda neste treino sem substituir o objetivo sazonal"></textarea></label>
+      <label><span>Observação do plano</span><textarea id="playbook-plan-notes" maxlength="4000" rows="3"></textarea></label>
+      <fieldset><legend>Roteiro e duração</legend><div id="playbook-plan-items" class="playbook-plan-items"></div></fieldset>
+      <p class="playbook-form-hint">Marque conteúdos da biblioteca e ajuste a duração. A disponibilidade por posição vem da chamada oficial, sem duplicação.</p>
+      {% if can_manage %}<div class="playbook-dialog-actions"><button id="playbook-finish-training" type="button" class="playbook-soft-button">Fechamento guiado</button><button class="playbook-primary-action" type="submit">Salvar plano</button></div>{% endif %}
+    </form>
+  </dialog>
+
+  <dialog id="playbook-problem-dialog" class="playbook-dialog playbook-problem-dialog">
+    <section>
+      <span class="playbook-problem-mark" aria-hidden="true">!</span>
+      <h2 id="playbook-problem-title">Não foi possível concluir</h2>
+      <p id="playbook-problem-message"></p>
+      <p id="playbook-problem-suggestion" class="playbook-problem-suggestion"></p>
+      <small id="playbook-problem-reference"></small>
+      <div class="playbook-dialog-actions"><button id="playbook-problem-close" class="playbook-primary-action" type="button">Entendi</button></div>
+    </section>
+  </dialog>
+</body>
+</html>

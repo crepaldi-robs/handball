@@ -18,6 +18,7 @@ class UnitOfWork:
         self._attendance: AttendanceRepository | None = None
         self._identity: Any | None = None
         self._calendar: Any | None = None
+        self._playbook: Any | None = None
         self._sql_explorer: Any | None = None
         self._completed = False
 
@@ -78,6 +79,17 @@ class UnitOfWork:
         return self._calendar
 
     @property
+    def playbook(self) -> Any:
+        if self._playbook is None:
+            from .repositories.playbook import PlaybookRepository
+
+            self._playbook = PlaybookRepository(
+                self.connection,
+                read_only=self._read_only,
+            )
+        return self._playbook
+
+    @property
     def sql_explorer(self) -> Any:
         if self._sql_explorer is None:
             from .repositories.sql_explorer import SqlExplorerRepository
@@ -121,6 +133,7 @@ class UnitOfWork:
             self._attendance = None
             self._identity = None
             self._calendar = None
+            self._playbook = None
             self._sql_explorer = None
             self._connection.close()
             self._connection = None

@@ -94,6 +94,16 @@
         <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
       </a>{% endif %}
 
+      {% if can_playbook %}<a class="module-card module-card-available" href="/app/playbook">
+        <span class="module-icon" aria-hidden="true">▤</span>
+        <span class="module-status module-status-available">Disponível</span>
+        <span class="module-card-copy">
+          <strong>Playbook</strong>
+          <span>Biblioteca tática, conteúdos do treino e roteiro de quadra.</span>
+        </span>
+        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+      </a>{% endif %}
+
       {% if can_sql_explorer %}<a class="module-card module-card-available" href="/app/consultas">
         <span class="module-icon" aria-hidden="true">⌕</span>
         <span class="module-status module-status-available">Interno</span>
