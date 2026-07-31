@@ -477,8 +477,10 @@ ativação da migração v8 no banco persistente permanece pendente.
 
 ### 4.7 Release PB-3B — Planejamento independente e séries futuras
 
-**Estado:** [-] Em progresso (V10 em desenvolvimento; sem ativação da base
-persistente neste marco).
+**Estado:** [x] Concluído no código local pelo commit
+`af8097e687e770d91c0ca5603e197b0e6cd81577`. A ativação V10 no banco
+persistente (`DB_MIGRATION`) e a validação/publicação em produção continuam
+marcos separados e não foram executadas neste commit.
 
 - conteúdo do Playbook jamais exige treino, evento, chamada ou confirmação;
 - plano, série e sessão podem existir sem evento do Calendário e sem
