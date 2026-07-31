@@ -263,6 +263,22 @@ def test_player_confirms_active_training_with_many_positions_and_justification(t
     assert forbidden.status_code == 409
 
 
+def test_active_confirmation_prefers_next_training_over_stale_past_one(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    ct_csrf = login(client, "ct", data["passwords"]["ct"])
+    past = open_calendar_training(client, ct_csrf, "2020-01-10")
+    past_event_id = int(past["calendar_event"]["id"])
+    future = open_calendar_training(client, ct_csrf, "2100-01-10")
+    future_event_id = int(future["calendar_event"]["id"])
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    active = client.post("/api/v1/me/attendance/active", headers={"X-CSRF-Token": player_csrf})
+    assert active.status_code == 200, active.text
+    item = active.json()["item"]
+    assert int(item["event"]["id"]) == future_event_id
+    assert int(item["event"]["id"]) != past_event_id
+
+
 def test_dev_only_has_no_sport_access_and_bob_keeps_it(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     login(client, "dev", data["passwords"]["dev"])
