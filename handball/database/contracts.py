@@ -145,6 +145,11 @@ class CalendarRepositoryContract(Protocol):
         *,
         season_id: int | None = None,
         season_label: str | None = None,
+        starts_from: str | None = None,
+        ends_to: str | None = None,
+        event_types: Iterable[str] = (),
+        statuses: Iterable[str] = (),
+        query: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_event(self, event_id: int, team_ids: Iterable[int]) -> dict[str, Any] | None: ...
@@ -177,6 +182,82 @@ class CalendarRepositoryContract(Protocol):
         event_id: int,
         payload: Mapping[str, Any],
         *,
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def check_conflicts(
+        self,
+        team_ids: Iterable[int],
+        *,
+        team_id: int,
+        starts_at: str,
+        ends_at: str,
+        event_id: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_command_receipt(
+        self,
+        operation_id: str,
+        *,
+        actor_user_id: int,
+        request_hash: str,
+    ) -> dict[str, Any] | None: ...
+
+    def store_command_receipt(
+        self,
+        operation_id: str,
+        *,
+        actor_user_id: int,
+        request_hash: str,
+        response: Mapping[str, Any],
+    ) -> None: ...
+
+    def transition_event(
+        self,
+        event_id: int,
+        *,
+        action: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str = "",
+        base_version: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def reschedule_event(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        starts_at: str,
+        ends_at: str,
+        reason: str,
+        base_version: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def event_history(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+    ) -> list[dict[str, Any]]: ...
+
+    def create_series(
+        self,
+        payload: Mapping[str, Any],
+        occurrences: Iterable[Mapping[str, Any]],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def update_series(
+        self,
+        series_id: int,
+        payload: Mapping[str, Any],
+        *,
+        scope: str,
+        anchor_event_id: int,
+        team_ids: Iterable[int],
         actor_user_id: int,
     ) -> dict[str, Any]: ...
 

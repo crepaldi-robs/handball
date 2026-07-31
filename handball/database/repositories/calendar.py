@@ -12,6 +12,7 @@ from handball.core.calendar import (
     CalendarEventType,
     CollectiveRestrictionKind,
 )
+from handball.core.errors import CalendarProblem
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
@@ -41,6 +42,34 @@ class CalendarRepository:
     def __init__(self, connection: Any, *, read_only: bool = False) -> None:
         self.connection = connection
         self.read_only = read_only
+
+    def _table_exists(self, table: str) -> bool:
+        return self.connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone() is not None
+
+    def _column_exists(self, table: str, column: str) -> bool:
+        return any(
+            str(row["name"]) == column
+            for row in self.connection.execute(f"PRAGMA table_info({table})")
+        )
+
+    def supports_professional_calendar(self) -> bool:
+        return (
+            self._table_exists("calendar_event_transitions")
+            and self._column_exists("calendar_events", "version")
+        )
+
+    def _professional_projection(self) -> str:
+        if self.supports_professional_calendar():
+            return (
+                "e.title,e.opponent,e.all_day,e.version,e.series_id,"
+            )
+        return (
+            "'' AS title,'' AS opponent,0 AS all_day,1 AS version,"
+            "NULL AS series_id,"
+        )
 
     def list_options(self, team_ids: Iterable[int]) -> dict[str, list[dict[str, Any]]]:
         allowed = _ids(team_ids)
@@ -74,6 +103,11 @@ class CalendarRepository:
         *,
         season_id: int | None = None,
         season_label: str | None = None,
+        starts_from: str | None = None,
+        ends_to: str | None = None,
+        event_types: Iterable[str] = (),
+        statuses: Iterable[str] = (),
+        query: str | None = None,
     ) -> list[dict[str, Any]]:
         allowed = _ids(team_ids)
         if not allowed:
@@ -87,18 +121,55 @@ class CalendarRepository:
         elif season_label:
             season_clause = " AND s.label=?"
             parameters.append(season_label)
+        filter_clauses: list[str] = []
+        if starts_from:
+            filter_clauses.append("e.ends_at>=?")
+            parameters.append(starts_from)
+        if ends_to:
+            filter_clauses.append("e.starts_at<=?")
+            parameters.append(ends_to)
+        type_values = tuple(sorted({str(value) for value in event_types if value}))
+        if type_values:
+            filter_clauses.append(
+                f"e.event_type IN ({_placeholders(tuple(range(len(type_values))))})"
+            )
+            parameters.extend(type_values)
+        status_values = tuple(sorted({str(value) for value in statuses if value}))
+        if status_values:
+            filter_clauses.append(
+                f"e.status IN ({_placeholders(tuple(range(len(status_values))))})"
+            )
+            parameters.extend(status_values)
+        if query and query.strip():
+            term = f"%{query.strip()}%"
+            if self.supports_professional_calendar():
+                filter_clauses.append(
+                    "(e.title LIKE ? COLLATE NOCASE OR e.opponent LIKE ? COLLATE NOCASE "
+                    "OR e.location LIKE ? COLLATE NOCASE OR e.notes LIKE ? COLLATE NOCASE)"
+                )
+                parameters.extend((term, term, term, term))
+            else:
+                filter_clauses.append(
+                    "(e.location LIKE ? COLLATE NOCASE OR e.notes LIKE ? COLLATE NOCASE)"
+                )
+                parameters.extend((term, term))
+        filters = "".join(f" AND {clause}" for clause in filter_clauses)
+        professional_projection = self._professional_projection()
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
+                       {professional_projection}
                        s.label season_label,s.starts_on season_starts_on,
                        s.ends_on season_ends_on,t.display_name team_name,
-                       ts.training_date attendance_training_date
+                       ts.training_date attendance_training_date,
+                       ts.is_finalized attendance_is_finalized,
+                       ts.notes attendance_notes
                 FROM calendar_events e
                 JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
                 JOIN teams t ON t.id=e.team_id
                 LEFT JOIN training_sessions ts ON ts.id=e.attendance_session_id
-                WHERE e.team_id IN ({placeholders}){season_clause}
+                WHERE e.team_id IN ({placeholders}){season_clause}{filters}
                 ORDER BY e.starts_at,e.ends_at,e.id""",
             parameters,
         ).fetchall()
@@ -113,12 +184,16 @@ class CalendarRepository:
         if not allowed:
             return None
         placeholders = _placeholders(allowed)
+        professional_projection = self._professional_projection()
         row = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
                        e.attendance_session_id,e.created_at,e.updated_at,
+                       {professional_projection}
                        s.label season_label,t.display_name team_name,
-                       ts.training_date attendance_training_date
+                       ts.training_date attendance_training_date,
+                       ts.is_finalized attendance_is_finalized,
+                       ts.notes attendance_notes
                 FROM calendar_events e
                 JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
                 JOIN teams t ON t.id=e.team_id
@@ -143,10 +218,12 @@ class CalendarRepository:
         if season_id is not None:
             season_clause = " AND e.season_id=?"
             parameters.append(int(season_id))
+        professional_projection = self._professional_projection()
         rows = self.connection.execute(
             f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
                        e.starts_at,e.ends_at,e.location,e.notes,
-                       e.attendance_session_id,s.label season_label,
+                       e.attendance_session_id,{professional_projection}
+                       s.label season_label,
                        ts.training_date,ts.is_finalized
                 FROM calendar_events e
                 JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
@@ -341,6 +418,8 @@ class CalendarRepository:
             raise ValueError(
                 "Cancelamento/remarcação exige status CANCELLED ou RESCHEDULED."
             )
+        if payload.get("opponent") and event_type is not CalendarEventType.GAME:
+            raise ValueError("Adversário só se aplica a jogos.")
         if payload.get("attendance_session_id") is not None:
             if event_type is not CalendarEventType.TRAINING:
                 raise ValueError("Somente treino pode referenciar uma presença.")
@@ -356,6 +435,61 @@ class CalendarRepository:
         ).fetchone()
         if season is None or int(season["team_id"]) != int(payload["team_id"]):
             raise ValueError("Temporada e equipe não correspondem.")
+
+    def _record_transition(
+        self,
+        *,
+        event_id: int,
+        action: str,
+        from_status: str | None,
+        to_status: str,
+        actor_user_id: int,
+        reason: str = "",
+        replacement_event_id: int | None = None,
+        before: Mapping[str, Any] | None = None,
+        after: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not self._table_exists("calendar_event_transitions"):
+            return
+        self.connection.execute(
+            """INSERT INTO calendar_event_transitions(
+                   event_id,action,from_status,to_status,reason,
+                   replacement_event_id,actor_user_id,occurred_at,
+                   before_json,after_json
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (
+                int(event_id),
+                action,
+                from_status,
+                to_status,
+                reason.strip(),
+                replacement_event_id,
+                actor_user_id,
+                _now_iso(),
+                json.dumps(dict(before), ensure_ascii=False, sort_keys=True)
+                if before is not None
+                else None,
+                json.dumps(dict(after), ensure_ascii=False, sort_keys=True)
+                if after is not None
+                else None,
+            ),
+        )
+
+    def _assert_base_version(
+        self,
+        event: Mapping[str, Any],
+        base_version: int | None,
+    ) -> None:
+        if base_version is None or not self.supports_professional_calendar():
+            return
+        if int(event["version"]) != int(base_version):
+            raise CalendarProblem(
+                code="calendar.stale_event",
+                title="Este evento mudou em outro lugar",
+                message="A versão que você abriu não é mais a versão atual.",
+                suggestion="Recarregue o evento, confira as mudanças e tente novamente.",
+                status_code=409,
+            )
 
     def _audit(
         self,
@@ -396,29 +530,59 @@ class CalendarRepository:
         self._validate_event_payload(payload)
         now = _now_iso()
         try:
-            cursor = self.connection.execute(
-                """INSERT INTO calendar_events(
-                       team_id,season_id,event_type,status,starts_at,ends_at,
-                       location,notes,restriction_kind,attendance_session_id,
-                       created_by_user_id,updated_by_user_id,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    int(payload["team_id"]),
-                    int(payload["season_id"]),
-                    str(payload["event_type"]),
-                    str(payload["status"]),
-                    str(payload["starts_at"]),
-                    str(payload["ends_at"]),
-                    str(payload.get("location") or ""),
-                    str(payload.get("notes") or ""),
-                    payload.get("restriction_kind"),
-                    payload.get("attendance_session_id"),
-                    actor_user_id,
-                    actor_user_id,
-                    now,
-                    now,
-                ),
-            )
+            if self.supports_professional_calendar():
+                cursor = self.connection.execute(
+                    """INSERT INTO calendar_events(
+                           team_id,season_id,event_type,status,starts_at,ends_at,
+                           location,notes,restriction_kind,attendance_session_id,
+                           created_by_user_id,updated_by_user_id,created_at,updated_at,
+                           title,opponent,all_day,version,series_id
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        actor_user_id,
+                        now,
+                        now,
+                        str(payload.get("title") or ""),
+                        str(payload.get("opponent") or ""),
+                        int(bool(payload.get("all_day"))),
+                        payload.get("series_id"),
+                    ),
+                )
+            else:
+                cursor = self.connection.execute(
+                    """INSERT INTO calendar_events(
+                           team_id,season_id,event_type,status,starts_at,ends_at,
+                           location,notes,restriction_kind,attendance_session_id,
+                           created_by_user_id,updated_by_user_id,created_at,updated_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        actor_user_id,
+                        now,
+                        now,
+                    ),
+                )
         except sqlite3.IntegrityError as exc:
             raise ValueError("Evento incompatível com o calendário.") from exc
         event_id = int(cursor.lastrowid)
@@ -430,6 +594,14 @@ class CalendarRepository:
             action="calendar.event.create",
             entity="calendar_event",
             target_id=event_id,
+            after=event,
+        )
+        self._record_transition(
+            event_id=event_id,
+            action="CREATE",
+            from_status=None,
+            to_status=str(event["status"]),
+            actor_user_id=actor_user_id,
             after=event,
         )
         return event
@@ -444,6 +616,7 @@ class CalendarRepository:
         before = self.get_event(event_id, [int(payload["team_id"])])
         if before is None:
             raise KeyError("Evento não encontrado na equipe autorizada.")
+        self._assert_base_version(before, payload.get("version"))
         self._validate_event_payload(payload)
         if (
             before["attendance_session_id"] is not None
@@ -454,28 +627,56 @@ class CalendarRepository:
                 "Um treino com chamada vinculada não pode mudar de dia; cancele/remarque e crie um novo treino."
             )
         try:
-            self.connection.execute(
-                """UPDATE calendar_events
-                   SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
-                       ends_at=?,location=?,notes=?,restriction_kind=?,
-                       attendance_session_id=?,updated_by_user_id=?,updated_at=?
-                   WHERE id=?""",
-                (
-                    int(payload["team_id"]),
-                    int(payload["season_id"]),
-                    str(payload["event_type"]),
-                    str(payload["status"]),
-                    str(payload["starts_at"]),
-                    str(payload["ends_at"]),
-                    str(payload.get("location") or ""),
-                    str(payload.get("notes") or ""),
-                    payload.get("restriction_kind"),
-                    payload.get("attendance_session_id"),
-                    actor_user_id,
-                    _now_iso(),
-                    int(event_id),
-                ),
-            )
+            if self.supports_professional_calendar():
+                self.connection.execute(
+                    """UPDATE calendar_events
+                       SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
+                           ends_at=?,location=?,notes=?,restriction_kind=?,
+                           attendance_session_id=?,updated_by_user_id=?,updated_at=?,
+                           title=?,opponent=?,all_day=?,version=version+1
+                       WHERE id=?""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        _now_iso(),
+                        str(payload.get("title") or ""),
+                        str(payload.get("opponent") or ""),
+                        int(bool(payload.get("all_day"))),
+                        int(event_id),
+                    ),
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE calendar_events
+                       SET team_id=?,season_id=?,event_type=?,status=?,starts_at=?,
+                           ends_at=?,location=?,notes=?,restriction_kind=?,
+                           attendance_session_id=?,updated_by_user_id=?,updated_at=?
+                       WHERE id=?""",
+                    (
+                        int(payload["team_id"]),
+                        int(payload["season_id"]),
+                        str(payload["event_type"]),
+                        str(payload["status"]),
+                        str(payload["starts_at"]),
+                        str(payload["ends_at"]),
+                        str(payload.get("location") or ""),
+                        str(payload.get("notes") or ""),
+                        payload.get("restriction_kind"),
+                        payload.get("attendance_session_id"),
+                        actor_user_id,
+                        _now_iso(),
+                        int(event_id),
+                    ),
+                )
         except sqlite3.IntegrityError as exc:
             raise ValueError("Evento incompatível com o calendário.") from exc
         after = self.get_event(event_id, [int(payload["team_id"])])
@@ -489,7 +690,556 @@ class CalendarRepository:
             before=before,
             after=after,
         )
+        self._record_transition(
+            event_id=event_id,
+            action="UPDATE",
+            from_status=str(before["status"]),
+            to_status=str(after["status"]),
+            actor_user_id=actor_user_id,
+            before=before,
+            after=after,
+        )
         return after
+
+    def check_conflicts(
+        self,
+        team_ids: Iterable[int],
+        *,
+        team_id: int,
+        starts_at: str,
+        ends_at: str,
+        event_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        allowed = _ids(team_ids)
+        if int(team_id) not in allowed:
+            raise PermissionError("Equipe fora do escopo da conta.")
+        parameters: list[Any] = [int(team_id), ends_at, starts_at]
+        exclusion = ""
+        if event_id is not None:
+            exclusion = " AND e.id<>?"
+            parameters.append(int(event_id))
+        professional_projection = self._professional_projection()
+        rows = self.connection.execute(
+            f"""SELECT e.id,e.team_id,e.season_id,e.event_type,e.status,
+                       e.starts_at,e.ends_at,e.location,e.notes,e.restriction_kind,
+                       e.attendance_session_id,e.created_at,e.updated_at,
+                       {professional_projection}
+                       s.label season_label,t.display_name team_name,
+                       ts.training_date attendance_training_date
+                FROM calendar_events e
+                JOIN seasons s ON s.id=e.season_id AND s.team_id=e.team_id
+                JOIN teams t ON t.id=e.team_id
+                LEFT JOIN training_sessions ts ON ts.id=e.attendance_session_id
+                WHERE e.team_id=?
+                  AND e.status NOT IN('CANCELLED','RESCHEDULED')
+                  AND e.starts_at<? AND e.ends_at>?
+                  {exclusion}
+                ORDER BY e.starts_at,e.id""",
+            parameters,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_command_receipt(
+        self,
+        operation_id: str,
+        *,
+        actor_user_id: int,
+        request_hash: str,
+    ) -> dict[str, Any] | None:
+        if not self._table_exists("calendar_command_receipts"):
+            return None
+        row = self.connection.execute(
+            """SELECT request_hash,response_json FROM calendar_command_receipts
+               WHERE operation_id=? AND actor_user_id=?""",
+            (operation_id, actor_user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        if str(row["request_hash"]) != request_hash:
+            raise CalendarProblem(
+                code="calendar.idempotency_conflict",
+                title="Esta ação já foi usada",
+                message="A mesma identificação de operação chegou com dados diferentes.",
+                suggestion="Atualize a tela e tente novamente.",
+                status_code=409,
+            )
+        return json.loads(str(row["response_json"]))
+
+    def store_command_receipt(
+        self,
+        operation_id: str,
+        *,
+        actor_user_id: int,
+        request_hash: str,
+        response: Mapping[str, Any],
+    ) -> None:
+        if not self._table_exists("calendar_command_receipts"):
+            return
+        self.connection.execute(
+            """INSERT INTO calendar_command_receipts(
+                   operation_id,actor_user_id,request_hash,response_json,created_at
+               ) VALUES(?,?,?,?,?)""",
+            (
+                operation_id,
+                actor_user_id,
+                request_hash,
+                json.dumps(dict(response), ensure_ascii=False, sort_keys=True),
+                _now_iso(),
+            ),
+        )
+
+    def transition_event(
+        self,
+        event_id: int,
+        *,
+        action: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        reason: str = "",
+        base_version: int | None = None,
+    ) -> dict[str, Any]:
+        allowed = _ids(team_ids)
+        before = self.get_event(event_id, allowed)
+        if before is None:
+            raise KeyError("Evento não encontrado na equipe autorizada.")
+        if not self.supports_professional_calendar():
+            raise CalendarProblem(
+                code="calendar.upgrade_required",
+                title="Atualização do calendário necessária",
+                message="Esta ação ainda não está disponível no banco atual.",
+                suggestion="Peça ao administrador para aplicar a atualização do Calendário.",
+                status_code=409,
+            )
+        self._assert_base_version(before, base_version)
+        current = str(before["status"])
+        if (
+            action == "COMPLETE"
+            and str(before["event_type"]) == "TRAINING"
+            and before["attendance_session_id"] is not None
+        ):
+            session = self.connection.execute(
+                "SELECT is_finalized FROM training_sessions WHERE id=?",
+                (int(before["attendance_session_id"]),),
+            ).fetchone()
+            if session is None or not bool(session["is_finalized"]):
+                raise CalendarProblem(
+                    code="calendar.attendance_open",
+                    title="Encerre a chamada antes de concluir o treino",
+                    message=(
+                        "Este treino possui uma chamada aberta. Confira as presenças "
+                        "e encerre a chamada para apurar quem não respondeu."
+                    ),
+                    suggestion="Abra a chamada, registre a observação final e encerre-a.",
+                    status_code=409,
+                )
+        transitions = {
+            "CONFIRM": ({"PLANNED"}, "CONFIRMED"),
+            "COMPLETE": ({"PLANNED", "CONFIRMED"}, "COMPLETED"),
+            "CANCEL": ({"PLANNED", "CONFIRMED"}, "CANCELLED"),
+        }
+        if action == "UNDO_CANCEL":
+            if current != "CANCELLED":
+                raise CalendarProblem(
+                    code="calendar.invalid_transition",
+                    title="Este evento não está cancelado",
+                    message="Só é possível desfazer um cancelamento ativo.",
+                    suggestion="Recarregue o calendário para conferir o estado atual.",
+                    status_code=409,
+                )
+            row = self.connection.execute(
+                """SELECT from_status FROM calendar_event_transitions
+                   WHERE event_id=? AND action='CANCEL'
+                   ORDER BY id DESC LIMIT 1""",
+                (int(event_id),),
+            ).fetchone()
+            target = (
+                str(row["from_status"])
+                if row is not None and row["from_status"] in {"PLANNED", "CONFIRMED"}
+                else "PLANNED"
+            )
+        else:
+            allowed_from, target = transitions[action]
+            if current not in allowed_from:
+                raise CalendarProblem(
+                    code="calendar.invalid_transition",
+                    title="Ação indisponível para este evento",
+                    message=f"O evento está como {current.lower()} e não aceita esta ação.",
+                    suggestion="Recarregue a tela e use uma das ações disponíveis.",
+                    status_code=409,
+                )
+            if action == "CANCEL" and not reason.strip():
+                raise CalendarProblem(
+                    code="calendar.cancel_reason_required",
+                    title="Informe o motivo do cancelamento",
+                    message="O motivo ajuda a equipe a entender o que mudou.",
+                    suggestion="Escreva uma frase curta e confirme novamente.",
+                    field="reason",
+                )
+        now = _now_iso()
+        self.connection.execute(
+            """UPDATE calendar_events
+               SET status=?,version=version+1,updated_by_user_id=?,updated_at=?
+               WHERE id=?""",
+            (target, actor_user_id, now, int(event_id)),
+        )
+        after = self.get_event(event_id, allowed)
+        if after is None:
+            raise RuntimeError("Evento atualizado não pôde ser relido.")
+        self._record_transition(
+            event_id=event_id,
+            action=action,
+            from_status=current,
+            to_status=target,
+            actor_user_id=actor_user_id,
+            reason=reason,
+            before=before,
+            after=after,
+        )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=f"calendar.event.{action.casefold()}",
+            entity="calendar_event",
+            target_id=event_id,
+            before=before,
+            after=after,
+        )
+        return after
+
+    def reschedule_event(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+        starts_at: str,
+        ends_at: str,
+        reason: str,
+        base_version: int | None = None,
+    ) -> dict[str, Any]:
+        allowed = _ids(team_ids)
+        before = self.get_event(event_id, allowed)
+        if before is None:
+            raise KeyError("Evento não encontrado na equipe autorizada.")
+        if not self.supports_professional_calendar():
+            raise CalendarProblem(
+                code="calendar.upgrade_required",
+                title="Atualização do calendário necessária",
+                message="A remarcação guiada depende da atualização do Calendário.",
+                suggestion="Peça ao administrador para aplicar a atualização pendente.",
+                status_code=409,
+            )
+        self._assert_base_version(before, base_version)
+        if str(before["status"]) not in {"PLANNED", "CONFIRMED"}:
+            raise CalendarProblem(
+                code="calendar.invalid_transition",
+                title="Este evento não pode ser remarcado",
+                message="Somente eventos planejados ou confirmados podem ser remarcados.",
+                suggestion="Recarregue a tela e confira o estado atual.",
+                status_code=409,
+            )
+        replacement_payload = {
+            **before,
+            "status": "PLANNED",
+            "starts_at": starts_at,
+            "ends_at": ends_at,
+            "attendance_session_id": None,
+            "version": None,
+            "series_id": None,
+        }
+        replacement = self.create_event(
+            replacement_payload,
+            actor_user_id=actor_user_id,
+        )
+        now = _now_iso()
+        self.connection.execute(
+            """UPDATE calendar_events
+               SET status='RESCHEDULED',version=version+1,
+                   updated_by_user_id=?,updated_at=?
+               WHERE id=?""",
+            (actor_user_id, now, int(event_id)),
+        )
+        after = self.get_event(event_id, allowed)
+        if after is None:
+            raise RuntimeError("Evento remarcado não pôde ser relido.")
+        self._record_transition(
+            event_id=event_id,
+            action="RESCHEDULE",
+            from_status=str(before["status"]),
+            to_status="RESCHEDULED",
+            actor_user_id=actor_user_id,
+            reason=reason,
+            replacement_event_id=int(replacement["id"]),
+            before=before,
+            after=after,
+        )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="calendar.event.reschedule",
+            entity="calendar_event",
+            target_id=event_id,
+            before=before,
+            after={"event": after, "replacement": replacement},
+        )
+        return {"event": after, "replacement": replacement}
+
+    def event_history(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+    ) -> list[dict[str, Any]]:
+        if self.get_event(event_id, team_ids) is None:
+            raise KeyError("Evento não encontrado na equipe autorizada.")
+        if not self._table_exists("calendar_event_transitions"):
+            return []
+        rows = self.connection.execute(
+            """SELECT id,event_id,action,from_status,to_status,reason,
+                      replacement_event_id,actor_user_id,occurred_at
+               FROM calendar_event_transitions
+               WHERE event_id=? ORDER BY occurred_at,id""",
+            (int(event_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_series(
+        self,
+        payload: Mapping[str, Any],
+        occurrences: Iterable[Mapping[str, Any]],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        if not self.supports_professional_calendar():
+            raise CalendarProblem(
+                code="calendar.upgrade_required",
+                title="Atualização do calendário necessária",
+                message="Séries recorrentes ainda não estão disponíveis no banco atual.",
+                suggestion="Peça ao administrador para aplicar a atualização pendente.",
+                status_code=409,
+            )
+        occurrence_items = [dict(item) for item in occurrences]
+        for occurrence in occurrence_items:
+            conflicts = self.check_conflicts(
+                (int(payload["team_id"]),),
+                team_id=int(payload["team_id"]),
+                starts_at=str(occurrence["starts_at"]),
+                ends_at=str(occurrence["ends_at"]),
+            )
+            if conflicts:
+                raise CalendarProblem(
+                    code="calendar.series_conflict",
+                    title="A série possui conflitos",
+                    message="Um ou mais horários coincidem com eventos existentes.",
+                    suggestion="Revise a prévia e ajuste os dias ou horários.",
+                    status_code=409,
+                )
+        now = _now_iso()
+        cursor = self.connection.execute(
+            """INSERT INTO calendar_event_series(
+                   team_id,season_id,event_type,title,opponent,starts_on,ends_on,
+                   start_time,duration_minutes,weekdays_json,location,notes,
+                   restriction_kind,created_by_user_id,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                int(payload["team_id"]),
+                int(payload["season_id"]),
+                str(payload["event_type"]),
+                str(payload.get("title") or ""),
+                str(payload.get("opponent") or ""),
+                str(payload["starts_on"]),
+                str(payload["ends_on"]),
+                str(payload["start_time"]),
+                int(payload["duration_minutes"]),
+                json.dumps(list(payload["weekdays"])),
+                str(payload.get("location") or ""),
+                str(payload.get("notes") or ""),
+                payload.get("restriction_kind"),
+                actor_user_id,
+                now,
+                now,
+            ),
+        )
+        series_id = int(cursor.lastrowid)
+        events: list[dict[str, Any]] = []
+        for occurrence in occurrence_items:
+            event = self.create_event(
+                {**occurrence, "series_id": series_id},
+                actor_user_id=actor_user_id,
+            )
+            events.append(event)
+            self._record_transition(
+                event_id=int(event["id"]),
+                action="SERIES_CREATE",
+                from_status=None,
+                to_status=str(event["status"]),
+                actor_user_id=actor_user_id,
+                after=event,
+            )
+        return {"series_id": series_id, "count": len(events), "items": events}
+
+    def update_series(
+        self,
+        series_id: int,
+        payload: Mapping[str, Any],
+        *,
+        scope: str,
+        anchor_event_id: int,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        if not self.supports_professional_calendar():
+            raise CalendarProblem(
+                code="calendar.upgrade_required",
+                title="Atualização do calendário necessária",
+                message="A edição de séries depende da atualização do Calendário.",
+                suggestion="Peça ao administrador para aplicar a atualização pendente.",
+                status_code=409,
+            )
+        if scope not in {"FUTURE", "ALL"}:
+            raise CalendarProblem(
+                code="calendar.invalid_series_scope",
+                title="Escopo de edição inválido",
+                message="A edição deve afetar os próximos eventos ou a série inteira.",
+                suggestion="Escolha uma das opções exibidas e tente novamente.",
+            )
+        allowed = _ids(team_ids)
+        anchor = self.get_event(anchor_event_id, allowed)
+        if anchor is None or int(anchor.get("series_id") or 0) != int(series_id):
+            raise KeyError("Ocorrência da série não encontrada na equipe autorizada.")
+        self._assert_base_version(anchor, payload.get("version"))
+        if (
+            int(payload["team_id"]) != int(anchor["team_id"])
+            or int(payload["season_id"]) != int(anchor["season_id"])
+        ):
+            raise CalendarProblem(
+                code="calendar.series_context_locked",
+                title="Equipe e temporada não podem mudar em lote",
+                message="Uma série permanece na equipe e temporada em que foi criada.",
+                suggestion="Edite apenas esta ocorrência ou crie uma nova série.",
+            )
+        submitted_start = datetime.fromisoformat(str(payload["starts_at"]))
+        submitted_end = datetime.fromisoformat(str(payload["ends_at"]))
+        anchor_start = datetime.fromisoformat(str(anchor["starts_at"]))
+        if _local_date(str(payload["starts_at"])) != _local_date(
+            str(anchor["starts_at"])
+        ):
+            raise CalendarProblem(
+                code="calendar.series_date_shift",
+                title="A data só pode mudar em uma ocorrência",
+                message="Edições em lote mantêm os mesmos dias e ajustam horário e conteúdo.",
+                suggestion="Escolha “Só este evento” para mudar a data.",
+                field="starts_at",
+            )
+        time_shift = submitted_start - anchor_start
+        duration = submitted_end - submitted_start
+        placeholders = _placeholders(allowed)
+        scope_clause = "AND starts_at>=?" if scope == "FUTURE" else ""
+        parameters: list[Any] = [int(series_id), *allowed]
+        if scope == "FUTURE":
+            parameters.append(str(anchor["starts_at"]))
+        rows = self.connection.execute(
+            f"""SELECT id FROM calendar_events
+                WHERE series_id=? AND team_id IN ({placeholders})
+                  AND status IN('PLANNED','CONFIRMED') {scope_clause}
+                ORDER BY starts_at,id""",
+            parameters,
+        ).fetchall()
+        planned: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for row in rows:
+            current = self.get_event(int(row["id"]), allowed)
+            if current is None:
+                continue
+            current_start = datetime.fromisoformat(str(current["starts_at"]))
+            next_start = current_start + time_shift
+            next_end = next_start + duration
+            item_payload = {
+                **current,
+                "event_type": str(payload["event_type"]),
+                "status": str(current["status"]),
+                "starts_at": next_start.isoformat(timespec="seconds"),
+                "ends_at": next_end.isoformat(timespec="seconds"),
+                "location": str(payload.get("location") or ""),
+                "notes": str(payload.get("notes") or ""),
+                "title": str(payload.get("title") or ""),
+                "opponent": str(payload.get("opponent") or ""),
+                "all_day": bool(payload.get("all_day")),
+                "restriction_kind": payload.get("restriction_kind"),
+                "attendance_session_id": current.get("attendance_session_id"),
+                "version": current.get("version"),
+            }
+            conflicts = self.check_conflicts(
+                allowed,
+                team_id=int(current["team_id"]),
+                starts_at=str(item_payload["starts_at"]),
+                ends_at=str(item_payload["ends_at"]),
+                event_id=int(current["id"]),
+            )
+            if conflicts:
+                raise CalendarProblem(
+                    code="calendar.series_conflict",
+                    title="A edição da série possui conflitos",
+                    message=(
+                        "O novo horário de uma ou mais ocorrências coincide "
+                        "com outro evento."
+                    ),
+                    suggestion=(
+                        "Ajuste o horário ou escolha “Só este evento” para "
+                        "fazer uma alteração pontual."
+                    ),
+                    status_code=409,
+                )
+            planned.append((current, item_payload))
+        if not planned:
+            raise CalendarProblem(
+                code="calendar.empty_series_scope",
+                title="Nenhum evento ativo para editar",
+                message="O recorte escolhido não possui eventos planejados ou confirmados.",
+                suggestion="Confira o evento selecionado ou edite apenas esta ocorrência.",
+                status_code=409,
+            )
+        updated: list[dict[str, Any]] = []
+        for current, item_payload in planned:
+            updated.append(
+                self.update_event(
+                    int(current["id"]),
+                    item_payload,
+                    actor_user_id=actor_user_id,
+                )
+            )
+        local_start = submitted_start.astimezone(LOCAL_TIMEZONE)
+        self.connection.execute(
+            """UPDATE calendar_event_series
+               SET event_type=?,title=?,opponent=?,start_time=?,
+                   duration_minutes=?,location=?,notes=?,restriction_kind=?,
+                   updated_at=?
+               WHERE id=? AND team_id=?""",
+            (
+                str(payload["event_type"]),
+                str(payload.get("title") or ""),
+                str(payload.get("opponent") or ""),
+                local_start.time().isoformat(timespec="minutes"),
+                max(1, int(duration.total_seconds() // 60)),
+                str(payload.get("location") or ""),
+                str(payload.get("notes") or ""),
+                payload.get("restriction_kind"),
+                _now_iso(),
+                int(series_id),
+                int(anchor["team_id"]),
+            ),
+        )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="calendar.series.update",
+            entity="calendar_event_series",
+            target_id=series_id,
+            before={"scope": scope, "anchor_event_id": anchor_event_id},
+            after={"updated_event_ids": [int(item["id"]) for item in updated]},
+        )
+        return {
+            "series_id": int(series_id),
+            "scope": scope,
+            "count": len(updated),
+            "items": updated,
+        }
 
     def list_justifications(
         self,

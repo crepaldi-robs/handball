@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 7
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 6
+MAX_SUPPORTED_SCHEMA_VERSION = 7
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -488,6 +488,36 @@ MIGRATION_V6_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[6] = (MIGRATION_V6_NAME, MIGRATION_V6_CHECKSUM)
 
+SCHEMA_V7_STATEMENTS = (
+    "CREATE TABLE calendar_event_series (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL, season_id INTEGER NOT NULL, event_type TEXT NOT NULL CHECK(event_type IN('TRAINING','GAME','CHAMPIONSHIP','MILESTONE_HOLIDAY','COLLECTIVE_RESTRICTION','CANCELLATION_RESCHEDULING')), title TEXT NOT NULL DEFAULT '', opponent TEXT NOT NULL DEFAULT '', starts_on TEXT NOT NULL, ends_on TEXT NOT NULL, start_time TEXT NOT NULL, duration_minutes INTEGER NOT NULL CHECK(duration_minutes>0), weekdays_json TEXT NOT NULL, location TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', restriction_kind TEXT CHECK(restriction_kind IN('CHAMPIONSHIP_DATES','COURT_UNAVAILABLE','RAIN','HOLIDAY') OR restriction_kind IS NULL), created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(season_id,team_id) REFERENCES seasons(id,team_id) ON DELETE RESTRICT, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "ALTER TABLE calendar_events ADD COLUMN title TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE calendar_events ADD COLUMN opponent TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE calendar_events ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0 CHECK(all_day IN(0,1))",
+    "ALTER TABLE calendar_events ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK(version>=1)",
+    "ALTER TABLE calendar_events ADD COLUMN series_id INTEGER REFERENCES calendar_event_series(id) ON DELETE SET NULL",
+    "CREATE TABLE calendar_event_transitions (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN('CREATE','UPDATE','CONFIRM','COMPLETE','CANCEL','UNDO_CANCEL','RESCHEDULE','SERIES_CREATE')), from_status TEXT, to_status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', replacement_event_id INTEGER, actor_user_id INTEGER NOT NULL, occurred_at TEXT NOT NULL, before_json TEXT, after_json TEXT, FOREIGN KEY(event_id) REFERENCES calendar_events(id) ON DELETE CASCADE, FOREIGN KEY(replacement_event_id) REFERENCES calendar_events(id) ON DELETE SET NULL, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE calendar_command_receipts (operation_id TEXT PRIMARY KEY, actor_user_id INTEGER NOT NULL, request_hash TEXT NOT NULL, response_json TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_calendar_series_team_season ON calendar_event_series(team_id,season_id,starts_on)",
+    "CREATE INDEX idx_calendar_events_series ON calendar_events(series_id,starts_at)",
+    "CREATE INDEX idx_calendar_transitions_event ON calendar_event_transitions(event_id,occurred_at,id)",
+    "CREATE INDEX idx_calendar_receipts_created ON calendar_command_receipts(created_at)",
+)
+MIGRATION_V7_NAME = "calendar_professional_workflow"
+MIGRATION_V7_CHECKSUM = _migration_checksum(
+    7,
+    MIGRATION_V7_NAME,
+    SCHEMA_V7_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "event_lifecycle": "explicit-reversible-transitions",
+        "hard_delete": False,
+        "idempotency": "operation-receipts",
+        "recurrence": "transactional-series",
+        "optimistic_concurrency": "event-version",
+    },
+)
+KNOWN_MIGRATIONS[7] = (MIGRATION_V7_NAME, MIGRATION_V7_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -607,6 +637,11 @@ def _apply_schema_v6(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _apply_schema_v7(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V7_STATEMENTS:
+        conn.execute(statement)
+
+
 def _record_schema_v5(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
     conn.execute(
         "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
@@ -621,6 +656,14 @@ def _record_schema_v6(conn: sqlite3.Connection, *, app_version: str, origin: str
         (6, MIGRATION_V6_NAME, MIGRATION_V6_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 6").close()
+
+
+def _record_schema_v7(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (7, MIGRATION_V7_NAME, MIGRATION_V7_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 7").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1167,6 +1210,31 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                 f"Tabela de posições por treino ausente: {table}."
                 for table in sorted(required_v6 - tables)
             )
+        if current_version >= 7:
+            required_v7 = {
+                "calendar_event_series",
+                "calendar_event_transitions",
+                "calendar_command_receipts",
+            }
+            base_problems.extend(
+                f"Tabela do Calendário profissional ausente: {table}."
+                for table in sorted(required_v7 - tables)
+            )
+            if "calendar_events" in tables:
+                missing_columns = {
+                    "title",
+                    "opponent",
+                    "all_day",
+                    "version",
+                    "series_id",
+                } - _columns(conn, "calendar_events")
+                if missing_columns:
+                    base_problems.append(
+                        "Colunas do Calendário profissional ausentes em "
+                        "calendar_events: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -1478,6 +1546,10 @@ class DatabaseMigrator:
             if effective_version >= 5 and effective_version < 6:
                 _apply_schema_v6(conn)
                 _record_schema_v6(conn, app_version=app_version, origin=origin)
+                effective_version = 6
+            if effective_version >= 6 and effective_version < 7:
+                _apply_schema_v7(conn)
+                _record_schema_v7(conn, app_version=app_version, origin=origin)
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -1556,6 +1628,8 @@ class DatabaseMigrator:
                 _record_schema_v5(conn, app_version=app_version, origin=origin)
                 _apply_schema_v6(conn)
                 _record_schema_v6(conn, app_version=app_version, origin=origin)
+                _apply_schema_v7(conn)
+                _record_schema_v7(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

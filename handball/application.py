@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -72,6 +81,37 @@ def create_app(
         name="static",
     )
     install_security_middleware(application, settings)
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ):
+        if not request.url.path.startswith("/api/v1/calendar"):
+            return await request_validation_exception_handler(request, exc)
+        first = exc.errors()[0] if exc.errors() else {}
+        location = first.get("loc") or ()
+        field = str(location[-1]) if location else None
+        message = str(first.get("msg") or "Confira os dados informados.")
+        if message.casefold().startswith("value error, "):
+            message = message.split(",", 1)[1].strip()
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": {
+                    "code": "calendar.validation",
+                    "title": "Há um campo que precisa de atenção",
+                    "message": message,
+                    "suggestion": "Corrija o campo destacado e tente novamente.",
+                    "field": field,
+                    "recoverable": True,
+                    "request_id": (
+                        request.headers.get("X-Request-ID")
+                        or uuid4().hex[:12]
+                    ),
+                }
+            },
+        )
 
     @application.get("/health")
     def health() -> dict[str, str]:

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#0b1f33">
-  <title>Calendário · Hub Handebol</title>
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <title>Calendário · {{ organization.display_name }}</title>
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="stylesheet" href="/static/styles.css">
@@ -13,98 +13,192 @@
   <script src="/static/calendar.js" defer></script>
 </head>
 <body
-  class="platform-body"
+  class="platform-body calendar-v2 theme-hm-ime"
   data-calendar
   data-csrf-token="{{ session.csrf_token }}"
+  data-user-id="{{ session.user_id }}"
   data-can-manage="{{ 'true' if can_manage else 'false' }}"
   data-can-justify="{{ 'true' if can_justify else 'false' }}"
   data-active-season="{{ active_season_label }}"
+  data-theme-slug="{{ team_theme.slug }}"
 >
-  <header class="topbar">
-    <div class="topbar-inner">
-      <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
-        <div class="mini-mark" aria-hidden="true">H</div>
-        <div><strong>Calendário</strong><span>{{ organization.display_name }}</span></div>
-      </a>
-      <div class="top-actions">
-        <a class="text-button" href="/app">Hub</a>
-        <form method="post" action="/logout" data-platform-logout>
-          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-          <button class="text-button logout-button" type="submit">Sair</button>
-        </form>
-      </div>
+  <header class="calendar-appbar">
+    <a class="calendar-team-brand" href="/app" aria-label="Voltar ao Hub Handebol">
+      <span
+        id="calendar-brand-mark"
+        class="calendar-brand-mark{% if team_theme.logo_url %} has-image{% endif %}"
+        aria-hidden="true"
+      >{{ team_theme.monogram }}</span>
+      <span><strong id="calendar-team-name">{{ organization.display_name }}</strong><small>Calendário da equipe</small></span>
+    </a>
+    <div class="calendar-appbar-actions">
+      <span id="calendar-connection" class="calendar-connection" aria-live="polite">Online</span>
+      <a class="calendar-icon-button" href="/app" aria-label="Abrir o Hub">⌂</a>
+      <form method="post" action="/logout" data-platform-logout>
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <button class="calendar-icon-button" type="submit" aria-label="Sair">↗</button>
+      </form>
     </div>
   </header>
 
-  <main class="module-shell calendar-shell">
-    <a class="back-link" href="/app">← Voltar ao hub</a>
-    <section class="calendar-heading" aria-labelledby="calendar-title">
+  <main class="calendar-workspace">
+    <section class="calendar-command-hero" aria-labelledby="calendar-title">
       <div>
-        <span class="eyebrow">PLANEJAMENTO COLETIVO</span>
-        <h1 id="calendar-title">Calendário da equipe</h1>
-        <p>Eventos planejados e justificativas de possível ausência. Presença continua sendo o ocorrido e não é alterada aqui.</p>
+        <span class="calendar-kicker">PLANEJAMENTO HM-IME</span>
+        <h1 id="calendar-title">Seu time, no tempo certo.</h1>
+        <p>Treinos, jogos e decisões importantes em uma agenda simples.</p>
       </div>
-      <div class="calendar-filters">
+      <article id="calendar-next-event" class="calendar-next-card" aria-live="polite">
+        <span class="calendar-next-label">PRÓXIMO EVENTO</span>
+        <strong>Carregando agenda…</strong>
+      </article>
+    </section>
+
+    <section class="calendar-control-deck" aria-label="Controles do calendário">
+      <div class="calendar-context-selects">
         <label><span>Equipe</span><select id="calendar-team"></select></label>
         <label><span>Temporada</span><select id="calendar-season"></select></label>
       </div>
+      <div class="calendar-view-switch" role="group" aria-label="Modo de visualização">
+        <button class="is-active" data-calendar-view="agenda" type="button" aria-pressed="true">☷ Agenda</button>
+        <button data-calendar-view="month" type="button" aria-pressed="false">▦ Mês</button>
+      </div>
+      {% if can_manage %}
+      <button id="calendar-new-event" class="calendar-primary-action" type="button">
+        <span aria-hidden="true">＋</span> Novo evento
+      </button>
+      {% endif %}
     </section>
 
-    <div id="calendar-message" class="alert" role="status" hidden></div>
+    <section class="calendar-filter-bar" aria-label="Filtros">
+      <label class="calendar-search">
+        <span class="sr-only">Buscar evento</span>
+        <input id="calendar-search" type="search" placeholder="Buscar evento ou local">
+      </label>
+      <button class="calendar-filter-chip is-active" data-status-filter="active" type="button">Ativos</button>
+      <button class="calendar-filter-chip" data-status-filter="all" type="button">Todos</button>
+      <button id="calendar-filter-training" class="calendar-filter-chip" type="button" aria-pressed="false">Treinos</button>
+      <button id="calendar-filter-games" class="calendar-filter-chip" type="button" aria-pressed="false">Jogos</button>
+    </section>
 
-    <section class="panel calendar-visual" aria-labelledby="calendar-month-title">
+    <div id="calendar-message" class="calendar-toast" role="status" aria-live="polite" hidden></div>
+
+    <section id="calendar-loading" class="calendar-skeletons" aria-label="Carregando calendário">
+      <span></span><span></span><span></span>
+    </section>
+
+    <section id="calendar-agenda-view" class="calendar-view-panel" aria-labelledby="agenda-title">
+      <div class="calendar-section-heading">
+        <div><span class="calendar-kicker">PRÓXIMOS DIAS</span><h2 id="agenda-title">Agenda</h2></div>
+        <button id="calendar-agenda-today" class="calendar-soft-button" type="button">Ir para hoje</button>
+      </div>
+      <div id="calendar-agenda" class="calendar-agenda-list" aria-live="polite"></div>
+      <button id="calendar-show-past" class="calendar-load-more" type="button">Mostrar eventos passados</button>
+    </section>
+
+    <section id="calendar-month-view" class="calendar-view-panel" aria-labelledby="calendar-month-title" hidden>
       <div class="calendar-month-toolbar">
-        <div><span class="eyebrow">VISUALIZAÇÃO</span><h2 id="calendar-month-title">Calendário mensal</h2></div>
+        <div><span class="calendar-kicker">VISÃO MENSAL</span><h2 id="calendar-month-title">Mês</h2></div>
         <div class="calendar-month-actions">
-          <button id="calendar-previous-month" class="button" type="button" aria-label="Mês anterior">←</button>
-          <button id="calendar-today" class="button" type="button">Hoje</button>
-          <button id="calendar-next-month" class="button" type="button" aria-label="Próximo mês">→</button>
+          <button id="calendar-previous-month" class="calendar-icon-button light" type="button" aria-label="Mês anterior">←</button>
+          <button id="calendar-today" class="calendar-soft-button" type="button">Hoje</button>
+          <button id="calendar-next-month" class="calendar-icon-button light" type="button" aria-label="Próximo mês">→</button>
         </div>
       </div>
       <p id="calendar-month-label" class="calendar-month-label" aria-live="polite"></p>
-      <div class="calendar-legend" aria-label="Legenda de tipos de evento">
-        <span class="calendar-legend-training">Treino</span><span class="calendar-legend-game">Jogo</span><span class="calendar-legend-championship">Campeonato</span><span class="calendar-legend-restriction">Restrição</span><span class="calendar-legend-cancelled">Cancelado/remarcado</span>
-      </div>
       <div class="calendar-weekdays" aria-hidden="true"><span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span></div>
       <div id="calendar-month-grid" class="calendar-month-grid" aria-label="Eventos do mês"></div>
     </section>
 
-    {% if can_manage %}
-    <section class="panel calendar-editor" aria-labelledby="event-editor-title">
-      <div>
-        <span class="eyebrow">CT</span>
-        <h2 id="event-editor-title">Novo evento</h2>
-        <p>Treinos passam a abrir a chamada a partir deste calendário.</p>
-      </div>
-      <form id="calendar-event-form" class="calendar-form">
-        <input id="calendar-event-id" type="hidden">
-        <label><span>Tipo</span><select id="calendar-event-type" required></select></label>
-        <label><span>Status</span><select id="calendar-event-status" required></select></label>
+    <p class="calendar-domain-note">Presença continua sendo o ocorrido e não é alterada pelo planejamento do calendário.</p>
+  </main>
+
+  {% if can_manage %}
+  <button id="calendar-mobile-create" class="calendar-fab" type="button" aria-label="Criar novo evento">＋</button>
+
+  <dialog id="calendar-editor-dialog" class="calendar-sheet calendar-editor-sheet">
+    <form id="calendar-event-form" class="calendar-modern-form">
+      <header class="calendar-sheet-header">
+        <div><span class="calendar-kicker">CT · HM-IME</span><h2 id="event-editor-title">Novo evento</h2></div>
+        <button class="calendar-sheet-close" data-close-dialog="calendar-editor-dialog" type="button" aria-label="Fechar">×</button>
+      </header>
+      <input id="calendar-event-id" type="hidden">
+      <input id="calendar-event-version" type="hidden">
+
+      <fieldset class="calendar-type-picker">
+        <legend>O que vai acontecer?</legend>
+        <div id="calendar-event-type-options" class="calendar-choice-grid"></div>
+        <select id="calendar-event-type" required hidden></select>
+      </fieldset>
+
+      <div class="calendar-form-grid">
+        <label class="calendar-title-field"><span>Título <small>opcional</small></span><input id="calendar-event-title" maxlength="180" placeholder="Ex.: Treino tático"></label>
+        <label id="calendar-opponent-field" hidden><span>Adversário</span><input id="calendar-opponent" maxlength="180" placeholder="Ex.: POLI-USP"></label>
         <label><span>Início</span><input id="calendar-starts-at" type="datetime-local" required></label>
         <label><span>Fim</span><input id="calendar-ends-at" type="datetime-local" required></label>
-        <label><span>Local</span><input id="calendar-location" maxlength="300"></label>
-        <label id="calendar-restriction-field" hidden><span>Restrição formal</span><select id="calendar-restriction-kind"></select></label>
-        <label class="calendar-notes"><span>Observação</span><textarea id="calendar-notes" maxlength="4000" rows="3"></textarea></label>
-        <div class="calendar-form-actions">
-          <button class="button button-primary" type="submit">Salvar evento</button>
-          <button id="calendar-cancel-edit" class="button" type="button" hidden>Cancelar edição</button>
-        </div>
-      </form>
-    </section>
-    {% endif %}
+        <label class="calendar-location-field"><span>Local</span><input id="calendar-location" maxlength="300" placeholder="Ex.: CEPEUSP"></label>
+        <label id="calendar-restriction-field" hidden><span>Motivo da restrição</span><select id="calendar-restriction-kind"></select></label>
+      </div>
 
-    <section class="calendar-period calendar-agenda" aria-labelledby="present-title">
-      <div class="calendar-period-title"><h2 id="present-title">Agora</h2><span id="present-count">0</span></div>
-      <div id="calendar-present" class="calendar-list"></div>
-    </section>
-    <section class="calendar-period" aria-labelledby="future-title">
-      <div class="calendar-period-title"><h2 id="future-title">Próximos</h2><span id="future-count">0</span></div>
-      <div id="calendar-future" class="calendar-list"></div>
-    </section>
-    <section class="calendar-period" aria-labelledby="past-title">
-      <div class="calendar-period-title"><h2 id="past-title">Passados</h2><span id="past-count">0</span></div>
-      <div id="calendar-past" class="calendar-list"></div>
-    </section>
-  </main>
+      <details class="calendar-advanced-fields">
+        <summary>Adicionar observação</summary>
+        <label><span>Observação</span><textarea id="calendar-notes" maxlength="4000" rows="3" placeholder="Informações úteis para o time"></textarea></label>
+      </details>
+
+      <fieldset id="calendar-series-scope-field" class="calendar-series-scope" hidden>
+        <legend>Onde aplicar esta edição?</legend>
+        <label><input name="series_scope" type="radio" value="THIS" checked><span>Só este evento</span></label>
+        <label><input name="series_scope" type="radio" value="FUTURE"><span>Este e os próximos</span></label>
+        <label><input name="series_scope" type="radio" value="ALL"><span>Toda a série ativa</span></label>
+        <small>Edições em lote mantêm os dias da série e alteram horário e conteúdo.</small>
+      </fieldset>
+
+      <div id="calendar-form-conflict" class="calendar-inline-warning" hidden></div>
+      <footer class="calendar-sheet-footer">
+        <button id="calendar-open-series" class="calendar-soft-button" type="button">Repetir treinos</button>
+        <button id="calendar-cancel-edit" class="calendar-soft-button" type="button">Cancelar</button>
+        <button id="calendar-save-event" class="calendar-primary-action" type="submit"><span>Salvar evento</span></button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="calendar-series-dialog" class="calendar-sheet">
+    <form id="calendar-series-form" class="calendar-modern-form">
+      <header class="calendar-sheet-header">
+        <div><span class="calendar-kicker">CRIAÇÃO EM LOTE</span><h2>Repetir treinos</h2></div>
+        <button class="calendar-sheet-close" data-close-dialog="calendar-series-dialog" type="button" aria-label="Fechar">×</button>
+      </header>
+      <div class="calendar-form-grid">
+        <label><span>Primeiro dia</span><input id="series-starts-on" type="date" required></label>
+        <label><span>Último dia</span><input id="series-ends-on" type="date" required></label>
+        <label><span>Horário</span><input id="series-start-time" type="time" required></label>
+        <label><span>Duração em minutos</span><input id="series-duration" type="number" min="1" max="1440" value="120" required></label>
+        <label class="calendar-location-field"><span>Local</span><input id="series-location" maxlength="300"></label>
+      </div>
+      <fieldset><legend>Dias da semana</legend><div id="series-weekdays" class="calendar-weekday-picker"></div></fieldset>
+      <div id="calendar-series-preview" class="calendar-series-preview" aria-live="polite"></div>
+      <footer class="calendar-sheet-footer">
+        <button id="calendar-preview-series" class="calendar-soft-button" type="button">Ver prévia</button>
+        <button id="calendar-create-series" class="calendar-primary-action" type="submit" disabled>Criar série</button>
+      </footer>
+    </form>
+  </dialog>
+  {% endif %}
+
+  <dialog id="calendar-detail-dialog" class="calendar-sheet calendar-detail-sheet">
+    <article id="calendar-event-detail"></article>
+  </dialog>
+
+  <dialog id="calendar-problem-dialog" class="calendar-problem-dialog" aria-labelledby="calendar-problem-title">
+    <div class="calendar-problem-icon" aria-hidden="true">!</div>
+    <h2 id="calendar-problem-title">Não foi possível concluir</h2>
+    <p id="calendar-problem-message"></p>
+    <div class="calendar-problem-suggestion"><strong>Como resolver</strong><p id="calendar-problem-suggestion"></p></div>
+    <small id="calendar-problem-reference"></small>
+    <div class="calendar-dialog-actions">
+      <button id="calendar-problem-retry" class="calendar-primary-action" type="button" hidden>Tentar novamente</button>
+      <button class="calendar-soft-button" data-close-dialog="calendar-problem-dialog" type="button">Voltar ao calendário</button>
+    </div>
+  </dialog>
 </body>
 </html>

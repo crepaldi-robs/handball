@@ -322,7 +322,7 @@ def test_pwa_assets_and_backup(tmp_path):
     worker = client.get("/sw.js")
     assert worker.status_code == 200
     assert worker.headers["service-worker-allowed"] == "/"
-    assert 'handball-shell-v8' in worker.text
+    assert 'handball-shell-v10' in worker.text
     assert '"/app/presencas"' in worker.text
     app_script = client.get("/static/app.js")
     assert app_script.status_code == 200

@@ -156,7 +156,7 @@ def test_shared_cookie_retains_security_contract(tmp_path):
     assert "Path=/" in cookie
 
 
-def test_pwa_v5_limits_offline_navigation_to_hub_and_attendance(tmp_path):
+def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     client, _ = make_client(tmp_path)
     login(client)
 
@@ -165,14 +165,19 @@ def test_pwa_v5_limits_offline_navigation_to_hub_and_attendance(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v8"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v10"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
+    assert '["/app/calendario", "/app/calendario"]' in worker
+    assert '"/static/calendar.js"' in worker
+    assert '"/static/hm-ime-logo.jpg"' in worker
     assert 'pathname === "/app/estatisticas"' in worker
-    assert 'pathname === "/app/calendario"' in worker
+    assert 'pathname === "/app/calendario"' not in worker
     assert 'pathname === "/app/consultas"' in worker
     assert 'pathname.startsWith("/roberto/")' in worker
     assert 'pathname.startsWith("/api/")' in worker
     assert "data-platform-logout" in client.get("/app").text
     assert "lockOfflineRuntime" in platform
     assert "handball:lock-offline" in platform
+    assert 'key.startsWith("handball-calendar-")' in platform
+    assert 'key.startsWith("handball-shell-")' in platform

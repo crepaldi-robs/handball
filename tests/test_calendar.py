@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from handball.core.authorization import Permission, ROLE_PERMISSIONS
@@ -7,6 +8,7 @@ from handball.database.migrations import (
     DatabaseMigrator,
     MIGRATION_V3_CHECKSUM,
     MIGRATION_V4_CHECKSUM,
+    MIGRATION_V7_CHECKSUM,
     logical_fingerprint,
     verify_database,
 )
@@ -58,7 +60,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 6
+    assert status.current_version == 7
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -69,6 +71,9 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         ).fetchone()
         v4_row = connection.execute(
             "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=4"
+        ).fetchone()
+        v7_row = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=7"
         ).fetchone()
         season = connection.execute(
             "SELECT label,starts_on,ends_on FROM seasons WHERE label='2026.2'"
@@ -86,8 +91,16 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
     assert v4_row["name"] == "calendar_attendance_source_of_truth"
     assert v4_row["checksum_sha256"] == MIGRATION_V4_CHECKSUM
     assert tuple(season) == ("2026.2", None, None)
-    assert {"calendar_events", "calendar_justifications"} <= tables
-    assert client.get("/ready").json()["schema_version"] == 6
+    assert v7_row["name"] == "calendar_professional_workflow"
+    assert v7_row["checksum_sha256"] == MIGRATION_V7_CHECKSUM
+    assert {
+        "calendar_events",
+        "calendar_justifications",
+        "calendar_event_series",
+        "calendar_event_transitions",
+        "calendar_command_receipts",
+    } <= tables
+    assert client.get("/ready").json()["schema_version"] == 7
     assert data["before_ids"]
 
 
@@ -237,7 +250,13 @@ def test_calendar_client_uses_season_id_and_preserves_success_feedback() -> None
     )
     assert "season_id: seasonSelect.value" in source
     assert "Evento criado (ID ${saved.id})." in source
-    assert "async function loadCalendar() {\n    const params" in source
+    assert "async function loadCalendar()" in source
+    assert "sessionStorage.setItem(cacheKey(\"snapshot\")" in source
+    assert "renderAttendanceBriefing(event, records)" in source
+    assert "finishTraining(event)" in source
+    assert "Encerrar chamada e concluir" in source
+    assert "Idempotency-Key" in source
+    assert "Salvar mesmo assim" in source
 
 
 def test_attendance_is_opened_only_from_calendar_training_and_is_idempotent(
@@ -278,11 +297,53 @@ def test_attendance_is_opened_only_from_calendar_training_and_is_idempotent(
         f"/api/v1/attendance/trainings/{first['id']}/session",
         headers={"X-CSRF-Token": csrf},
     ).json()["session"]["id"] == first_session
+    confirmed = client.post(
+        f"/api/v1/calendar/events/{first['id']}/confirm",
+        json={"base_version": first["version"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert confirmed.status_code == 200
+    calendar_after_confirmation = client.get(
+        "/api/v1/calendar", params={"team_id": team_id, "season_id": season_id}
+    )
+    confirmed_item = next(
+        item
+        for item in calendar_after_confirmation.json()["items"]
+        if item["id"] == first["id"]
+    )
+    assert confirmed_item["can_finalize_attendance"] is True
+    assert "finish_training" in confirmed_item["available_actions"]
+    prematurely_completed = client.post(
+        f"/api/v1/calendar/events/{first['id']}/complete",
+        json={"base_version": confirmed.json()["version"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert prematurely_completed.status_code == 409
+    assert prematurely_completed.json()["detail"]["code"] == "calendar.attendance_open"
+    finalized = client.post(
+        f"/api/v1/sessions/{first_session}/finalize",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert finalized.status_code == 200
+    completed = client.post(
+        f"/api/v1/calendar/events/{first['id']}/complete",
+        json={"base_version": confirmed.json()["version"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert completed.status_code == 200
     second_session = client.post(
         f"/api/v1/attendance/trainings/{second['id']}/session",
         headers={"X-CSRF-Token": csrf},
     ).json()["session"]["id"]
     assert second_session != first_session
+    calendar = client.get(
+        "/api/v1/calendar", params={"team_id": team_id, "season_id": season_id}
+    )
+    assert calendar.status_code == 200
+    attendance_capabilities = {
+        item["id"]: item["can_view_attendance"] for item in calendar.json()["items"]
+    }
+    assert attendance_capabilities == {first["id"]: True, second["id"]: True}
     payload = client.get(f"/api/v1/sessions/{first_session}")
     assert payload.status_code == 200
     assert payload.json()["calendar_event"]["id"] == first["id"]
@@ -397,3 +458,335 @@ def test_calendar_is_default_deny_for_dev_and_empty_scope(
     assert Permission.CALENDAR_READ_TEAM not in ROLE_PERMISSIONS["DEV"]
     assert client.get("/api/v1/calendar").status_code == 403
     assert client.get("/app/calendario").status_code == 403
+
+
+def test_calendar_v7_theme_idempotency_conflicts_filters_and_problem_details(
+    tmp_path: Path,
+) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    options = client.get("/api/v1/calendar/options").json()
+    theme = options["teams"][0]["visual_identity"]
+    assert theme["slug"] == "hm-ime"
+    assert theme["primary"] == "#D71920"
+    assert theme["monogram"] == "HM"
+    assert theme["logo_url"] == "/static/hm-ime-logo.jpg"
+
+    body = {
+        **_event(team_id, season_id),
+        "title": "Treino tático",
+    }
+    headers = {"X-CSRF-Token": csrf, "Idempotency-Key": "calendar-operation-1"}
+    first = client.post("/api/v1/calendar/events", json=body, headers=headers)
+    repeated = client.post("/api/v1/calendar/events", json=body, headers=headers)
+    assert first.status_code == repeated.status_code == 201
+    assert repeated.json()["id"] == first.json()["id"]
+    assert repeated.json()["title"] == "Treino tático"
+    with manager.read_only_connection() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM calendar_events WHERE title='Treino tático'"
+        ).fetchone()[0] == 1
+
+    changed = client.post(
+        "/api/v1/calendar/events",
+        json={**body, "title": "Outro treino"},
+        headers=headers,
+    )
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "calendar.idempotency_conflict"
+
+    overlap = client.post(
+        "/api/v1/calendar/events/check",
+        json={
+            "team_id": team_id,
+            "starts_at": body["starts_at"],
+            "ends_at": body["ends_at"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert overlap.status_code == 200
+    assert overlap.json()["has_conflicts"] is True
+    assert overlap.json()["items"][0]["id"] == first.json()["id"]
+
+    filtered = client.get(
+        "/api/v1/calendar",
+        params={
+            "team_id": team_id,
+            "season_id": season_id,
+            "event_type": "TRAINING",
+            "status": "PLANNED",
+            "q": "tático",
+        },
+    )
+    assert filtered.status_code == 200
+    assert [item["id"] for item in filtered.json()["items"]] == [first.json()["id"]]
+    item = filtered.json()["items"][0]
+    assert item["display_title"] == "Treino tático"
+    assert item["primary_action"] == "confirm"
+    assert {"confirm", "edit", "cancel"} <= set(item["available_actions"])
+    assert item["can_view_attendance"] is False
+
+    invalid = client.post(
+        "/api/v1/calendar/events",
+        json={**body, "ends_at": body["starts_at"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert invalid.status_code == 422
+    problem = invalid.json()["detail"]
+    assert problem["code"] == "calendar.validation"
+    assert problem["suggestion"]
+    assert problem["request_id"]
+
+
+def test_calendar_v7_lifecycle_is_reversible_versioned_and_has_history(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    created = client.post(
+        "/api/v1/calendar/events",
+        json={**_event(team_id, season_id), "title": "Treino de transição"},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    assert created["version"] == 1
+
+    confirmed = client.post(
+        f"/api/v1/calendar/events/{created['id']}/confirm",
+        json={"reason": "", "base_version": 1},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "CONFIRMED"
+    assert confirmed.json()["version"] == 2
+
+    stale = client.post(
+        f"/api/v1/calendar/events/{created['id']}/complete",
+        json={"reason": "", "base_version": 1},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "calendar.stale_event"
+
+    missing_reason = client.post(
+        f"/api/v1/calendar/events/{created['id']}/cancel",
+        json={"reason": "", "base_version": 2},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert missing_reason.status_code == 400
+    assert missing_reason.json()["detail"]["code"] == "calendar.cancel_reason_required"
+
+    cancelled = client.post(
+        f"/api/v1/calendar/events/{created['id']}/cancel",
+        json={"reason": "Quadra interditada", "base_version": 2},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    assert cancelled["status"] == "CANCELLED"
+    assert cancelled["version"] == 3
+
+    restored = client.post(
+        f"/api/v1/calendar/events/{created['id']}/undo-cancel",
+        json={"reason": "", "base_version": 3},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    assert restored["status"] == "CONFIRMED"
+    assert restored["version"] == 4
+
+    rescheduled = client.post(
+        f"/api/v1/calendar/events/{created['id']}/reschedule",
+        json={
+            "starts_at": "2035-08-08T19:00:00-03:00",
+            "ends_at": "2035-08-08T21:00:00-03:00",
+            "reason": "Ajuste de quadra",
+            "base_version": 4,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert rescheduled.status_code == 200
+    assert rescheduled.json()["event"]["status"] == "RESCHEDULED"
+    assert rescheduled.json()["replacement"]["status"] == "PLANNED"
+    assert rescheduled.json()["replacement"]["id"] != created["id"]
+
+    history = client.get(
+        f"/api/v1/calendar/events/{created['id']}/history"
+    )
+    assert history.status_code == 200
+    assert [item["action"] for item in history.json()["items"]] == [
+        "CREATE",
+        "CONFIRM",
+        "CANCEL",
+        "UNDO_CANCEL",
+        "RESCHEDULE",
+    ]
+    assert client.delete(
+        f"/api/v1/calendar/events/{created['id']}",
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 405
+
+
+def test_calendar_v7_recurring_series_previews_and_creates_transactionally(
+    tmp_path: Path,
+) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    starts_on = "2035-09-03"
+    payload = {
+        "team_id": team_id,
+        "season_id": season_id,
+        "event_type": "TRAINING",
+        "title": "Treino recorrente",
+        "opponent": "",
+        "starts_on": starts_on,
+        "ends_on": "2035-09-17",
+        "start_time": "19:30:00",
+        "duration_minutes": 120,
+        "weekdays": [date.fromisoformat(starts_on).weekday()],
+        "location": "CEPEUSP",
+        "notes": "",
+        "restriction_kind": None,
+    }
+    preview = client.post(
+        "/api/v1/calendar/series/preview",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["count"] == 3
+    assert preview.json()["conflicts"] == []
+
+    created = client.post(
+        "/api/v1/calendar/series",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201
+    assert created.json()["count"] == 3
+    assert created.json()["items"][0]["series_id"] == created.json()["series_id"]
+    with manager.read_only_connection() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM calendar_event_series"
+        ).fetchone()[0] == 1
+
+    anchor = created.json()["items"][1]
+    edited = client.put(
+        f"/api/v1/calendar/series/{created.json()['series_id']}",
+        json={
+            **_event(
+                team_id,
+                season_id,
+                starts_at="2035-09-10T20:00:00-03:00",
+                ends_at="2035-09-10T21:30:00-03:00",
+            ),
+            "title": "Treino recorrente ajustado",
+            "version": anchor["version"],
+            "scope": "FUTURE",
+            "anchor_event_id": anchor["id"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["count"] == 2
+    with manager.read_only_connection() as connection:
+        occurrences = connection.execute(
+            """SELECT title,starts_at FROM calendar_events
+               WHERE series_id=? ORDER BY starts_at""",
+            (created.json()["series_id"],),
+        ).fetchall()
+    assert occurrences[0]["title"] == "Treino recorrente"
+    assert [row["title"] for row in occurrences[1:]] == [
+        "Treino recorrente ajustado",
+        "Treino recorrente ajustado",
+    ]
+    assert all("23:00:00+00:00" in row["starts_at"] for row in occurrences[1:])
+
+    date_shift = client.put(
+        f"/api/v1/calendar/series/{created.json()['series_id']}",
+        json={
+            **_event(
+                team_id,
+                season_id,
+                starts_at="2035-09-11T20:00:00-03:00",
+                ends_at="2035-09-11T21:30:00-03:00",
+            ),
+            "title": "Mudança inválida",
+            "version": edited.json()["items"][0]["version"],
+            "scope": "FUTURE",
+            "anchor_event_id": anchor["id"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert date_shift.status_code == 400
+    assert date_shift.json()["detail"]["code"] == "calendar.series_date_shift"
+
+    conflicting = client.post(
+        "/api/v1/calendar/series",
+        json=payload,
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert conflicting.status_code == 409
+    assert conflicting.json()["detail"]["code"] == "calendar.series_conflict"
+
+
+def test_player_calendar_exposes_response_only_for_next_training(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    events = []
+    for starts_at, ends_at in [
+        ("2035-10-01T19:00:00-03:00", "2035-10-01T21:00:00-03:00"),
+        ("2035-10-03T19:00:00-03:00", "2035-10-03T21:00:00-03:00"),
+    ]:
+        events.append(
+            client.post(
+                "/api/v1/calendar/events",
+                json=_event(
+                    team_id,
+                    season_id,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                ),
+                headers={"X-CSRF-Token": csrf},
+            ).json()
+        )
+    logout(client)
+    login(client, "player", data["passwords"]["player"])
+    listed = client.get(
+        "/api/v1/calendar",
+        params={"team_id": team_id, "season_id": season_id},
+    ).json()["items"]
+    assert [item["id"] for item in listed] == [item["id"] for item in events]
+    assert listed[0]["is_next_player_training"] is True
+    assert listed[0]["primary_action"] == "respond"
+    assert "respond" in listed[0]["available_actions"]
+    assert listed[1]["is_next_player_training"] is False
+    assert "respond" not in listed[1]["available_actions"]
+
+
+def test_calendar_page_has_modern_touch_journey_without_hard_delete(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    login(client, "ct", data["passwords"]["ct"])
+    page = client.get("/app/calendario")
+    assert page.status_code == 200
+    assert "calendar-brand-mark has-image" in page.text
+    styles = client.get("/static/styles.css")
+    assert styles.status_code == 200
+    assert 'url("/static/hm-ime-logo.jpg")' in styles.text
+    for identifier in (
+        "calendar-new-event",
+        "calendar-agenda-view",
+        "calendar-month-view",
+        "calendar-editor-dialog",
+        "calendar-series-dialog",
+        "calendar-detail-dialog",
+        "calendar-problem-dialog",
+        "calendar-mobile-create",
+    ):
+        assert f'id="{identifier}"' in page.text
+    assert "Excluir evento" not in page.text
+    assert 'viewport-fit=cover' in page.text

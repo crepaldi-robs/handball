@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v8";
+const CACHE_NAME = "handball-shell-v10";
 const SHELL = [
   "/app",
   "/app/presencas",
@@ -8,6 +8,8 @@ const SHELL = [
   "/static/platform.js",
   "/static/app.js",
   "/static/player-attendance.js",
+  "/static/calendar.js",
+  "/static/hm-ime-logo.jpg",
   "/static/manifest.webmanifest",
   "/static/icon-192.png",
   "/static/icon-512.png",
@@ -16,6 +18,7 @@ const CACHEABLE_PATHS = new Set(SHELL);
 const OFFLINE_NAVIGATIONS = new Map([
   ["/app", "/app"],
   ["/app/presencas", "/app/presencas"],
+  ["/app/calendario", "/app/calendario"],
 ]);
 
 function isNetworkOnly(pathname) {
@@ -23,8 +26,6 @@ function isNetworkOnly(pathname) {
     || pathname === "/logout"
     || pathname === "/app/estatisticas"
     || pathname.startsWith("/app/estatisticas/")
-    || pathname === "/app/calendario"
-    || pathname.startsWith("/app/calendario/")
     || pathname === "/app/consultas"
     || pathname.startsWith("/app/consultas/")
     || pathname === "/roberto"
@@ -54,7 +55,17 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== self.location.origin || isNetworkOnly(url.pathname)) return;
   if (request.mode === "navigate" && OFFLINE_NAVIGATIONS.has(url.pathname)) {
     const fallback = OFFLINE_NAVIGATIONS.get(url.pathname);
-    event.respondWith(fetch(request).catch(() => caches.match(fallback)));
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((saved) => saved || caches.match(fallback))),
+    );
     return;
   }
   if (url.pathname.startsWith("/static/") && CACHEABLE_PATHS.has(url.pathname)) {
