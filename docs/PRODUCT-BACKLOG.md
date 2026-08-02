@@ -51,6 +51,8 @@ Princípios:
 7. [ ] Avaliar o acervo do Drive quando o arquivo `.zip` for disponibilizado.
 8. [ ] Decidir entre manter referências ao Drive, importar parte do acervo ou fazer
    uma migração completa.
+9. [ ] Implementar a Trilha 3 (seção 9): separar elenco, chamada e presença por
+   time — `DB_MIGRATION` própria, autorizada e executada à parte.
 
 ## 3. Jornada real do CT já identificada
 
@@ -776,3 +778,77 @@ As decisões serão respondidas uma por vez e incorporadas a este documento:
 - mudança do banco persistente sem fluxo separado e autorização explícita de
   `DB_MIGRATION`;
 - publicação ou implantação em produção.
+
+## 9. Trilha 3 — Elenco, chamada e presença por time
+
+**Estado:** [ ] Pendente. Nasceu da conversa sobre melhorar a criação de
+usuário associada a time (ver `docs/HM-IME-USUARIOS-E-AUTORIZACAO.md` §7 e
+§11). A parte simples dessa conversa — DEV cria time, DEV/CT criam conta já
+associada a um time, CT cria jogador só dentro do próprio time — foi
+implementada sem migração de banco. Esta trilha cobre a parte que ficou de
+fora por exigir mudança de schema nas tabelas mais antigas e sensíveis do
+banco.
+
+### Motivação
+
+A camada de identidade (`teams`, `seasons`, `team_memberships`,
+`player_user_links`) já é multi-time desde a migração v2. O elenco
+operacional — `team_members`, `training_sessions`, `attendance_records`,
+`attendance_audit_log` — continua sendo uma lista única e global, sem coluna
+de time, mantida assim de propósito na v2 para preservar IDs históricos. Isso
+significa que, hoje, todo time criado depois do HM-IME nasce sem nenhum
+atleta "disponível": chamada, presença, histórico, resumo do CT, exportação
+`.csv` e auditoria esportiva continuam todos misturados numa única lista,
+independente de quantos times existirem na camada de identidade.
+
+### Mudança de schema (`DB_MIGRATION` v11, separada e autorizada)
+
+Mesmo rigor operacional da migração v2 descrita em
+`docs/HM-IME-USUARIOS-E-AUTORIZACAO.md` §10: versionada, transacional,
+explícita, precedida de backup, validada com `PRAGMA quick_check` e
+`foreign_key_check`, e ativada em produção separadamente do deploy de
+código (regras 13 e 19 do AGENTS.md — decisão de uma pessoa, nunca do
+agente).
+
+- `team_members` ganha `team_id NOT NULL` (FK `teams`); a unicidade de nome
+  deixa de ser global e passa a ser por `(team_id, name)`.
+- `training_sessions` ganha `team_id NOT NULL`; a unicidade de data passa a
+  ser por `(team_id, training_date)` em vez de só `training_date`.
+- `attendance_records` e `attendance_audit_log` permanecem ligados via
+  `session_id`/`member_id`, mas os índices e `FOREIGN KEY`s em
+  `handball/database/migrations.py` (`EXPECTED_COLUMN_LAYOUTS`,
+  `EXPECTED_UNIQUE_CONSTRAINTS`, `EXPECTED_FOREIGN_KEYS`,
+  `REQUIRED_TABLE_SQL_FRAGMENTS`, `DOMAIN_TABLES`) precisam ser revisados
+  para refletir as novas colunas.
+- Backfill: toda linha existente recebe o `team_id` do time HM-IME,
+  preservando IDs e histórico — mesmo princípio da v2, sem apagar nem
+  recriar o banco do usuário (regra 5 do AGENTS.md).
+
+### Mudança de aplicação
+
+- `handball/database/repositories/attendance.py` e todo o
+  `handball/modules/presencas` (chamada, histórico, resumo do CT,
+  exportação `.csv`, auditoria) passam a filtrar por `team_id`, seguindo o
+  mesmo padrão que `calendario`/`playbook` já usam com `context.team_ids`.
+- `add_member`/`POST /api/v1/members` (tela "Elenco") ganha seleção de time
+  obrigatória e passa a criar `people` + `player_user_links` +
+  `team_memberships` junto com o `team_members`, fechando a lacuna descrita
+  em `docs/HM-IME-USUARIOS-E-AUTORIZACAO.md` §11: hoje, um atleta adicionado
+  pela tela de elenco nunca aparece como "disponível" para ganhar conta,
+  porque só a migração v2 criou esse vínculo para o elenco original.
+- O cofre offline, que já reserva `team_id` no namespace
+  (`docs/HM-IME-USUARIOS-E-AUTORIZACAO.md` §9), passa a usar o valor real
+  por time em vez de um valor implícito único.
+- Atualizar `docs/HM-IME-USUARIOS-E-AUTORIZACAO.md`, removendo a limitação
+  de elenco único documentada em §11 depois que a migração for ativada.
+
+### Critério de pronto
+
+- dois times distintos têm elencos, chamadas, presenças, históricos e
+  exportações completamente independentes;
+- nenhum ID histórico do HM-IME muda;
+- `PRAGMA quick_check` retorna `ok` e `foreign_key_check` vazio após a
+  migração, validados numa cópia antes de qualquer ativação real;
+- a ativação em produção é um passo humano explícito, registrado
+  separadamente da entrega de código, como já ocorre com a migração v8 do
+  Playbook (seção 2, item 5).

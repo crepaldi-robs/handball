@@ -19,6 +19,7 @@ class Permission(StrEnum):
     ATTENDANCE_REOPEN = "attendance.reopen"
     MEMBERS_READ_TEAM = "members.read.team"
     MEMBERS_MANAGE = "members.manage"
+    PLAYER_ACCOUNTS_MANAGE = "player_accounts.manage"
     AUDIT_READ_SPORT = "audit.read.sport"
     EXPORT_READ_TEAM = "export.read.team"
     BACKUP_DOWNLOAD = "backup.download"
@@ -42,6 +43,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "CT": frozenset({Permission.ATTENDANCE_READ_TEAM, Permission.ATTENDANCE_WRITE,
                      Permission.ATTENDANCE_FINALIZE, Permission.ATTENDANCE_REOPEN,
                      Permission.MEMBERS_READ_TEAM, Permission.MEMBERS_MANAGE,
+                     Permission.PLAYER_ACCOUNTS_MANAGE,
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
                      Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
                      Permission.CALENDAR_MANAGE, Permission.CALENDAR_VISIBILITY_MANAGE,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
@@ -27,6 +28,7 @@ def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, obje
     )
     passwords = {"bob": "senha-bob", "ct": "senha-ct", "player": "senha-player", "dev": "senha-dev"}
     with manager.unit_of_work() as unit_of_work:
+        hm_ime_team_id = int(unit_of_work.identity.list_teams()[0]["id"])
         player = unit_of_work.identity.list_people_and_players()["players"][0]
         player_id = unit_of_work.identity.create_user(
             person_id=int(player["id"]),
@@ -34,6 +36,7 @@ def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, obje
             password_hash=PasswordHasher().hash(passwords["player"]),
             roles=["PLAYER"],
             linked_player_id=int(player["team_member_id"]),
+            team_id=hm_ime_team_id,
             actor_user_id=1,
         )
         ct_person = unit_of_work.identity.create_person("Comissão Teste", "CT Teste")
@@ -43,6 +46,7 @@ def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, obje
             password_hash=PasswordHasher().hash(passwords["ct"]),
             roles=["CT"],
             linked_player_id=None,
+            team_id=hm_ime_team_id,
             actor_user_id=1,
         )
         dev_person = unit_of_work.identity.create_person("Dev Teste")
@@ -77,6 +81,7 @@ def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, obje
         "ct_id": ct_id,
         "dev_id": dev_id,
         "before_ids": [int(item["id"]) for item in before_ids],
+        "team_id": hm_ime_team_id,
     }
 
 
@@ -348,6 +353,7 @@ def test_dev_admin_create_requires_csrf_and_player_link(tmp_path: Path) -> None:
         "temporary_password": "temporaria",
         "roles": ["CT"],
         "full_name": "Nova Integrante CT",
+        "team_id": data["team_id"],
     }
     assert client.post("/api/v1/admin/users", json=body).status_code == 403
     created = client.post(
@@ -363,13 +369,25 @@ def test_dev_admin_create_requires_csrf_and_player_link(tmp_path: Path) -> None:
             "temporary_password": "temporaria",
             "roles": ["PLAYER"],
             "full_name": "Jogador sem vínculo",
+            "team_id": data["team_id"],
         },
         headers={"X-CSRF-Token": csrf},
     )
     assert invalid_player.status_code == 400
+    missing_team = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "ct-sem-time",
+            "temporary_password": "temporaria",
+            "roles": ["CT"],
+            "full_name": "CT sem time",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert missing_team.status_code == 400
     promoted = client.put(
-        f"/api/v1/admin/users/{data['dev_id']}/roles",
-        json={"roles": ["DEV", "CT"]},
+        f"/api/v1/admin/users/{data['ct_id']}/roles",
+        json={"roles": ["CT", "DEV"]},
         headers={"X-CSRF-Token": csrf},
     )
     assert promoted.status_code == 200
@@ -456,3 +474,191 @@ def test_offline_assets_are_namespaced_and_logout_locks_without_cross_user_unloc
     assert "O cofre pertence a outro usuário ou time" in app_js
     assert 'new Event("handball:lock-offline")' in platform_js
     assert "objectStore(\"secure\").clear()" not in platform_js
+
+
+def test_dev_creates_team_and_ct_account_scoped_to_it(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "bob", data["passwords"]["bob"])
+    created_team = client.post(
+        "/api/v1/admin/teams",
+        json={"code": "HM_IME_SUB17", "slug": "hm-ime-sub17", "display_name": "HM-IME Sub-17"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created_team.status_code == 201, created_team.text
+    team_id = created_team.json()["id"]
+    assert team_id != data["team_id"]
+
+    created_ct = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "ct-sub17",
+            "temporary_password": "temporaria",
+            "roles": ["CT"],
+            "full_name": "CT Sub-17",
+            "team_id": team_id,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created_ct.status_code == 201, created_ct.text
+    with manager.read_only_connection() as connection:
+        membership = connection.execute(
+            "SELECT team_id FROM team_memberships WHERE person_id="
+            "(SELECT person_id FROM users WHERE username='ct-sub17')"
+        ).fetchone()
+    assert int(membership["team_id"]) == team_id
+
+    # o time novo ainda não tem elenco vinculado (limitação documentada em
+    # docs/HM-IME-USUARIOS-E-AUTORIZACAO.md §11 e no backlog)
+    available = client.get(f"/api/v1/admin/teams/{team_id}/available-players", headers={"X-CSRF-Token": csrf})
+    assert available.status_code == 200
+    assert available.json()["items"] == []
+
+    # o time HM-IME original continua funcionando sem o lookup fixo antigo
+    created_hm_ime_ct = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "outro-ct-hm-ime",
+            "temporary_password": "temporaria",
+            "roles": ["CT"],
+            "full_name": "Outro CT HM-IME",
+            "team_id": data["team_id"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created_hm_ime_ct.status_code == 201, created_hm_ime_ct.text
+
+
+def test_dev_create_player_rejects_team_mismatch(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "bob", data["passwords"]["bob"])
+    other_team = client.post(
+        "/api/v1/admin/teams",
+        json={"code": "OUTRO", "slug": "outro", "display_name": "Outro Time"},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        available = unit_of_work.identity.available_player_registrations()
+    assert available
+    mismatched = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "jogador-time-errado",
+            "temporary_password": "temporaria",
+            "roles": ["PLAYER"],
+            "linked_player_id": available[0]["id"],
+            "team_id": other_team["id"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert mismatched.status_code == 400
+
+
+def test_ct_creates_player_account_within_own_team(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    available = client.get(f"/api/v1/team/available-players?team_id={data['team_id']}")
+    assert available.status_code == 200
+    items = available.json()["items"]
+    assert items
+    chosen = items[0]
+    created = client.post(
+        "/api/v1/team/player-accounts",
+        json={
+            "team_id": data["team_id"],
+            "team_member_id": chosen["id"],
+            "username": "jogador-via-ct",
+            "temporary_password": "temporaria",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201, created.text
+    user_id = created.json()["id"]
+    with manager.read_only_connection() as connection:
+        roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=?", (user_id,))}
+    assert roles == {"PLAYER"}
+    logout(client)
+    login(client, "jogador-via-ct", "temporaria")
+    assert client.get("/api/v1/me").json()["linked_player_id"] == chosen["id"]
+
+
+def test_ct_cannot_create_player_account_outside_own_team(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    dev_csrf = login(client, "bob", data["passwords"]["bob"])
+    other_team = client.post(
+        "/api/v1/admin/teams",
+        json={"code": "OUTRO2", "slug": "outro-2", "display_name": "Outro Time 2"},
+        headers={"X-CSRF-Token": dev_csrf},
+    ).json()
+    logout(client)
+    ct_csrf = login(client, "ct", data["passwords"]["ct"])
+    assert client.get(f"/api/v1/team/available-players?team_id={other_team['id']}").status_code == 403
+    denied_create = client.post(
+        "/api/v1/team/player-accounts",
+        json={"team_id": other_team["id"], "team_member_id": 1, "username": "x", "temporary_password": "temporaria"},
+        headers={"X-CSRF-Token": ct_csrf},
+    )
+    assert denied_create.status_code == 403
+
+
+def test_player_cannot_access_team_player_account_endpoints(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "player", data["passwords"]["player"])
+    assert client.get(f"/api/v1/team/available-players?team_id={data['team_id']}").status_code == 403
+    denied = client.post(
+        "/api/v1/team/player-accounts",
+        json={"team_id": data["team_id"], "team_member_id": 1, "username": "x", "temporary_password": "temporaria"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert denied.status_code == 403
+
+
+def test_teams_admin_endpoints_are_dev_only(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    login(client, "ct", data["passwords"]["ct"])
+    assert client.get("/api/v1/admin/teams").status_code == 403
+    csrf = client.get("/api/v1/auth/session").json()["csrf_token"]
+    assert client.post(
+        "/api/v1/admin/teams",
+        json={"code": "X", "slug": "x", "display_name": "X"},
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 403
+
+
+def test_set_roles_requires_existing_team_membership_for_ct(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    with manager.unit_of_work() as unit_of_work:
+        with pytest.raises(ValueError, match="vínculo"):
+            unit_of_work.identity.set_roles(int(data["dev_id"]), ["CT"], actor_user_id=1)
+
+
+def test_admin_usuarios_page_renders_teams_panel_and_team_select(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    login(client, "bob", data["passwords"]["bob"])
+    page = client.get("/app/admin/usuarios")
+    assert page.status_code == 200
+    body = page.text
+    assert "Times" in body
+    assert "Criar time" in body
+    assert 'id="new-team-code"' in body
+    assert 'id="new-user-team"' in body
+    assert 'id="new-linked-player"' in body
+    assert "HM-IME" in body
+
+
+def test_ct_roster_page_renders_player_account_panel(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    login(client, "ct", data["passwords"]["ct"])
+    page = client.get("/app/presencas")
+    assert page.status_code == 200
+    body = page.text
+    assert 'id="player-account-form"' in body
+    assert "Criar conta de jogador" in body
+    assert 'id="player-account-member"' in body
+
+
+def test_player_roster_page_has_no_player_account_panel(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    login(client, "player", data["passwords"]["player"])
+    page = client.get("/app/presencas")
+    assert page.status_code == 200
+    assert 'id="player-account-form"' not in page.text

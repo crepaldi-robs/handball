@@ -143,6 +143,18 @@
             <label><span>Posição</span><input id="member-position" required maxlength="40" placeholder="Ex.: GOL, PD/PE"></label>
             <button class="button button-primary" type="submit">Adicionar</button>
           </form>
+          {% if 'player_accounts.manage' in session.permissions %}
+          <form id="player-account-form" class="panel stack-form compact-form" data-team-ids="{{ session.team_ids|join(',') }}">
+            <h2>Criar conta de jogador</h2>
+            {% if session.team_ids|length > 1 %}
+            <label><span>Time</span><select id="player-account-team">{% for team_id in session.team_ids %}<option value="{{ team_id }}">Time #{{ team_id }}</option>{% endfor %}</select></label>
+            {% endif %}
+            <label><span>Jogador disponível</span><select id="player-account-member"><option value="">Carregando…</option></select></label>
+            <label><span>Usuário</span><input id="player-account-username" maxlength="80"></label>
+            <label><span>Senha temporária</span><input id="player-account-password" type="password" autocomplete="new-password"></label>
+            <button class="button button-primary" type="submit">Criar conta</button>
+          </form>
+          {% endif %}
         </div>
       </section>
 

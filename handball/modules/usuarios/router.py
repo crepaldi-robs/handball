@@ -7,10 +7,25 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from handball.core.auth import require_write_session, session_from_request
-from handball.core.authorization import AccessContext, Permission, require_authenticated_user, require_permission
+from handball.core.authorization import (
+    AccessContext,
+    Permission,
+    require_authenticated_user,
+    require_permission,
+    require_team_access,
+)
 from handball.core.organization import ORGANIZATION
 
-from .schemas import OwnPasswordChange, PermissionGrantUpdate, RoleUpdate, TemporaryPasswordReset, UserCreate
+from .schemas import (
+    OwnPasswordChange,
+    PermissionGrantUpdate,
+    PlayerAccountCreate,
+    RoleUpdate,
+    TeamActiveUpdate,
+    TeamCreate,
+    TemporaryPasswordReset,
+    UserCreate,
+)
 from .service import IdentityService
 
 
@@ -51,7 +66,13 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
         return templates.TemplateResponse(
             request,
             "usuarios/admin.html",
-            {"session": session, "users": service.list_users(), "options": service.options(), "organization": ORGANIZATION},
+            {
+                "session": session,
+                "users": service.list_users(),
+                "options": service.options(),
+                "teams": service.list_teams(),
+                "organization": ORGANIZATION,
+            },
         )
 
     @router.get("/api/v1/me")
@@ -88,6 +109,46 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
     @router.get("/api/v1/admin/options")
     def options(_: Annotated[AccessContext, Depends(require_permission(Permission.USERS_MANAGE))]) -> dict[str, Any]:
         return service.options()
+
+    @router.get("/api/v1/admin/teams")
+    def teams(_: Annotated[AccessContext, Depends(require_permission(Permission.USERS_MANAGE))]) -> dict[str, Any]:
+        return {"items": service.list_teams()}
+
+    @router.post("/api/v1/admin/teams", status_code=201)
+    def create_team(body: TeamCreate, context: Annotated[AccessContext, Depends(_write_permission(Permission.USERS_MANAGE))]) -> dict[str, Any]:
+        try:
+            return service.create_team(body, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/v1/admin/teams/{team_id}/active")
+    def set_team_active(team_id: int, body: TeamActiveUpdate, context: Annotated[AccessContext, Depends(_write_permission(Permission.USERS_MANAGE))]) -> dict[str, bool]:
+        try:
+            service.set_team_active(team_id, body.active, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"updated": True}
+
+    @router.get("/api/v1/admin/teams/{team_id}/available-players")
+    def team_available_players(team_id: int, _: Annotated[AccessContext, Depends(require_permission(Permission.USERS_MANAGE))]) -> dict[str, Any]:
+        return {"items": service.available_players_for_team(team_id)}
+
+    @router.get("/api/v1/team/available-players")
+    def own_team_available_players(
+        team_id: int, context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYER_ACCOUNTS_MANAGE))]
+    ) -> dict[str, Any]:
+        require_team_access(team_id, context)
+        return {"items": service.available_players_for_team(team_id)}
+
+    @router.post("/api/v1/team/player-accounts", status_code=201)
+    def create_player_account(
+        body: PlayerAccountCreate,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYER_ACCOUNTS_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.create_player_account_as_ct(body, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/api/v1/admin/audit")
     def security_audit(_: Annotated[AccessContext, Depends(require_permission(Permission.USERS_MANAGE))], limit: int = 500) -> dict[str, Any]:

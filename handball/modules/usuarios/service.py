@@ -7,8 +7,8 @@ from typing import Any
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
-from handball.core.authorization import AccessContext
-from handball.core.organization import ORGANIZATION
+from handball.core.authorization import AccessContext, require_team_access
+from handball.core.organization import CURRENT_SEASON_LABEL, ORGANIZATION
 from handball.database.contracts import UnitOfWorkFactoryContract
 
 
@@ -94,6 +94,48 @@ class IdentityService:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             return unit_of_work.identity.available_player_registrations()
 
+    def list_teams(self) -> list[dict[str, Any]]:
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.identity.list_teams()
+
+    def create_team(self, body: Any, actor: AccessContext) -> dict[str, Any]:
+        with self._unit_of_work_factory() as unit_of_work:
+            team_id = unit_of_work.identity.create_team(
+                code=body.code,
+                slug=body.slug,
+                display_name=body.display_name,
+                season_label=body.season_label or CURRENT_SEASON_LABEL,
+                actor_user_id=actor.user_id,
+            )
+        return {"id": team_id}
+
+    def set_team_active(self, team_id: int, active: bool, actor: AccessContext) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            unit_of_work.identity.set_team_active(team_id, active, actor_user_id=actor.user_id)
+
+    def available_players_for_team(self, team_id: int) -> list[dict[str, Any]]:
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.identity.available_players_for_team(team_id)
+
+    def create_player_account_as_ct(self, body: Any, actor: AccessContext) -> dict[str, Any]:
+        require_team_access(body.team_id, actor)
+        if not body.temporary_password:
+            raise ValueError("A senha não pode ficar vazia.")
+        with self._unit_of_work_factory() as unit_of_work:
+            person_id = unit_of_work.identity.person_id_for_player(body.team_member_id)
+            if person_id is None:
+                raise ValueError("Atleta não possui vínculo de pessoa.")
+            user_id = unit_of_work.identity.create_user(
+                person_id=person_id,
+                username=body.username,
+                password_hash=self._hasher.hash(body.temporary_password),
+                roles=["PLAYER"],
+                linked_player_id=body.team_member_id,
+                team_id=body.team_id,
+                actor_user_id=actor.user_id,
+            )
+            return unit_of_work.identity.get_user(user_id) or {"id": user_id}
+
     def register_player(self, *, team_member_id: int, username: str, password: str) -> int:
         if not password:
             raise ValueError("A senha não pode ficar vazia.")
@@ -128,6 +170,7 @@ class IdentityService:
                 password_hash=self._hasher.hash(body.temporary_password),
                 roles=body.roles,
                 linked_player_id=body.linked_player_id,
+                team_id=body.team_id,
                 actor_user_id=actor.user_id,
             )
             return unit_of_work.identity.get_user(user_id) or {"id": user_id}

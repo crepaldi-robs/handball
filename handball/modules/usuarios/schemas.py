@@ -11,6 +11,25 @@ class UserCreate(BaseModel):
     full_name: str | None = Field(default=None, max_length=200)
     display_name: str | None = Field(default=None, max_length=120)
     linked_player_id: int | None = None
+    team_id: int | None = None
+
+
+class TeamCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    slug: str = Field(min_length=1, max_length=60)
+    display_name: str = Field(min_length=1, max_length=120)
+    season_label: str | None = Field(default=None, max_length=20)
+
+
+class TeamActiveUpdate(BaseModel):
+    active: bool
+
+
+class PlayerAccountCreate(BaseModel):
+    team_id: int
+    team_member_id: int
+    username: str = Field(min_length=1, max_length=80)
+    temporary_password: str = Field(min_length=1, max_length=1024)
 
 
 class RoleUpdate(BaseModel):

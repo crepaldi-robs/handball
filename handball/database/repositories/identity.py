@@ -47,6 +47,69 @@ class IdentityRepository:
         ).fetchone()
         return dict(row) if row else None
 
+    def list_teams(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT id,code,slug,display_name,active FROM teams ORDER BY display_name COLLATE NOCASE"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_team(
+        self,
+        *,
+        code: str,
+        slug: str,
+        display_name: str,
+        season_label: str,
+        actor_user_id: int,
+    ) -> int:
+        code = code.strip().upper()
+        slug = slug.strip().lower()
+        display_name = display_name.strip()
+        season_label = season_label.strip()
+        if not code or not slug or not display_name or not season_label:
+            raise ValueError("Código, slug, nome e temporada do time são obrigatórios.")
+        now = now_iso()
+        try:
+            cursor = self.connection.execute(
+                """INSERT INTO teams(code,slug,display_name,active,created_at,updated_at)
+                   VALUES(?,?,?,1,?,?)""",
+                (code, slug, display_name, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Já existe um time com esse código ou slug.") from exc
+        team_id = int(cursor.lastrowid)
+        self.connection.execute(
+            """INSERT INTO seasons(team_id,label,starts_on,ends_on,active)
+               VALUES(?,?,NULL,NULL,1)""",
+            (team_id, season_label),
+        )
+        self.audit_event(
+            actor_user_id=actor_user_id,
+            action="team.create",
+            entity="team",
+            target_id=str(team_id),
+            origin="admin",
+            after={"code": code, "slug": slug, "display_name": display_name, "season_label": season_label},
+        )
+        return team_id
+
+    def set_team_active(self, team_id: int, active: bool, *, actor_user_id: int) -> None:
+        now = now_iso()
+        updated = self.connection.execute(
+            "UPDATE teams SET active=?,updated_at=? WHERE id=?",
+            (1 if active else 0, now, team_id),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("Time inexistente.")
+        self.audit_event(
+            actor_user_id=actor_user_id,
+            action="team.active.update",
+            entity="team",
+            target_id=str(team_id),
+            origin="admin",
+            after={"active": bool(active)},
+        )
+
     def get_user(self, user_id: int) -> dict[str, Any] | None:
         row = self.connection.execute(
             """SELECT u.*, p.full_name, p.display_name
@@ -302,6 +365,22 @@ class IdentityRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def available_players_for_team(self, team_id: int) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """SELECT tm.id,tm.name,tm.position
+               FROM team_members tm
+               JOIN player_user_links pul ON pul.team_member_id=tm.id
+               JOIN people p ON p.id=pul.person_id
+               JOIN team_memberships tms ON tms.person_id=p.id
+               WHERE tm.active=1 AND p.active=1 AND pul.user_id IS NULL
+                 AND tms.team_id=? AND tms.status='ACTIVE'
+                 AND (tms.valid_from IS NULL OR tms.valid_from<=date('now'))
+                 AND (tms.valid_to IS NULL OR tms.valid_to>=date('now'))
+               ORDER BY tm.name COLLATE NOCASE""",
+            (int(team_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def register_player(
         self, *, team_member_id: int, username: str, password_hash: str
     ) -> int:
@@ -375,14 +454,26 @@ class IdentityRepository:
         roles: Iterable[str],
         linked_player_id: int | None,
         actor_user_id: int,
+        team_id: int | None = None,
     ) -> int:
         normalized_roles = {str(role).upper() for role in roles}
         if not normalized_roles or not normalized_roles <= {"DEV", "CT", "PLAYER"}:
             raise ValueError("Papéis inválidos.")
         if "PLAYER" in normalized_roles and linked_player_id is None:
             raise ValueError("PLAYER exige vínculo com atleta.")
+        if normalized_roles & {"CT", "PLAYER"} and team_id is None:
+            raise ValueError("Selecione um time.")
         if self.connection.execute("SELECT 1 FROM users WHERE person_id=?", (person_id,)).fetchone():
             raise ValueError("A pessoa já possui conta.")
+        if "PLAYER" in normalized_roles and linked_player_id is not None:
+            player_team = self.connection.execute(
+                """SELECT 1 FROM player_user_links pul
+                   JOIN team_memberships tms ON tms.person_id=pul.person_id
+                   WHERE pul.team_member_id=? AND tms.team_id=? AND tms.status='ACTIVE'""",
+                (linked_player_id, team_id),
+            ).fetchone()
+            if player_team is None:
+                raise ValueError("O atleta não pertence ao time selecionado.")
         now = now_iso()
         try:
             cursor = self.connection.execute(
@@ -400,22 +491,23 @@ class IdentityRepository:
                 (user_id, role),
             )
         if "CT" in normalized_roles:
+            team = self.connection.execute(
+                "SELECT id FROM teams WHERE id=? AND active=1", (team_id,)
+            ).fetchone()
+            if team is None:
+                raise ValueError("Time inexistente ou inativo.")
+            season = self.connection.execute(
+                "SELECT id FROM seasons WHERE team_id=? AND active=1 ORDER BY id DESC LIMIT 1",
+                (team[0],),
+            ).fetchone()
+            if season is None:
+                raise ValueError("O time selecionado não possui temporada ativa.")
             membership = self.connection.execute(
                 """SELECT tm.id FROM team_memberships tm
-                   JOIN teams t ON t.id=tm.team_id
-                   JOIN seasons s ON s.id=tm.season_id
-                   WHERE tm.person_id=? AND t.code='HM_IME' AND s.active=1
-                   ORDER BY s.id DESC LIMIT 1""",
-                (person_id,),
+                   WHERE tm.person_id=? AND tm.team_id=? AND tm.season_id=?""",
+                (person_id, team[0], season[0]),
             ).fetchone()
             if membership is None:
-                team = self.connection.execute(
-                    "SELECT id FROM teams WHERE code='HM_IME'"
-                ).fetchone()
-                season = self.connection.execute(
-                    "SELECT id FROM seasons WHERE team_id=? AND active=1 ORDER BY id DESC LIMIT 1",
-                    (team[0],),
-                ).fetchone()
                 now = now_iso()
                 cursor_membership = self.connection.execute(
                     """INSERT INTO team_memberships(
@@ -479,22 +571,10 @@ class IdentityRepository:
                 (user["person_id"],),
             ).fetchall()
             if not memberships and "CT" in normalized:
-                team = self.connection.execute(
-                    "SELECT id FROM teams WHERE code='HM_IME'"
-                ).fetchone()
-                season = self.connection.execute(
-                    "SELECT id FROM seasons WHERE team_id=? AND active=1 ORDER BY id DESC LIMIT 1",
-                    (team[0],),
-                ).fetchone()
-                now = now_iso()
-                cursor = self.connection.execute(
-                    """INSERT INTO team_memberships(
-                           person_id,team_id,season_id,status,valid_from,valid_to,
-                           created_at,updated_at
-                       ) VALUES(?,?,?,'ACTIVE',NULL,NULL,?,?)""",
-                    (user["person_id"], team[0], season[0], now, now),
+                raise ValueError(
+                    "Pessoa sem vínculo com nenhum time; use a criação de conta com "
+                    "seleção de time para o primeiro papel CT."
                 )
-                memberships = [(int(cursor.lastrowid),)]
             for membership in memberships:
                 self.connection.execute(
                     "DELETE FROM membership_roles WHERE membership_id=? AND role_code IN('CT','PLAYER')",
@@ -507,7 +587,7 @@ class IdentityRepository:
                 if role == "PLAYER" and linked_player is None:
                     continue
                 if not memberships:
-                    raise ValueError("A pessoa não possui vínculo com o HM-IME.")
+                    raise ValueError("A pessoa não possui vínculo com nenhum time.")
                 self.connection.execute(
                     "INSERT OR IGNORE INTO membership_roles(membership_id,role_code) VALUES(?,?)",
                     (memberships[0][0], role),

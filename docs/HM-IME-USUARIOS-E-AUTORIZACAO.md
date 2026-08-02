@@ -39,6 +39,7 @@ As permissões são constantes tipadas em `handball/core/authorization.py`. O ma
 | `attendance.reopen` | não | sim | não |
 | `members.read.team` | não | sim | não |
 | `members.manage` | não | sim | não |
+| `player_accounts.manage` | não | sim | não |
 | `audit.read.sport` | não | sim | não |
 | `export.read.team` | não | sim | não |
 | `backup.download` | não | sim | não |
@@ -89,15 +90,28 @@ As rotas coletivas de chamada, sincronização, encerramento, reabertura, observ
 
 O módulo `/app/admin/usuarios`, exclusivo de `DEV`, lista contas e oferece APIs para:
 
-- criar pessoa e conta, ou usar pessoa existente;
-- vincular a conta a atleta existente;
+- criar time (código, slug, nome, temporada inicial) e ativar/desativar time;
+- criar pessoa e conta associada a um time escolhido numa lista, ou usar pessoa
+  existente;
+- vincular a conta a atleta existente disponível dentro do time escolhido;
 - atribuir e remover `DEV`, `CT` e `PLAYER`;
 - desativar conta;
 - revogar sessões;
 - definir senha temporária e exigir troca no próximo acesso;
 - consultar auditoria de segurança e diagnóstico.
 
-Não há exclusão de usuário com histórico, exibição de senha/hash ou atribuição de `PLAYER` sem vínculo válido.
+Toda conta `CT` ou `PLAYER` exige um time explícito no momento da criação — não
+existe mais associação implícita a um único time fixo em código. Não há
+exclusão de usuário com histórico, exibição de senha/hash ou atribuição de
+`PLAYER` sem vínculo válido.
+
+Além do `DEV`, um `CT` com `player_accounts.manage` pode criar diretamente uma
+conta `PLAYER` para um atleta disponível dentro do(s) time(s) a que já
+pertence (tela de Elenco do módulo de presenças). Não existe fila de
+aprovação separada: o próprio ato de criação, feito por quem já está
+autorizado (`CT` ou `DEV` para jogador; só `DEV` para `CT`), é a aprovação. O
+autocadastro em `/register` continua reivindicando um vínculo pré-existente,
+sem seleção de time.
 
 ## 8. Auditoria
 
@@ -129,5 +143,14 @@ Antes de qualquer migração real, o runbook deve ser executado em uma cópia co
 ## 11. Limitações e extensão futura
 
 A interface administrativa inicial oferece criação, listagem, alteração de papéis, redefinição de senha temporária, desativação e revogação. PLAYER é somente leitura e não possui fila offline nesta versão.
+
+`teams` já suporta múltiplos times para fins de conta e permissão, mas
+`team_members`/`training_sessions`/`attendance_records` (elenco, chamada e
+presença) continuam sendo uma lista única e global, sem coluna de time — não
+foram alterados nesta entrega para preservar as tabelas históricas mais
+sensíveis do banco sem uma migração dedicada. Na prática, um time novo
+começa sem nenhum atleta "disponível" para vincular a conta, até que essa
+separação seja implementada (ver item correspondente em
+`docs/PRODUCT-BACKLOG.md`).
 
 Jogos e estatísticas futuros devem reutilizar `AccessContext`, permissões tipadas, repositories escopados e autoria de auditoria. Novas permissões devem ser adicionadas de forma explícita e negadas por padrão, sem transformar posições esportivas em papéis de segurança.

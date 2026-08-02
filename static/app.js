@@ -961,7 +961,7 @@ function setView(name) {
   if (!state.loadedViews.has(name)) {
     state.loadedViews.add(name);
     if (name === "history") loadHistory();
-    if (name === "roster") loadRoster();
+    if (name === "roster") { loadRoster(); loadPlayerAccountOptions(); }
     if (name === "audit") loadAudit();
   }
 }
@@ -1016,6 +1016,47 @@ async function addMember(event) {
     await loadRoster();
     if (state.payload?.session?.id) await loadSession(state.payload.session.id);
     setAlert("Atleta adicionado ao elenco.");
+  } catch (error) { setAlert(error.message, "error", 0); }
+}
+
+function playerAccountTeamId() {
+  const select = $("#player-account-team");
+  if (select) return Number(select.value) || null;
+  const ids = ($("#player-account-form")?.dataset.teamIds || "").split(",").map(Number).filter(Boolean);
+  return ids[0] || null;
+}
+
+async function loadPlayerAccountOptions() {
+  const memberSelect = $("#player-account-member");
+  if (!memberSelect) return;
+  const teamId = playerAccountTeamId();
+  if (!teamId) { memberSelect.innerHTML = '<option value="">Nenhum time vinculado</option>'; return; }
+  try {
+    const data = await api(`/api/v1/team/available-players?team_id=${teamId}`);
+    memberSelect.innerHTML = data.items.length
+      ? data.items.map((player) => `<option value="${player.id}">${escapeText(player.name)} · ${escapeText(player.position)}</option>`).join("")
+      : '<option value="">Nenhum jogador disponível neste time</option>';
+  } catch (error) { setAlert(error.message, "error", 0); }
+}
+
+async function createPlayerAccount(event) {
+  event.preventDefault();
+  const teamId = playerAccountTeamId();
+  const teamMemberId = Number($("#player-account-member").value) || null;
+  if (!teamId || !teamMemberId) { setAlert("Selecione um jogador disponível.", "error", 0); return; }
+  try {
+    await api("/api/v1/team/player-accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        team_id: teamId,
+        team_member_id: teamMemberId,
+        username: $("#player-account-username").value,
+        temporary_password: $("#player-account-password").value,
+      }),
+    });
+    event.target.reset();
+    await loadPlayerAccountOptions();
+    setAlert("Conta de jogador criada.");
   } catch (error) { setAlert(error.message, "error", 0); }
 }
 
@@ -1129,6 +1170,8 @@ document.addEventListener("DOMContentLoaded", () => {
     catch (_) { setAlert("Não foi possível copiar automaticamente.", "warning"); }
   });
   $("#member-form").addEventListener("submit", addMember);
+  $("#player-account-team")?.addEventListener("change", loadPlayerAccountOptions);
+  $("#player-account-form")?.addEventListener("submit", createPlayerAccount);
   window.addEventListener("online", () => handleConnectivity(true));
   window.addEventListener("offline", () => handleConnectivity(false));
   initialize();
