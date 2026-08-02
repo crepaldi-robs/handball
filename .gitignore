@@ -22,3 +22,15 @@ Thumbs.db
 .env.*
 !.env.example
 storage.sqlite
+
+# /design-sync (docs/design-system/DESIGN-SYNC.md) — scripts do conversor,
+# node_modules e saida gerada. O conjunto duravel (.design-sync/config.json,
+# NOTES.md, conventions.md, previews/, overrides/) NAO entra aqui.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+design-mirror/node_modules/
+design-mirror/dist/
+design-mirror/src/tokens.generated.css

@@ -1,0 +1,9 @@
+{
+  "projectId": "adfe9426-00c9-4abc-b36f-43932f8f9dd1",
+  "pkg": "@handball/design-mirror",
+  "globalName": "HandballDesignMirror",
+  "shape": "package",
+  "cssEntry": "dist/index.css",
+  "buildCmd": "npm run build",
+  "readmeHeader": ".design-sync/conventions.md"
+}
