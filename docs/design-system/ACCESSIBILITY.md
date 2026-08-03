@@ -21,11 +21,11 @@ existentes e falha se algum ficar abaixo de 4,5:1 (texto normal, AA):
 | neutro | branco sobre success | 5,25:1 | AA |
 | neutro | branco sobre warning | 4,58:1 | AA (margem estreita) |
 | neutro | branco sobre danger | 10,02:1 | AAA |
-| hm-ime | texto sobre canvas | 16,37:1 | AAA |
-| hm-ime | texto sobre surface | 17,93:1 | AAA |
+| hm-ime | texto sobre canvas | 17,24:1 | AAA |
+| hm-ime | texto sobre surface | 18,88:1 | AAA |
 | hm-ime | texto secundário sobre canvas | 5,28:1 | AA |
-| hm-ime | branco sobre `brand_primary` | 5,19:1 | AA |
-| hm-ime | branco sobre `brand_primary_hover` | 7,91:1 | AAA |
+| hm-ime | branco sobre `brand_primary` | 9,93:1 | AAA |
+| hm-ime | branco sobre `brand_primary_hover` | 13,58:1 | AAA |
 | hm-ime | branco sobre success | 5,25:1 | AA |
 | hm-ime | branco sobre warning | 4,58:1 | AA (margem estreita) |
 | hm-ime | branco sobre danger | 10,02:1 | AAA |
@@ -41,7 +41,9 @@ contra branco.
 ## Limitação conhecida e documentada (não corrigida nesta entrega)
 
 `--color-border` contra `--color-canvas` fica em ~1,2:1 nos dois temas
-(`#DDE2E7` sobre `#F4F6F8` no neutro; `#E6DEDB` sobre `#F7F4F2` no HM-IME).
+(`#DDE2E7` sobre `#F4F6F8` no neutro; `#E0D6D9` sobre `#F7F4F2` no HM-IME —
+a borda do HM-IME foi escurecida de `#E6DEDB` para `#E0D6D9` na Fase 8, o que
+melhora a razão mas não a leva a 3:1).
 Isso não afeta texto (que não depende dessa combinação), mas fica abaixo do
 3:1 exigido pelo WCAG 2.2 SC 1.4.11 (Non-text Contrast) para um elemento que
 dependesse *somente* da borda para comunicar seu limite — por exemplo um

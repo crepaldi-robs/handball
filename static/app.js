@@ -966,11 +966,40 @@ function setView(name) {
   }
 }
 
+/* Tabela densa no computador, cartão empilhado no celular — mesma lista de
+ * registros percorrida uma vez só, dois desenhos. A prioridade declarada é
+ * informação completa antes de experiência: toda coluna da tabela aparece no
+ * cartão como par rótulo/valor, nenhuma é escondida por falta de espaço. */
+function recordCard(title, meta, fields) {
+  const card = document.createElement("li");
+  card.className = "record-card";
+  const top = document.createElement("div");
+  top.className = "record-card-top";
+  const name = document.createElement("strong");
+  name.textContent = escapeText(title);
+  const when = document.createElement("span");
+  when.textContent = escapeText(meta);
+  top.append(name, when);
+  card.append(top);
+  for (const [label, value] of fields) {
+    const line = document.createElement("div");
+    line.className = "record-field";
+    const key = document.createElement("span");
+    key.textContent = `${label}:`;
+    const content = document.createElement("span");
+    content.textContent = escapeText(value);
+    line.append(key, content);
+    card.append(line);
+  }
+  return card;
+}
+
 async function loadHistory() {
   try {
     const data = await api("/api/v1/history");
     const labels = state.payload?.confirmation_labels || {};
     const body = $("#history-body");
+    const cards = $("#history-cards");
     body.replaceChildren(...data.items.map((item) => {
       const row = document.createElement("tr");
       [formatDate(item.training_date), item.name, item.position, labels[item.confirmation_status], presenceText(item.present), item.notes || "—"].forEach((value) => {
@@ -978,6 +1007,17 @@ async function loadHistory() {
       });
       return row;
     }));
+    if (cards) {
+      cards.replaceChildren(...data.items.map((item) => recordCard(
+        `${item.name} · ${item.position}`,
+        formatDate(item.training_date),
+        [
+          ["Confirmação", labels[item.confirmation_status] || "—"],
+          ["Presença", presenceText(item.present)],
+          ["Observação", item.notes || "—"],
+        ],
+      )));
+    }
   } catch (error) { setAlert(error.message, "error", 0); }
 }
 
@@ -985,14 +1025,19 @@ async function loadRoster() {
   try {
     const data = await api("/api/v1/members");
     const body = $("#roster-body");
+    // O Elenco não ganha uma segunda lista de cartões como Histórico e
+    // Auditoria: aqui cada linha tem campo editável e botão de salvar, e duas
+    // cópias do mesmo input seriam duas fontes de verdade. Em vez disso a
+    // própria tabela empilha no celular (.stacked-table + data-label), então
+    // as quatro colunas continuam existindo — só mudam de forma.
     body.replaceChildren(...data.items.map((member) => {
       const row = document.createElement("tr");
-      const name = document.createElement("td"); name.textContent = member.name;
-      const positionCell = document.createElement("td");
+      const name = document.createElement("td"); name.textContent = member.name; name.dataset.label = "Nome";
+      const positionCell = document.createElement("td"); positionCell.dataset.label = "Posição";
       const position = document.createElement("input"); position.value = member.position; position.maxLength = 40; positionCell.append(position);
-      const activeCell = document.createElement("td");
+      const activeCell = document.createElement("td"); activeCell.dataset.label = "Ativo";
       const active = document.createElement("input"); active.type = "checkbox"; active.checked = Boolean(member.active); activeCell.append(active);
-      const action = document.createElement("td");
+      const action = document.createElement("td"); action.dataset.label = "Ação";
       const save = document.createElement("button"); save.type = "button"; save.className = "button"; save.textContent = "Salvar";
       save.addEventListener("click", async () => {
         try {
@@ -1065,15 +1110,27 @@ async function loadAudit() {
     const data = await api("/api/v1/audit?limit=1000");
     const labels = state.payload?.confirmation_labels || {};
     const body = $("#audit-body");
+    const cards = $("#audit-cards");
+    const statusChangeOf = (item) => `${labels[item.old_confirmation_status] || "—"} → ${labels[item.new_confirmation_status] || "—"}`;
+    const presenceChangeOf = (item) => `${presenceText(item.old_present)} → ${presenceText(item.new_present)}`;
     body.replaceChildren(...data.items.map((item) => {
       const row = document.createElement("tr");
-      const statusChange = `${labels[item.old_confirmation_status] || "—"} → ${labels[item.new_confirmation_status] || "—"}`;
-      const presenceChange = `${presenceText(item.old_present)} → ${presenceText(item.new_present)}`;
-      [item.changed_at, formatDate(item.training_date), item.name, statusChange, presenceChange, item.source].forEach((value) => {
+      [item.changed_at, formatDate(item.training_date), item.name, statusChangeOf(item), presenceChangeOf(item), item.source].forEach((value) => {
         const cell = document.createElement("td"); cell.textContent = escapeText(value); row.append(cell);
       });
       return row;
     }));
+    if (cards) {
+      cards.replaceChildren(...data.items.map((item) => recordCard(
+        item.name,
+        item.changed_at,
+        [
+          ["Treino", `${formatDate(item.training_date)} · ${item.source}`],
+          ["Confirmação", statusChangeOf(item)],
+          ["Presença", presenceChangeOf(item)],
+        ],
+      )));
+    }
   } catch (error) { setAlert(error.message, "error", 0); }
 }
 

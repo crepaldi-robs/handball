@@ -1,0 +1,139 @@
+/* Acentos expressivos do HM-IME — NÃO gerado por scripts/build_design_tokens.py.
+   Motivo: design-system/schemas/theme.schema.json declara "additionalProperties": false
+   em "colors", então dourado/vermelho-esportivo/azul não cabem no contrato de tema.
+   São acentos de camada de MÓDULO, não tokens de marca. Carregar DEPOIS de
+   static/css/tokens.generated.css.
+   Fonte dos valores: docs/design-system/teams/hm-ime/RESEARCH.md
+   ("Sistema recomendado e acessibilidade"). */
+
+/* Fallback primeiro, time depois. A ordem importa: :root e
+   [data-team="hm-ime"] casam com o MESMO elemento (<html>) e têm a mesma
+   especificidade, então quem vier por último vence. Invertido, o âmbar neutro
+   apagaria o dourado do time. */
+:root,
+[data-theme="neutral"] {
+  /* As classes .hm-* também aparecem em tela de tema neutro (time sem tema
+     cadastrado). Aqui o "dourado" é só um âmbar sem pretensão de marca. */
+  --hm-gold: #B45F06;
+  --hm-sport-red: var(--color-brand-primary);
+  --hm-wine-deep: var(--color-brand-primary-hover);
+  --hm-institutional-blue: #0064A0;
+}
+
+[data-team="hm-ime"] {
+  /* Conquista/título. Máx. 10% da composição. */
+  --hm-gold: #E6AF3C;
+  /* Energia, placares, chamadas, detalhes. Nunca substitui brand_primary. */
+  --hm-sport-red: #B5122B;
+  /* Sobreposições sobre fotografia e peças solenes. */
+  --hm-wine-deep: #5E0B22;
+  /* Co-branding oficial IME/USP apenas. */
+  --hm-institutional-blue: #0064A0;
+}
+
+/* REGRA DE ACESSIBILIDADE OBRIGATÓRIA (RESEARCH.md):
+   branco sobre dourado = 1,99:1 → REPROVADO em WCAG AA.
+   Dourado só recebe carvão (#111111, 9,50:1) ou vinho (#82143C, 5,00:1).
+   Por isso a versão sólida abaixo fixa o texto em carvão e nenhuma regra
+   deste arquivo escreve branco sobre --hm-gold. */
+.hm-achievement {
+  display: inline-flex;
+  align-items: center;
+  /* O hero é grid: sem isto o selo esticaria a linha inteira. */
+  justify-self: start;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  background: rgba(230, 175, 60, .16);
+  color: var(--hm-gold);
+  font-size: .72rem;
+  font-weight: 800;
+}
+[data-team="hm-ime"] .hm-achievement {
+  color: var(--hm-gold);
+}
+
+/* Faixa de conquista sólida: texto carvão, nunca branco. */
+.hm-achievement-solid {
+  background: var(--hm-gold);
+  color: #111111;
+}
+
+/* Sobre fotografia escura o dourado a 16% some; ali a pill fica em vidro
+   claro e o texto vai para o dourado cheio, que passa 9,5:1 contra o scrim. */
+.hm-hero .hm-achievement {
+  background: rgba(255, 255, 255, .14);
+  color: var(--hm-gold);
+}
+
+/* --------------------------------------------------------------------------
+   Hero fotográfico — Hub e Login. A foto é dependência real, não decoração:
+   sem ela o bloco fica no gradiente de scrim, legível mas vazio (ver
+   docs/design-system/teams/hm-ime/THEME.md §Assets).
+   -------------------------------------------------------------------------- */
+.hm-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 220px;
+  display: grid;
+  align-content: end;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  border-radius: var(--radius-dialog);
+  color: #fff;
+  isolation: isolate;
+}
+.hm-hero-photo {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* Sem foto do time, sobra o vinho profundo sob o scrim: vazio, mas nunca a
+     foto de outra equipe. */
+  background-color: var(--hm-wine-deep);
+}
+/* A foto vive neste arquivo, e não em styles.css, porque é ativo de um time
+   só — é a mesma razão pela qual o CSP não deixa o template mandar a URL por
+   atributo style. Enquadramento em 50% 38% para o alto da comemoração não ser
+   cortado no recorte de 160px do celular. */
+[data-team="hm-ime"] .hm-hero-photo {
+  background-image: url("/static/hm-ime-hero.jpg");
+  background-position: 50% 38%;
+}
+.hm-photo-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(120deg, rgba(17, 17, 17, .90), rgba(130, 20, 60, .35));
+}
+.hm-hero .hm-eyebrow {
+  color: var(--hm-gold);
+  font-size: .75rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.hm-hero h1 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 2.1rem;
+  line-height: 1.08;
+  font-weight: 700;
+}
+.hm-hero p {
+  margin: 0;
+  max-width: 46ch;
+  color: rgba(255, 255, 255, .82);
+  font-size: .94rem;
+}
+
+@media (max-width: 759.98px) {
+  .hm-hero {
+    min-height: 160px;
+    padding: 20px;
+    border-radius: var(--radius-card);
+  }
+  .hm-hero h1 { font-size: 1.6rem; }
+}

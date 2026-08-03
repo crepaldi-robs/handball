@@ -11,9 +11,16 @@ if (playbookRoot) {
     try { return JSON.parse(playbookRoot.dataset.teamIds || "[]"); } catch (_) { return []; }
   })();
   const cachePrefix = `handball-playbook-${userId}-`;
+  // A pasta aberta vive na URL (?folder=<id>): o Playbook é uma árvore de
+  // pastas, e um caminho que só existe na memória do JS não é linkável, não
+  // sobrevive a um refresh e faz o botão Voltar do navegador sair do módulo.
+  // O id é validado do mesmo jeito que qualquer outro: a API só devolve pastas
+  // do time a que a sessão tem acesso, então um id chutado na barra de
+  // endereços não abre nada.
+  const initialFolderId = Number(new URLSearchParams(window.location.search).get("folder")) || null;
   const state = {
     teamId: Number(initialTeamIds[0]) || null,
-    folderId: null,
+    folderId: initialFolderId,
     collection: "all",
     filter: "ALL",
     query: "",
@@ -224,19 +231,49 @@ if (playbookRoot) {
     elements.breadcrumb.replaceChildren();
     const root = document.createElement("button");
     root.type = "button";
-    root.textContent = "Biblioteca";
+    root.textContent = "Playbook";
+    if (!path.length) root.className = "is-current";
     root.addEventListener("click", () => selectFolder(null));
     elements.breadcrumb.append(root);
-    for (const folder of path) {
+    path.forEach((folder, index) => {
       const separator = document.createElement("span");
-      separator.textContent = "/";
+      separator.textContent = "›";
       elements.breadcrumb.append(separator);
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = folder.name;
+      // O nó atual fica em --color-text; os ancestrais, em muted.
+      if (index === path.length - 1) button.className = "is-current";
       button.addEventListener("click", () => selectFolder(Number(folder.id)));
       elements.breadcrumb.append(button);
+    });
+  }
+
+  function childFolders(folderId) {
+    if (!folderId) {
+      return (state.data?.tree?.roots || []).filter(
+        (folder) => Number(folder.team_id) === Number(state.teamId) && !folder.archived_at,
+      );
     }
+    return (folderById(folderId)?.children || []).filter((folder) => !folder.archived_at);
+  }
+
+  /* Linha de pasta: o nó com subpastas mostra a árvore, não uma grade plana de
+   * conteúdo. Sem isso o modelo mental de pasta só existia na barra lateral,
+   * que some no celular. */
+  function renderFolderRow(folder) {
+    const children = (folder.children || []).filter((item) => !item.archived_at).length;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "playbook-folder-row";
+    row.innerHTML = `
+      <span class="playbook-folder-row-icon" aria-hidden="true">📁</span>
+      <span class="playbook-folder-row-name">${escapeHtml(folder.name)}</span>
+      <span class="playbook-folder-row-count">${children ? `${children} pasta${children === 1 ? "" : "s"}` : `${Number(folder.content_count || 0)} ${Number(folder.content_count) === 1 ? "item" : "itens"}`}</span>
+      <span class="playbook-folder-row-chevron" aria-hidden="true">›</span>
+    `;
+    row.addEventListener("click", () => selectFolder(Number(folder.id)));
+    return row;
   }
 
   function makeTreeNode(folder, depth = 0) {
@@ -315,6 +352,17 @@ if (playbookRoot) {
     elements.items.replaceChildren();
     const label = state.collection === "favorites" ? "favoritos" : state.collection === "frequent" ? "mais consultados" : state.collection === "recent" ? "vistos recentemente" : "conteúdos";
     elements.summary.textContent = `${items.length} ${label}${state.folderId ? " nesta pasta" : " disponíveis"}.`;
+    // Subpastas primeiro, como em qualquer navegador de arquivos: só faz
+    // sentido na coleção "todos" — favoritos e recentes são recortes planos.
+    const folders = state.collection === "all" && !state.query ? childFolders(state.folderId) : [];
+    if (folders.length) {
+      const list = document.createElement("nav");
+      list.className = "playbook-folder-rows";
+      list.setAttribute("aria-label", "Subpastas");
+      for (const folder of folders) list.append(renderFolderRow(folder));
+      elements.items.append(list);
+    }
+    if (!items.length && folders.length) return;
     if (!items.length) {
       elements.items.innerHTML = canManage
         ? "<section class=\"playbook-empty\"><h3>Nada neste recorte ainda</h3><p>Crie um conteúdo, mova um existente ou ajuste a busca.</p></section>"
@@ -528,16 +576,44 @@ if (playbookRoot) {
     renderNextTraining();
     if (canManage) loadPlanning().catch(showProblem);
     state.selectedFolder = state.folderId ? folderById(state.folderId) : null;
+    // Pasta que veio da URL mas não existe (ou não é deste time) não deixa a
+    // tela num estado fantasma: volta para a raiz e a barra de endereços
+    // acompanha, em vez de mostrar um caminho que não é o que está na tela.
+    if (state.folderId && !state.selectedFolder) {
+      state.folderId = null;
+      syncFolderInUrl(null, { replace: true });
+      renderBreadcrumb();
+      renderItems();
+    }
     if (elements.folderActions) elements.folderActions.disabled = !state.selectedFolder;
   }
 
-  async function selectFolder(folderId) {
+  function syncFolderInUrl(folderId, { replace = false } = {}) {
+    const url = new URL(window.location.href);
+    if (folderId) url.searchParams.set("folder", String(folderId));
+    else url.searchParams.delete("folder");
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({ folderId: folderId || null }, "", url);
+  }
+
+  async function selectFolder(folderId, { fromHistory = false } = {}) {
     state.folderId = folderId;
     state.collection = "all";
     state.selected.clear();
     document.querySelectorAll("[data-playbook-collection]").forEach((button) => button.classList.toggle("is-active", button.dataset.playbookCollection === "all"));
+    // O caminho entra no histórico do navegador: o botão Voltar sobe um nível
+    // da árvore em vez de sair do Playbook.
+    if (!fromHistory) syncFolderInUrl(folderId);
     try { await loadLibrary(); } catch (error) { showProblem(error); }
   }
+
+  window.addEventListener("popstate", (event) => {
+    const folderId = Number(event.state?.folderId)
+      || Number(new URLSearchParams(window.location.search).get("folder"))
+      || null;
+    if (Number(folderId) === Number(state.folderId)) return;
+    selectFolder(folderId, { fromHistory: true });
+  });
 
   function folderOptions(selectedId = null, includeRoot = true) {
     const options = includeRoot ? ["<option value=\"\">Biblioteca (raiz)</option>"] : [];
@@ -984,7 +1060,7 @@ if (playbookRoot) {
     document.querySelectorAll("[data-playbook-close]").forEach((button) => button.addEventListener("click", () => closeDialog(document.querySelector(`#${button.dataset.playbookClose}`))));
     [elements.folderDialog, elements.contentDialog, elements.planDialog, elements.problemDialog].forEach((dialog) => dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(dialog); }));
     document.querySelector("#playbook-problem-close").addEventListener("click", () => closeDialog(elements.problemDialog));
-    elements.team.addEventListener("change", async () => { state.teamId = Number(elements.team.value); state.folderId = null; state.selected.clear(); try { await loadLibrary(); } catch (error) { showProblem(error); } });
+    elements.team.addEventListener("change", async () => { state.teamId = Number(elements.team.value); state.folderId = null; state.selected.clear(); syncFolderInUrl(null); try { await loadLibrary(); } catch (error) { showProblem(error); } });
     document.querySelectorAll("[data-playbook-view]").forEach((button) => button.addEventListener("click", () => {
       state.view = button.dataset.playbookView;
       localStorage.setItem(`${cachePrefix}view`, state.view);

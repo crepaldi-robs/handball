@@ -9,7 +9,9 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/playbook.js" defer></script>
@@ -41,9 +43,10 @@
   <main class="playbook-workspace">
     <section class="playbook-hero" aria-labelledby="playbook-title">
       <div>
+        {# Título informativo, não slogan: é ferramenta de consulta diária. #}
         <span class="playbook-kicker">BIBLIOTECA E TREINO</span>
-        <h1 id="playbook-title">O que o time precisa executar, no momento certo.</h1>
-        <p>Encontre a jogada, monte o plano e leve somente o roteiro essencial para a quadra.</p>
+        <h1 id="playbook-title">Playbook do {{ organization.display_name }}</h1>
+        <p>Jogadas, vídeos e materiais de treino organizados por categoria.</p>
       </div>
       <aside id="playbook-next-training" class="playbook-next-training" aria-live="polite">
         <span>PRÓXIMO TREINO</span>

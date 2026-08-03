@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#0b1f33">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
   <title>Consultas SQL · Hub Handebol</title>
+  <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/sql-explorer.js" defer></script>
@@ -24,6 +26,10 @@
     {% else %}
     <section class="calendar-heading"><div><span class="eyebrow">SOMENTE LEITURA</span><h1>Explorador SQL</h1><p>Catálogo gerado da base operacional. Consultas são limitadas a SELECT/WITH; tabelas sensíveis permanecem restritas.</p></div></section>
     {% endif %}
+    {# Desktop-first por decisão explícita: escrever SQL e ler uma grade de
+       resultados em 360px não é uma experiência que valha entregar. A copy de
+       segurança acima permanece integral nas duas larguras. #}
+    <p class="desktop-notice">Melhor em um computador. O editor e a grade de resultados precisam de tela larga.</p>
     <div id="sql-message" class="alert" role="status" hidden></div>
     <section class="sql-layout">
       <aside class="panel sql-catalog"><h2>Catálogo</h2><div id="sql-relations" aria-live="polite"></div></aside>

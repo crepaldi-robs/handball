@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#0b1f33">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Handball">
@@ -12,7 +12,9 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/app.js" defer></script>
@@ -114,9 +116,11 @@
       </section>
 
       <section id="view-summary" class="view" aria-labelledby="summary-title">
+        {# O copiar fica junto do título, não no fim do <pre>: é clique rápido
+           e repetido, e rolar a mensagem inteira para achá-lo custa caro. #}
         <div class="page-heading">
           <div><span class="eyebrow">COMUNICAÇÃO</span><h1 id="summary-title">Resumo para o técnico</h1></div>
-          <button id="copy-summary" class="button button-primary" type="button">Copiar mensagem</button>
+          <button id="copy-summary" class="icon-action-button" type="button" aria-label="Copiar mensagem" title="Copiar mensagem">⧉</button>
         </div>
         <div class="panel message-panel"><pre id="coach-message">Carregando…</pre></div>
       </section>
@@ -126,13 +130,15 @@
           <div><span class="eyebrow">REGISTROS</span><h1 id="history-title">Histórico</h1></div>
           <a class="button" href="/api/v1/exports/history.csv">Baixar CSV</a>
         </div>
-        <div class="panel table-wrap"><table><thead><tr><th>Data</th><th>Atleta</th><th>Posição</th><th>Confirmação</th><th>Presença</th><th>Observação</th></tr></thead><tbody id="history-body"></tbody></table></div>
+        <div class="panel table-wrap only-desktop"><table><thead><tr><th>Data</th><th>Atleta</th><th>Posição</th><th>Confirmação</th><th>Presença</th><th>Observação</th></tr></thead><tbody id="history-body"></tbody></table></div>
+        {# Mesma lista, desenho de cartão: nenhuma coluna da tabela some. #}
+        <ul id="history-cards" class="record-cards only-mobile" aria-label="Histórico"></ul>
       </section>
 
       <section id="view-roster" class="view" aria-labelledby="roster-title">
         <div class="page-heading"><div><span class="eyebrow">EQUIPE</span><h1 id="roster-title">Elenco</h1></div></div>
         <div class="roster-grid">
-          <div class="panel table-wrap"><table><thead><tr><th>Nome</th><th>Posição</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
+          <div class="panel table-wrap stacked-table"><table><thead><tr><th>Nome</th><th>Posição</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
           <form id="member-form" class="panel stack-form compact-form">
             <h2>Adicionar atleta</h2>
             <label><span>Nome</span><input id="member-name" required maxlength="120"></label>
@@ -159,17 +165,21 @@
           <div><span class="eyebrow">RASTREABILIDADE</span><h1 id="audit-title">Auditoria</h1></div>
           <a class="button" href="/api/v1/backup">Baixar backup</a>
         </div>
-        <div class="panel table-wrap"><table><thead><tr><th>Alterado em</th><th>Treino</th><th>Atleta</th><th>Confirmação</th><th>Presença</th><th>Origem</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+        <div class="panel table-wrap only-desktop"><table><thead><tr><th>Alterado em</th><th>Treino</th><th>Atleta</th><th>Confirmação</th><th>Presença</th><th>Origem</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+        <ul id="audit-cards" class="record-cards only-mobile" aria-label="Auditoria"></ul>
       </section>
     </section>
   </main>
 
+  {# A sidebar de 210px não cabe no celular: as mesmas cinco abas viram nav
+     fixa no rodapé, com Auditoria inclusa — a rastreabilidade é regra de
+     domínio, não um extra de desktop. O Hub continua alcançável pela app bar. #}
   <nav class="bottom-nav" aria-label="Navegação móvel">
-    <a href="/app"><span>⌂</span>Hub</a>
     <button class="active" data-view="call" type="button"><span>✓</span>Chamada</button>
     <button data-view="summary" type="button"><span>≡</span>Resumo</button>
     <button class="online-only" data-view="history" type="button"><span>◷</span>Histórico</button>
     <button class="online-only" data-view="roster" type="button"><span>♙</span>Elenco</button>
+    <button class="online-only" data-view="audit" type="button"><span>⌕</span>Auditoria</button>
   </nav>
 
   <dialog id="offline-dialog" class="modal">

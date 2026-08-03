@@ -55,6 +55,16 @@ class TeamVisualIdentity:
     display_name: str
     monogram: str
     logo_url: str | None
+    # Nome por extenso e atlética: existem no arquivo de tema desde a fundação,
+    # mas ficavam sem consumidor. O hero do hub usa os dois como eyebrow, então
+    # precisam chegar ao template — hardcodar "HANDEBOL MASCULINO IME-USP ·
+    # AAAMAT" ali quebraria o multi-time. Opcionais: um time pode não ter.
+    formal_name: str | None
+    athletics_name: str | None
+    # Lema. Fica no arquivo de tema e não no template pelo mesmo motivo: um
+    # segundo time não pode herdar o lema do primeiro.
+    motto: str | None
+    achievement: str | None
     primary: str
     primary_dark: str
     canvas: str
@@ -142,6 +152,10 @@ def _load_team_theme_file(path: Path) -> dict[str, Any]:
     logo_url = data.get("logo_url")
     if logo_url is not None and (not isinstance(logo_url, str) or not _STATIC_ASSET.match(logo_url)):
         raise DesignTokenError(f"logo_url precisa estar sob /static/ em {path}: {logo_url!r}")
+    for key in ("formal_name", "athletics_name", "motto", "achievement"):
+        value = data.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise DesignTokenError(f"{key} inválido em {path}: {value!r}")
     colors = data.get("colors", {})
     if not isinstance(colors, dict):
         raise DesignTokenError(f"'colors' inválido em {path}.")
@@ -190,6 +204,10 @@ def build_identity(platform: dict[str, Any], team: dict[str, Any] | None) -> Tea
         display_name=team["display_name"] if team is not None else identity_meta["display_name"],
         monogram=team["monogram"] if team is not None else identity_meta["monogram"],
         logo_url=team.get("logo_url") if team is not None else None,
+        formal_name=team.get("formal_name") if team is not None else None,
+        athletics_name=team.get("athletics_name") if team is not None else None,
+        motto=team.get("motto") if team is not None else None,
+        achievement=team.get("achievement") if team is not None else None,
         primary=colors["brand_primary"],
         primary_dark=colors["brand_primary_hover"],
         canvas=colors["canvas"],

@@ -1,11 +1,22 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v12";
+const CACHE_NAME = "handball-shell-v13";
 const SHELL = [
   "/app",
   "/app/presencas",
   "/app/playbook",
   "/static/styles.css",
+  "/static/css/fonts.css",
+  "/static/css/tokens.generated.css",
+  "/static/css/hm-ime-expressive.css",
+  "/static/fonts/inter-latin.woff2",
+  "/static/fonts/inter-latin-ext.woff2",
+  "/static/fonts/barlow-condensed-600-latin.woff2",
+  "/static/fonts/barlow-condensed-600-latin-ext.woff2",
+  "/static/fonts/barlow-condensed-700-latin.woff2",
+  "/static/fonts/barlow-condensed-700-latin-ext.woff2",
+  "/static/fonts/barlow-condensed-800-latin.woff2",
+  "/static/fonts/barlow-condensed-800-latin-ext.woff2",
   "/static/platform.js",
   "/static/app.js",
   "/static/player-attendance.js",

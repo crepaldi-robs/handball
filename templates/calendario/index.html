@@ -8,7 +8,9 @@
   <title>Calendário · {{ organization.display_name }}</title>
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/calendar.js" defer></script>
@@ -44,9 +46,12 @@
   <main class="calendar-workspace">
     <section class="calendar-command-hero" aria-labelledby="calendar-title">
       <div>
-        <span class="calendar-kicker">PLANEJAMENTO HM-IME</span>
-        <h1 id="calendar-title">Seu time, no tempo certo.</h1>
-        <p>Treinos, jogos e decisões importantes em uma agenda simples.</p>
+        {# "PLANEJAMENTO HM-IME" estava escrito no template e não acompanharia
+           um segundo time; a temporada ativa é informação mais útil no topo de
+           uma agenda. Título informativo, não slogan — é consulta diária. #}
+        <span class="calendar-kicker">TEMPORADA {{ active_season_label }}</span>
+        <h1 id="calendar-title">Calendário do {{ organization.display_name }}</h1>
+        <p>Treinos, jogos e campeonatos em uma agenda única.</p>
       </div>
       <article id="calendar-next-event" class="calendar-next-card" aria-live="polite">
         <span class="calendar-next-label">PRÓXIMO EVENTO</span>

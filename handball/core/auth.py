@@ -263,14 +263,31 @@ def create_auth_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    def login_template(request: Request, *, error: str | None, username: str, status_code: int = 200) -> Response:
+    def login_template(
+        request: Request,
+        *,
+        error: str | None,
+        username: str,
+        status_code: int = 200,
+        mode: str = "signin",
+        signup_team_id: int | None = None,
+    ) -> Response:
+        """Renderiza /login.
+
+        `mode` e `signup_team_id` só reabrem o assistente no passo em que o
+        visitante estava quando o servidor recusou o cadastro — nenhum dos dois
+        muda tema, permissão ou consulta: o tema de /login é fixo em neutro.
+        """
+        identity_service = request.app.state.identity_service
         return templates.TemplateResponse(
             request,
             "login.html",
             {
                 "error": error,
                 "username": username,
-                "registration_players": request.app.state.identity_service.available_player_registrations(),
+                "login_mode": mode,
+                "signup_team_id": signup_team_id,
+                "registration_teams": identity_service.registration_teams(),
             },
             status_code=status_code,
         )
@@ -327,6 +344,7 @@ def create_auth_router(
         username: Annotated[str, Form()],
         password: Annotated[str, Form()],
         password_confirmation: Annotated[str, Form()],
+        team_id: Annotated[int | None, Form()] = None,
     ) -> Response:
         auth: AuthManager = request.app.state.auth
         client_key = login_client_key(request, settings.trusted_proxies)
@@ -335,15 +353,31 @@ def create_auth_router(
             response = login_template(request, error=_login_limit_message(limit_status), username="", status_code=429)
             response.headers["Retry-After"] = str(limit_status.retry_after_seconds)
             return response
+        signup = {"mode": "signup", "signup_team_id": team_id}
         if password != password_confirmation:
-            return login_template(request, error="As senhas não coincidem.", username=username, status_code=400)
+            return login_template(
+                request,
+                error="As senhas não coincidem.",
+                username=username,
+                status_code=400,
+                **signup,
+            )
         try:
             user_id = request.app.state.identity_service.register_player(
-                team_member_id=team_member_id, username=username, password=password
+                team_member_id=team_member_id,
+                username=username,
+                password=password,
+                team_id=team_id,
             )
         except ValueError as exc:
             auth.limiter.fail(client_key)
-            return login_template(request, error=str(exc), username=username, status_code=400)
+            return login_template(
+                request,
+                error=str(exc),
+                username=username,
+                status_code=400,
+                **signup,
+            )
         auth.limiter.clear(client_key)
         token, _ = auth.create_token(user_id, user_agent=request.headers.get("user-agent", "")[:500])
         response = RedirectResponse("/app", status_code=303)

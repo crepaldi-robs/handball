@@ -24,6 +24,11 @@ def create_router(identity_service: IdentityService, templates: Jinja2Templates)
             {
                 "username": session.username,
                 "display_name": session.display_name,
+                # Saudação do hero. O report é explícito: repetir o lema em
+                # toda tela desgasta o impacto, e o hub é a tela que o atleta
+                # abre todo dia — aqui vale o nome dele, com o lema descendo
+                # para o subtítulo.
+                "first_name": session.display_name.split()[0] if session.display_name.split() else session.display_name,
                 "csrf_token": session.csrf_token,
                 "roles": sorted(session.system_roles | session.team_roles),
                 "can_attendance": Permission.ATTENDANCE_READ_TEAM in session.permissions,

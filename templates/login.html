@@ -4,52 +4,151 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#171717">
-  <title>Entrar · Hub Handebol</title>
+  <meta name="theme-color" content="#15171A">
+  <title>Entrar · Plataforma de Handebol</title>
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/login.js" defer></script>
 </head>
-<body class="login-body" data-theme="neutral">
+{#
+  Camada 1 da plataforma: esta tela serve qualquer time e não carrega
+  organization, team_theme nem CSS de time. A única constante é que é handebol.
+  Os nomes de time abaixo são dado escolhível no cadastro, não identidade da
+  página — nenhuma cor, logotipo ou monograma de time entra aqui.
+  Ver docs/design-system/ARCHITECTURE.md §Camada 1.
+#}
+<body class="login-body" data-theme="neutral" data-login-mode="{{ login_mode|default('signin') }}">
   <main class="login-shell">
-    <section class="login-brand" aria-label="Apresentação">
-      <span class="eyebrow">HANDEBOL · PLATAFORMA MODULAR</span>
-      <h1>Hub<br>Handebol</h1>
-      <p>Presenças e os próximos módulos da equipe em um só lugar — no celular e no computador.</p>
-      <div class="brand-mark" aria-hidden="true">H</div>
-    </section>
-    <section class="login-card">
-      <div>
-        <span class="eyebrow">ACESSO PRIVADO</span>
-        <h2>Bem-vindo</h2>
-        <p class="muted">Entre com sua conta ou crie o primeiro acesso como jogador.</p>
+    <section class="login-hero" aria-label="Apresentação">
+      <div class="login-wordmark">
+        <span class="login-ball" aria-hidden="true"></span>
+        <strong>Plataforma de Handebol</strong>
       </div>
-      {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
-      <form method="post" action="/login" class="stack-form">
-        <label>
-          <span>Usuário</span>
-          <input name="username" autocomplete="username" value="{{ username }}" required>
-        </label>
-        <label>
-          <span>Senha</span>
-          <input name="password" type="password" autocomplete="current-password" required autofocus>
-        </label>
-        <button class="button button-primary button-large" type="submit">Entrar</button>
-      </form>
-      {% if registration_players %}
-      <details class="registration-panel">
-        <summary>Criar minha conta de jogador</summary>
-        <form method="post" action="/register" class="stack-form compact-form">
-          <label><span>Meu nome no elenco</span><select name="team_member_id" required><option value="">Selecione seu nome</option>{% for player in registration_players %}<option value="{{ player.id }}">{{ player.name }} · {{ player.position }}</option>{% endfor %}</select></label>
-          <label><span>Usuário</span><input name="username" autocomplete="username" maxlength="80" required></label>
-          <label><span>Senha</span><input name="password" type="password" autocomplete="new-password" required></label>
-          <label><span>Confirmar senha</span><input name="password_confirmation" type="password" autocomplete="new-password" required></label>
-          <button class="button button-primary" type="submit">Criar conta</button>
-        </form>
-      </details>
-      {% endif %}
-      <p class="security-note">Acesso protegido. Os dados permanecem no servidor particular.</p>
+      <h1>Confirmação, chamada e calendário da sua equipe.</h1>
+      <p>Um acesso só, no celular e no computador.</p>
+      {# Slot de foto: quadra/bola genérica, sem uniforme ou escudo — a tela
+         serve todos os times. Enquanto não houver arquivo aprovado, o bloco
+         fica no gradiente neutro em vez de exibir a foto de um time. #}
+      <div class="login-photo" aria-hidden="true"></div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-panel-inner">
+        <div class="segmented" role="tablist" aria-label="Entrar ou criar conta">
+          <button
+            class="segmented-option"
+            id="tab-signin"
+            type="button"
+            role="tab"
+            aria-controls="panel-signin"
+            aria-selected="true"
+            data-login-tab="signin"
+          >Entrar</button>
+          <button
+            class="segmented-option"
+            id="tab-signup"
+            type="button"
+            role="tab"
+            aria-controls="panel-signup"
+            aria-selected="false"
+            data-login-tab="signup"
+          >Criar conta</button>
+        </div>
+
+        {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+
+        <section id="panel-signin" class="login-tabpanel" role="tabpanel" aria-labelledby="tab-signin">
+          <form method="post" action="/login" class="stack-form">
+            <label>
+              <span>Usuário</span>
+              <input name="username" autocomplete="username" value="{{ username }}" required>
+            </label>
+            <label>
+              <span>Senha</span>
+              <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <button class="button button-primary button-large" type="submit">Entrar</button>
+          </form>
+        </section>
+
+        <section id="panel-signup" class="login-tabpanel" role="tabpanel" aria-labelledby="tab-signup" hidden>
+          {% if registration_teams %}
+          <ol class="wizard-progress" aria-label="Etapas do cadastro">
+            <li class="wizard-dot-item" data-wizard-marker="1"><span class="wizard-dot">1</span><span class="wizard-step-label">Time</span></li>
+            <li class="wizard-dot-item" data-wizard-marker="2"><span class="wizard-dot">2</span><span class="wizard-step-label">Elenco</span></li>
+            <li class="wizard-dot-item" data-wizard-marker="3"><span class="wizard-dot">3</span><span class="wizard-step-label">Acesso</span></li>
+          </ol>
+
+          <form method="post" action="/register" class="stack-form" data-signup-form>
+            <input type="hidden" name="team_id" value="{{ signup_team_id or '' }}" data-signup-team-input>
+
+            <fieldset class="wizard-step" data-wizard-step="1">
+              <legend>Escolha seu time</legend>
+              <p class="muted">Sua conta fica vinculada ao time que você escolher aqui.</p>
+              <ul class="team-picker">
+                {% for team in registration_teams %}
+                <li>
+                  <button
+                    class="team-option"
+                    type="button"
+                    data-team-option="{{ team.id }}"
+                    {% if not team.players %}disabled{% endif %}
+                    aria-pressed="{{ 'true' if signup_team_id == team.id else 'false' }}"
+                  >
+                    <span class="team-monogram" aria-hidden="true">{{ team.initials }}</span>
+                    <span class="team-option-copy">
+                      <strong>{{ team.display_name }}</strong>
+                      <span>{% if team.players %}{{ team.players|length }} atleta{{ 's' if team.players|length != 1 }} sem conta{% else %}Em breve{% endif %}</span>
+                    </span>
+                  </button>
+                </li>
+                {% endfor %}
+              </ul>
+              <div class="wizard-actions">
+                <button class="button button-primary button-large" type="button" data-wizard-next="2" disabled>Continuar</button>
+              </div>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-wizard-step="2" hidden>
+              <legend>Seu nome no elenco</legend>
+              {% for team in registration_teams %}
+              <label class="roster-choice" data-roster-for="{{ team.id }}" hidden>
+                <span>Seu nome no elenco</span>
+                <select data-roster-select="{{ team.id }}" disabled>
+                  <option value="">Selecione seu nome</option>
+                  {% for player in team.players %}<option value="{{ player.id }}">{{ player.name }} · {{ player.position }}</option>{% endfor %}
+                </select>
+                <small class="muted">Isso vincula sua conta ao seu perfil de atleta em {{ team.display_name }}.</small>
+              </label>
+              {% endfor %}
+              <input type="hidden" name="team_member_id" value="" data-signup-member-input>
+              <div class="wizard-actions">
+                <button class="button" type="button" data-wizard-back="1">Voltar</button>
+                <button class="button button-primary" type="button" data-wizard-next="3" disabled>Continuar</button>
+              </div>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-wizard-step="3" hidden>
+              <legend>Seu acesso</legend>
+              <label><span>Usuário</span><input name="username" autocomplete="username" maxlength="80" required></label>
+              <label><span>Senha</span><input name="password" type="password" autocomplete="new-password" required></label>
+              <label><span>Confirmar senha</span><input name="password_confirmation" type="password" autocomplete="new-password" required></label>
+              <div class="wizard-actions">
+                <button class="button" type="button" data-wizard-back="2">Voltar</button>
+                <button class="button button-primary" type="submit">Criar conta</button>
+              </div>
+            </fieldset>
+          </form>
+          {% else %}
+          <p class="muted">Nenhum time está aberto para cadastro agora. Peça o acesso à comissão técnica da sua equipe.</p>
+          {% endif %}
+        </section>
+
+        <p class="security-note">Acesso privado · dados ficam no servidor do time</p>
+      </div>
     </section>
   </main>
 </body>

@@ -80,7 +80,10 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     response = client.get("/app")
 
     assert response.status_code == 200
-    assert '<h1 id="hub-title">Handebol em um só lugar</h1>' in response.text
+    # O hero passou a saudar pelo primeiro nome de quem entrou: é a tela que o
+    # atleta abre todo dia, e o lema desceu para o subtítulo justamente para
+    # não virar assinatura repetida (handoff de identidade §4.2).
+    assert '<h1 id="hub-title">Bem-vindo de volta, ' in response.text
     assert 'href="/app/presencas"' in response.text
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
@@ -168,7 +171,14 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v12"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v13"' in worker
+    # A identidade visual só sobrevive offline se os tokens e as fontes
+    # auto-hospedadas estiverem no shell — sem isso a chamada no ginásio sem
+    # sinal cai no CSS do navegador.
+    assert '"/static/css/tokens.generated.css"' in worker
+    assert '"/static/css/hm-ime-expressive.css"' in worker
+    assert '"/static/fonts/inter-latin.woff2"' in worker
+    assert '"/static/fonts/barlow-condensed-700-latin.woff2"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
     assert '["/app/calendario", "/app/calendario"]' in worker

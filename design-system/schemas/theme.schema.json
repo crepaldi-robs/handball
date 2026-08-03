@@ -16,6 +16,16 @@
     "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
     "formal_name": { "type": "string", "maxLength": 160 },
     "athletics_name": { "type": "string", "maxLength": 160 },
+    "motto": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Lema do time, exibido no hero do hub. Fica aqui, e não escrito no template, porque é identidade de um time só — um segundo time cadastrado não pode herdar o lema do primeiro. Use com parcimônia: repetir o lema em toda tela desgasta o impacto."
+    },
+    "achievement": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "Conquista de destaque exibida como selo dourado no hero do hub (ex.: títulos). Mesmo motivo do lema para viver aqui e não no template."
+    },
     "monogram": {
       "type": "string",
       "minLength": 1,

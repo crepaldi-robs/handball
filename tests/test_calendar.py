@@ -569,7 +569,7 @@ def test_calendar_v7_theme_idempotency_conflicts_filters_and_problem_details(
     options = client.get("/api/v1/calendar/options").json()
     theme = options["teams"][0]["visual_identity"]
     assert theme["slug"] == "hm-ime"
-    assert theme["primary"] == "#D71920"
+    assert theme["primary"] == "#82143C"
     assert theme["monogram"] == "HM"
     assert theme["logo_url"] == "/static/hm-ime-logo.jpg"
 

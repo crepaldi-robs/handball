@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Data | 1 de agosto de 2026 (fundação) — atualizado com a Fase 7 na mesma data |
+| Data | 1 de agosto de 2026 (fundação e Fase 7) — Fase 8 em 3 de agosto de 2026 |
 | Depende de | `docs/design-system/AUDIT.md` (diagnóstico), `AGENTS.md`, `docs/SITE-INTEGRATION-CONTRACT.md` |
 | Escopo desta entrega | fundação de tokens, resolução de time ativo, login neutro, hub tematizado **e Fase 7**: os 6 módulos restantes (Presenças, Estatísticas, Calendário, Playbook, Consultas, Administração) agora resolvem `organization`/`team_theme` pela sessão, não por uma constante fixa — ver "Estado e pendências". |
 
@@ -31,13 +31,24 @@ corrigido em silêncio.
 
 ### Camada 3 — Identidade do módulo
 
-Playbook e Calendário mantêm namespaces de variável próprios
-(`--playbook-*`, `--calendar-*`) porque têm dezenas de regras que os
-consomem, mas esses namespaces agora **derivam** dos tokens compartilhados
-(`--playbook-primary: var(--color-brand-primary)` etc., em vez de hex
-duplicado) — ver "Estado e pendências". Isso preserva a diferenciação de
-*conteúdo* de cada módulo (ícone, navegação, densidade) sem duplicar a cor
-de marca, exatamente como a Camada 3 exige.
+Os namespaces `--playbook-*` e `--calendar-*` **não existem mais**. Eles
+foram, nesta ordem: paleta própria com hex duplicado → bloco de apelidos que
+só reapontava para os tokens compartilhados → nada. As regras de Playbook e
+Calendário consomem `var(--color-*)` direto. A diferenciação de cada módulo
+continua onde sempre esteve de verdade — ícone, navegação, densidade,
+componentes próprios —, não em uma cor de marca paralela.
+
+O que sobra de Camada 3 é `static/css/hm-ime-expressive.css`: dourado,
+vermelho esportivo, vinho profundo e azul institucional do HM-IME. Eles não
+cabem no arquivo de tema porque `theme.schema.json` declara
+`"additionalProperties": false` em `colors`, e não deveriam mesmo caber — são
+acentos de composição, não tokens de marca. Esse arquivo é carregado por
+todas as telas autenticadas, **nunca por `/login`**.
+
+Uma exceção controlada de escopo: `static/calendar.js` sobrescreve os
+`--color-*` na subárvore do calendário quando o usuário troca de equipe no
+seletor. Os valores vêm de `visual_identity`, resolvido no servidor a partir
+de `team_ids` — o slug continua não vindo do cliente.
 
 ## Fonte única de verdade
 
@@ -132,6 +143,78 @@ conforme pedido pela missão:
 
 ## Estado e pendências (não confundir com "concluído")
 
+### Concluído na Fase 8 — identidade visual unificada (3 de agosto de 2026)
+
+Aplicação do handoff "HM-IME — Identidade Visual Unificada". As três
+identidades concorrentes (navy/laranja legado, vermelho HM-IME, bordô do
+Playbook) deixaram de existir: há um sistema só.
+
+**Tokens.** `brand_primary` foi de `#D71920` para o vinho institucional
+`#82143C` — o único vermelho do time com origem documentada (Manual de
+Identidade Visual do IME-USP) e o que leva branco/primária de 5,19:1 para
+9,93:1. `text` foi para o carvão `#111111`, `border` para `#E0D6D9`,
+`fonts.heading` para Barlow Condensed. Detalhes e razões em
+`teams/hm-ime/THEME.md`.
+
+**Fim da paleta legada.** O bloco `:root` de `static/styles.css` era uma
+paleta navy/laranja completa (`--navy-900`, `--orange`…) que competia com o
+tema do time. Agora cada nome legado é apelido do token equivalente, o que
+migrou ~90 regras sem reescrevê-las uma a uma; `--navy-*` e `--orange` foram
+removidos e seus usos resolvidos caso a caso. `.topbar` e `.platform-appbar`
+viraram o mesmo cabeçalho (fundo carvão, filete da cor do time) — a pendência
+registrada na Fase 7 fecha aqui. `.mini-mark` foi apagada.
+
+**Tema do arquivo, não do template.** `formal_name`, `athletics_name`,
+`motto` e `achievement` passaram a existir em `TeamVisualIdentity`. O hero do
+hub monta o eyebrow, a saudação, o lema e o selo de conquista a partir deles:
+um segundo time cadastrado não herda o lema nem os títulos do primeiro.
+
+**Login independente de time.** `/login` deixou de assumir o HM-IME. Tem
+controle segmentado Entrar/Criar conta e um assistente de 3 passos (Time →
+Elenco → Acesso). O passo 1 lista os times ativos; o passo 2, o elenco livre
+*daquele* time. O `team_id` chega do formulário e é tratado como entrada não
+confiável: só restringe a lista de atletas aceitáveis, e a conferência é
+refeita no servidor (`IdentityService.register_player`). Nenhum tema,
+permissão ou vínculo é derivado dele. A tela é a Camada 1 pura — sem
+`data-team`, sem logotipo, sem `hm-ime-expressive.css`, com paleta neutra
+própria.
+
+**Mobile-first.** Breakpoint único de 760px, `env(safe-area-inset-*)` em tudo
+que é fixo ou flutuante, alvos de toque de 44px, sidebar de Presenças virando
+bottom nav de 5 abas (Auditoria inclusa). Tabela densa vira cartão sem perder
+coluna: Histórico e Auditoria ganham uma lista de cartões alimentada pelo
+mesmo laço; Elenco, que tem campo editável, empilha a própria tabela
+(`.stacked-table` + `data-label`) para não existirem dois inputs do mesmo
+dado. Usuários e Consultas SQL continuam desktop-first por decisão explícita
+e mostram aviso e resumo somente-leitura no celular.
+
+**Playbook.** O caminho da pasta entrou na URL (`?folder=<id>`): é linkável,
+sobrevive a refresh e o botão Voltar do navegador sobe um nível da árvore em
+vez de sair do módulo. Um nó com subpastas mostra linhas de pasta antes dos
+conteúdos, e o breadcrumb usa `›` com o nó atual destacado.
+
+**Fontes.** Inter e Barlow Condensed (ambas OFL) auto-hospedadas em
+`static/fonts/`, subconjuntos latin e latin-ext. Nada de CDN: o servidor é
+particular e precisa funcionar offline. Os arquivos e os três CSS entraram no
+shell do service worker (`handball-shell-v13`) — antes nem
+`tokens.generated.css` estava lá, então a identidade sumia sem rede.
+
+### Ainda pendente depois da Fase 8
+
+- **Fotografia.** O hero do hub usa `static/hm-ime-hero.jpg` (foto da própria
+  equipe). O hero do `/login` continua no gradiente neutro de propósito: a
+  foto ali precisa ser genérica de handebol, sem uniforme ou escudo
+  identificável, porque a tela serve todos os times. As miniaturas do Playbook
+  também seguem sem foto.
+- **Cartão de ação de "Seu relatório"** mostra a data do próximo treino em
+  aberto, sem hora nem local: `own_attendance` não traz esses campos. Nada foi
+  inventado para preencher o espaço.
+- `.platform-brand.has-image` ainda tem `/static/hm-ime-logo.jpg` fixo no CSS
+  em vez de derivar de `team_theme.logo_url` (pendência herdada da Fase 7).
+- `border` sobre `canvas` melhorou com `#E0D6D9`, mas continua abaixo de 3:1.
+- Screenshots Playwright e varredura completa de teclado/zoom/leitor de tela
+  não foram executados nesta sessão.
+
 ### Concluído na Fase 7
 
 Todas as 9 páginas autenticadas (`/app`, `/app/presencas` — CT e jogador,
@@ -169,7 +252,7 @@ do time), reaproveitando `.platform-brand` (já tematizado) em vez do
 `var(--color-brand-primary)`/`var(--color-brand-primary-hover)` em vez de
 `var(--navy-900)`/`var(--navy-800)`.
 
-### Ainda pendente (fora do escopo desta entrega)
+### Ainda pendente ao fim da Fase 7 (tudo resolvido na Fase 8, acima)
 
 - `.topbar`/`.topbar-inner` (fundo `rgba(11,31,51,.97)` hardcoded) continuam
   como estavam — só a marca dentro delas foi trocada. Consolidar esse
@@ -192,6 +275,9 @@ do time), reaproveitando `.platform-brand` (já tematizado) em vez do
   `.calendar-v2` (glow de fundo e outline de foco) não foram convertidas
   para derivar de `--color-brand-primary` (exigiria `color-mix()`, risco de
   compatibilidade para um efeito cosmético) — ver
-  `docs/design-system/ACCESSIBILITY.md`.
+  `docs/design-system/ACCESSIBILITY.md`. **Resolvido na Fase 8**: passaram a
+  usar `color-mix()` com o valor sólido declarado na linha anterior como
+  fallback, então navegador sem suporte fica no comportamento antigo em vez
+  de perder a regra.
 - Screenshots Playwright e varredura completa de teclado/zoom/leitor de tela
-  nesses módulos (Fase 8 da missão) não foram executados nesta sessão.
+  nesses módulos não foram executados nesta sessão.

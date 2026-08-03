@@ -294,17 +294,22 @@ if (calendarRoot) {
     const team = currentTeam();
     if (!team) return;
     const theme = team.visual_identity || {};
+    // Sobrescreve os tokens canônicos só na subárvore do calendário: aqui o
+    // usuário escolhe qual das suas equipes está vendo, e a identidade tem de
+    // acompanhar. Os valores vêm de visual_identity, resolvido e validado no
+    // servidor a partir de team_ids — nunca de um slug enviado pelo cliente.
+    // O namespace --calendar-* deixou de existir (ver ARCHITECTURE.md §Camada 3).
     const mapping = {
-      "--calendar-primary": theme.primary,
-      "--calendar-primary-dark": theme.primary_dark,
-      "--calendar-canvas": theme.canvas,
-      "--calendar-surface": theme.surface,
-      "--calendar-ink": theme.ink,
-      "--calendar-muted": theme.muted,
-      "--calendar-line": theme.border,
-      "--calendar-success": theme.success,
-      "--calendar-warning": theme.warning,
-      "--calendar-danger": theme.destructive,
+      "--color-brand-primary": theme.primary,
+      "--color-brand-primary-hover": theme.primary_dark,
+      "--color-canvas": theme.canvas,
+      "--color-surface": theme.surface,
+      "--color-text": theme.ink,
+      "--color-text-muted": theme.muted,
+      "--color-border": theme.border,
+      "--color-success": theme.success,
+      "--color-warning": theme.warning,
+      "--color-danger": theme.destructive,
     };
     for (const [name, value] of Object.entries(mapping)) {
       if (value) calendarRoot.style.setProperty(name, value);

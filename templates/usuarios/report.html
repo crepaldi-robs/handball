@@ -1,6 +1,98 @@
 <!doctype html>
-<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Meu relatório · {{ organization.display_name }}</title><link rel="stylesheet" href="/static/css/tokens.generated.css"><link rel="stylesheet" href="/static/styles.css"><script src="/static/platform.js" defer></script></head>
-<body class="platform-body"><header class="topbar"><div class="topbar-inner">{% set page_subtitle = "Meu relatório" %}{% include "partials/_brand.html" %}<div class="top-actions"><span class="user-label">{{ session.display_name }} · PLAYER</span><form method="post" action="/logout" data-platform-logout><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><button class="text-button logout-button">Sair</button></form></div></div></header>
-<main class="module-shell"><section class="hub-intro"><span class="eyebrow">PRESENÇAS INDIVIDUAIS</span><h1>Meu relatório</h1><p>Período: {{ report.period.from or 'sem registros' }} a {{ report.period.to or 'sem registros' }}.</p></section>
-<section class="metrics"><article class="metric"><strong>{{ report.eligible_trainings }}</strong><span>Treinos elegíveis</span></article><article class="metric"><strong>{{ report.presences }}</strong><span>Presenças</span></article><article class="metric"><strong>{{ report.absences }}</strong><span>Ausências</span></article><article class="metric"><strong>{{ report.pending }}</strong><span>Pendências</span></article></section>
-<section class="panel table-wrap"><h2>Histórico individual</h2><table><thead><tr><th>Data</th><th>Confirmação</th><th>Presença</th></tr></thead><tbody>{% for item in report.history %}<tr><td>{{ item.training_date }}</td><td>{{ item.confirmation_status }}</td><td>{% if item.present == 1 %}Presente{% elif item.present == 0 %}Ausente{% else %}Pendente{% endif %}</td></tr>{% endfor %}</tbody></table><p class="muted">{{ report.completeness.message }}</p></section></main></body></html>
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <title>Seu relatório · {{ organization.display_name }}</title>
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+</head>
+{# Tela do atleta, não da comissão técnica: copy em segunda pessoa e a ação de
+   maior valor (confirmar o próximo treino) acima da dobra no celular. #}
+<body class="platform-body">
+  <header class="topbar">
+    <div class="topbar-inner">
+      {% set page_subtitle = "Meu relatório" %}
+      {% include "partials/_brand.html" %}
+      <div class="top-actions">
+        <a class="text-button hub-text-link" href="/app">Hub</a>
+        <span class="user-label">{{ session.display_name }} · PLAYER</span>
+        <form method="post" action="/logout" data-platform-logout>
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <button class="text-button logout-button" type="submit">Sair</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <main class="module-shell player-report-shell">
+    <section>
+      <span class="eyebrow">{{ session.display_name }}</span>
+      <h1>Seu relatório</h1>
+    </section>
+
+    {% if report.next_training %}
+    <section class="action-card">
+      <div>
+        <span>PRÓXIMO TREINO</span>
+        <strong>{{ report.next_training.training_date }}</strong>
+      </div>
+      <a class="action-card-button" href="/app/presencas">Confirmar presença</a>
+    </section>
+    {% endif %}
+
+    <section class="stat-tiles" aria-label="Seus números">
+      <article class="stat-tile">
+        <strong>{% if report.attendance_rate is not none %}{{ (report.attendance_rate * 100)|round|int }}%{% else %}—{% endif %}</strong>
+        <span>Presença</span>
+      </article>
+      <article class="stat-tile">
+        <strong>{{ report.presences }}/{{ report.eligible_trainings }}</strong>
+        <span>Treinos</span>
+      </article>
+      <article class="stat-tile">
+        <strong>{{ report.streak }}</strong>
+        <span>Sequência atual</span>
+      </article>
+    </section>
+
+    <section>
+      <h2>Seu histórico pessoal</h2>
+      {# O rótulo textual é obrigatório: a informação não pode depender só da
+         cor do selo. #}
+      <ul class="record-cards">
+        {% for item in report.history %}
+        <li class="record-card">
+          <div class="record-card-top">
+            <strong>Treino</strong>
+            <time>{{ item.training_date }}</time>
+          </div>
+          <div class="record-field">
+            <span>Confirmação</span>
+            <span>{{ item.confirmation_status }}</span>
+          </div>
+          <div class="record-field">
+            <span>Presença</span>
+            <span>
+              {% if item.present == 1 %}<span class="status-pill status-pill-present">Presente</span>
+              {% elif item.present == 0 %}<span class="status-pill status-pill-absent">Ausente</span>
+              {% else %}<span class="status-pill status-pill-pending">Pendente</span>{% endif %}
+            </span>
+          </div>
+        </li>
+        {% else %}
+        <li class="record-card"><div class="record-card-top"><strong>Sem registros ainda</strong></div></li>
+        {% endfor %}
+      </ul>
+      <p class="muted">{{ report.completeness.message }}</p>
+    </section>
+  </main>
+</body>
+</html>

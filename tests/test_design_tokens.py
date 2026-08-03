@@ -69,7 +69,7 @@ def test_platform_and_hm_ime_theme_validate_without_copies():
     assert set(themes) == {"hm-ime"}
     hm_ime = themes["hm-ime"]
     assert hm_ime["display_name"] == "HM-IME"
-    assert hm_ime["colors"]["brand_primary"] == "#D71920"
+    assert hm_ime["colors"]["brand_primary"] == "#82143C"
     # success/warning/danger são fundamentos da plataforma; um time nunca os define.
     assert "success" not in hm_ime["colors"]
     assert "warning" not in hm_ime["colors"]
@@ -95,7 +95,7 @@ def test_generated_css_defines_neutral_root_and_team_override():
     css = (ROOT_DIR / "static" / "css" / "tokens.generated.css").read_text(encoding="utf-8")
     assert ':root,\n[data-theme="neutral"] {' in css
     assert '[data-team="hm-ime"] {' in css
-    assert "#D71920" in css
+    assert "#82143C" in css
     assert "javascript:" not in css.casefold()
 
 
@@ -112,7 +112,7 @@ def test_team_theme_falls_back_to_neutral_for_unknown_or_absent_slug(slug):
 
 def test_team_theme_is_case_insensitive_for_known_slug():
     assert team_theme("HM-IME") is TEAM_THEMES["hm-ime"]
-    assert team_theme("hm-ime").primary == "#D71920"
+    assert team_theme("hm-ime").primary == "#82143C"
 
 
 def test_neutral_theme_has_no_hm_ime_asset():
@@ -208,16 +208,25 @@ def test_get_teams_by_ids_returns_empty_for_no_ids_or_unknown_ids(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_login_page_has_no_team_branding(tmp_path):
+    """Caso A: /login não adota a identidade de time nenhum.
+
+    O assistente de cadastro precisa listar os times ativos para o visitante
+    escolher o seu — então o *nome* do time aparece como dado escolhível. O
+    que continua proibido é a página vestir esse time: sem data-team, sem
+    logotipo, sem o CSS de acentos do time, sem organization/team_theme.
+    """
     client, _ = make_client(tmp_path)
 
     response = client.get("/login")
 
     assert response.status_code == 200
     body = response.text
-    assert "HM-IME" not in body
-    assert "hm-ime" not in body.casefold()
-    assert "hm-ime-logo" not in body
     assert 'data-theme="neutral"' in body
+    assert "data-team=" not in body
+    assert "hm-ime-logo" not in body
+    assert "hm-ime-expressive.css" not in body
+    assert "AAAMAT" not in body
+    assert "Handebol Masculino IME-USP" not in body
 
 
 # ---------------------------------------------------------------------------

@@ -39,15 +39,15 @@
 }
 
 [data-team="hm-ime"] {
-  --color-brand-primary: #D71920;
-  --color-brand-primary-hover: #A40E17;
+  --color-brand-primary: #82143C;
+  --color-brand-primary-hover: #5E0B22;
   --color-brand-on-primary: #FFFFFF;
   --color-canvas: #F7F4F2;
   --color-surface: #FFFFFF;
   --color-surface-raised: #FFFFFF;
-  --color-text: #171717;
+  --color-text: #111111;
   --color-text-muted: #6B6464;
-  --color-border: #E6DEDB;
-  --color-focus: rgba(215, 25, 32, .4);
-  --font-heading: "Roboto Condensed", "Bahnschrift Condensed", "Arial Narrow", sans-serif;
+  --color-border: #E0D6D9;
+  --color-focus: rgba(130, 20, 60, 0.4);
+  --font-heading: "Barlow Condensed", "Roboto Condensed", "Bahnschrift Condensed", "Arial Narrow", sans-serif;
 }

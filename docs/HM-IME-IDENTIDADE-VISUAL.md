@@ -1,9 +1,18 @@
 # Identidade visual digital do HM-IME
 
-**Status:** proposta normativa para aprovação e aplicação no produto
+**Status:** proposta normativa de 31/07/2026, **parcialmente superada** em 03/08/2026
 **Versão:** 1.0
 **Data da pesquisa:** 31 de julho de 2026
 **Escopo:** aplicação web HM-IME; não redefine a identidade institucional da AAAMAT nem materiais impressos.
+
+> **Leia antes de usar os valores deste documento.** Os princípios (§1 a §4,
+> §6 em diante) continuam valendo. A **paleta e os nomes de variável estão
+> desatualizados**: as variáveis `--hm-*` deixaram de existir na Fase 7 em
+> favor de `--color-*` gerados por `scripts/build_design_tokens.py`, e o
+> vermelho `#D71920` foi substituído pelo vinho institucional `#82143C` na
+> Fase 8. Onde este documento e `docs/design-system/teams/hm-ime/THEME.md`
+> divergirem, **vale o THEME.md** — ele é gerado a partir da mesma fonte que o
+> CSS. Ver `docs/design-system/ARCHITECTURE.md` §"Concluído na Fase 8".
 
 ## 1. Decisão executiva
 
@@ -102,20 +111,23 @@ Criar, a partir do arquivo aprovado e sem alterar o desenho, versões derivadas 
 
 ## 5. Cores oficiais do produto
 
-Estas variáveis já possuem correspondência no tema HM-IME do código e passam a ser a fonte canônica para todos os módulos.
+> **Superado.** Os nomes `--hm-*` não existem mais e a primária mudou. A
+> tabela abaixo fica como registro do que foi proposto em 31/07; a paleta em
+> vigor está em `docs/design-system/teams/hm-ime/THEME.md`, gerada de
+> `design-system/themes/hm-ime.json`.
 
-| Token | Valor | Papel |
-|---|---:|---|
-| `--hm-primary` | `#D71920` | ação principal, seleção, destaque da marca |
-| `--hm-primary-dark` | `#A40E17` | hover, estado pressionado, áreas de maior contraste |
-| `--hm-canvas` | `#F7F4F2` | fundo geral branco quente |
-| `--hm-surface` | `#FFFFFF` | cartões, formulários, diálogos |
-| `--hm-ink` | `#171717` | texto principal e app bar |
-| `--hm-muted` | `#6B6464` | texto secundário |
-| `--hm-border` | `#E6DEDB` | bordas, divisores e campos |
-| `--hm-success` | `#0F7B5A` | confirmação e estado concluído |
-| `--hm-warning` | `#B45F06` | atenção e pendência |
-| `--hm-destructive` | `#7F1D1D` | exclusão e ação irreversível |
+| Token proposto (obsoleto) | Valor proposto | Token em vigor | Valor em vigor |
+|---|---:|---|---:|
+| `--hm-primary` | `#D71920` | `--color-brand-primary` | `#82143C` |
+| `--hm-primary-dark` | `#A40E17` | `--color-brand-primary-hover` | `#5E0B22` |
+| `--hm-canvas` | `#F7F4F2` | `--color-canvas` | `#F7F4F2` |
+| `--hm-surface` | `#FFFFFF` | `--color-surface` | `#FFFFFF` |
+| `--hm-ink` | `#171717` | `--color-text` | `#111111` |
+| `--hm-muted` | `#6B6464` | `--color-text-muted` | `#6B6464` |
+| `--hm-border` | `#E6DEDB` | `--color-border` | `#E0D6D9` |
+| `--hm-success` | `#0F7B5A` | `--color-success` | `#0F7B5A` |
+| `--hm-warning` | `#B45F06` | `--color-warning` | `#B45F06` |
+| `--hm-destructive` | `#7F1D1D` | `--color-danger` | `#7F1D1D` |
 
 ### 5.1 Proporção visual
 
@@ -323,22 +335,24 @@ O problema principal não é a falta de personalidade; é a personalidade estar 
 
 ### 14.1 Fonte única de verdade
 
-Os valores de `handball/core/team_theme.py` devem alimentar variáveis CSS globais no elemento raiz. Nenhum módulo deve copiar os hexadecimais para criar uma paleta paralela.
-
-Contrato mínimo:
+Nenhum módulo deve copiar os hexadecimais para criar uma paleta paralela. Este
+princípio foi cumprido de forma mais forte do que o proposto aqui: em vez de
+escrever as variáveis à mão no CSS, `scripts/build_design_tokens.py` gera
+`static/css/tokens.generated.css` a partir de `design-system/*.json`, e
+`tests/test_design_tokens.py::test_generated_css_is_not_stale` falha se
+alguém editar o CSS gerado ou esquecer de regenerá-lo. Os nomes são
+`--color-*` e variam por `[data-team]`, não `--hm-*` fixos no HM-IME.
 
 ```css
-:root {
-  --hm-primary: #D71920;
-  --hm-primary-dark: #A40E17;
-  --hm-canvas: #F7F4F2;
-  --hm-surface: #FFFFFF;
-  --hm-ink: #171717;
-  --hm-muted: #6B6464;
-  --hm-border: #E6DEDB;
-  --hm-success: #0F7B5A;
-  --hm-warning: #B45F06;
-  --hm-destructive: #7F1D1D;
+/* Trecho de static/css/tokens.generated.css — GERADO, não editar à mão. */
+[data-team="hm-ime"] {
+  --color-brand-primary: #82143C;
+  --color-brand-primary-hover: #5E0B22;
+  --color-canvas: #F7F4F2;
+  --color-surface: #FFFFFF;
+  --color-text: #111111;
+  --color-text-muted: #6B6464;
+  --color-border: #E0D6D9;
 }
 ```
 

@@ -376,3 +376,25 @@ uma fonte única de verdade geradora de CSS; (2) trocar a constante global
 `ORGANIZATION` por resolução real a partir da sessão; (3) consolidar três
 app bars e quatro paletas em um casco só; (4) tornar o login neutro uma
 decisão explícita e testada, não um efeito colateral.
+
+## Fechamento do diagnóstico (3 de agosto de 2026)
+
+Este documento é o retrato da Fase 1 e fica como estava — é a fotografia do
+problema, não a descrição do sistema atual. Para o estado de hoje, ler
+`ARCHITECTURE.md` §"Concluído na Fase 8".
+
+O que os §4 e §5 acima descrevem foi todo desfeito:
+
+| Diagnóstico da Fase 1 | Situação hoje |
+|---|---|
+| Quatro sistemas de cor simultâneos em `static/styles.css` | Um só. O bloco navy/laranja de `:root` virou apelido dos tokens; `--navy-*` e `--orange` não existem mais |
+| `--playbook-*` com bordô próprio `#7f1d1d` | Namespace removido; as regras usam `var(--color-*)` |
+| `--calendar-*` com cópia manual do vermelho | Namespace removido; o seletor de equipe sobrescreve `--color-*` no escopo do calendário com valores vindos do servidor |
+| `#D71920` hardcoded em quatro lugares | A primária é `#82143C` e existe em um lugar só: `design-system/themes/hm-ime.json` |
+| `.theme-hm-ime` escrita no HTML | Removida na Fase 7 |
+| Três app bars diferentes | `.topbar` e `.platform-appbar` são o mesmo componente |
+| Login com marca de time por acidente | Login neutro por decisão, com teste que falha se `data-team` ou o CSS de acentos aparecer ali |
+
+O que **não** foi desfeito e continua valendo como pendência está listado em
+`ARCHITECTURE.md` §"Ainda pendente depois da Fase 8" — principalmente a
+fotografia do `/login` e do Playbook, e a URL do logotipo ainda fixa no CSS.

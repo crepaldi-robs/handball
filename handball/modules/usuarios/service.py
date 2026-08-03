@@ -16,6 +16,37 @@ from handball.database.contracts import UnitOfWorkFactoryContract
 logger = logging.getLogger(__name__)
 
 
+def _current_presence_streak(eligible_rows: list[dict[str, Any]]) -> int:
+    """Presenças seguidas até o último treino apurado, do mais recente para trás.
+
+    Treino ainda não apurado (present is None) não zera a sequência — ele
+    simplesmente ainda não aconteceu para efeito de contagem. Uma ausência
+    zera.
+    """
+    streak = 0
+    for row in sorted(eligible_rows, key=lambda item: str(item["training_date"]), reverse=True):
+        if row["present"] is None:
+            continue
+        if row["present"] != 1:
+            break
+        streak += 1
+    return streak
+
+
+def _initials(display_name: str) -> str:
+    """Duas letras a partir do nome do time, para o cartão do cadastro.
+
+    Não usa o monograma do tema de propósito: o monograma é ativo de marca e
+    /login não carrega marca de time nenhuma.
+    """
+    words = [word for word in display_name.split() if word]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[1][0]).upper()
+
+
 class IdentityService:
     def __init__(self, unit_of_work_factory: UnitOfWorkFactoryContract) -> None:
         self._unit_of_work_factory = unit_of_work_factory
@@ -113,6 +144,24 @@ class IdentityService:
             "attendance_rate": round(present / (present + absent), 4) if present + absent else None,
             "monthly_evolution": evolution,
             "history": rows,
+            # Próximo treino ainda não apurado, para o cartão de ação da tela
+            # "Seu relatório". Sai das linhas que já foram carregadas — nenhuma
+            # consulta a mais e, principalmente, nenhuma data inventada: se não
+            # houver treino aberto à frente, o cartão simplesmente não aparece.
+            "next_training": next(
+                (
+                    {
+                        "training_date": row["training_date"],
+                        "confirmation_status": row["confirmation_status"],
+                    }
+                    for row in sorted(eligible_rows, key=lambda item: str(item["training_date"]))
+                    if row["present"] is None
+                    and not row.get("is_finalized")
+                    and str(row["training_date"]) >= date.today().isoformat()
+                ),
+                None,
+            ),
+            "streak": _current_presence_streak(eligible_rows),
             "completeness": {
                 "complete": pending == 0,
                 "message": "Todos os treinos foram apurados." if pending == 0 else f"{pending} treino(s) ainda não apurado(s).",
@@ -130,6 +179,31 @@ class IdentityService:
     def available_player_registrations(self) -> list[dict[str, Any]]:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             return unit_of_work.identity.available_player_registrations()
+
+    def registration_teams(self) -> list[dict[str, Any]]:
+        """Times oferecíveis no cadastro do /login, com o elenco livre de cada um.
+
+        Alimenta o passo 1 do assistente de criação de conta. Só entra time
+        ativo; time ativo sem nenhum atleta livre aparece na lista como
+        indisponível ("Em breve") em vez de sumir, para o visitante entender
+        que o time existe e o problema é outro.
+
+        Não devolve cor, logotipo nem tema: /login é a Camada 1 neutra e o
+        nome do time aqui é *dado escolhível*, não identidade da página (ver
+        docs/design-system/ARCHITECTURE.md §Camada 1). O tema pós-login
+        continua saindo de resolve_active_team_view, nunca deste formulário.
+        """
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            teams = [team for team in unit_of_work.identity.list_teams() if team["active"]]
+            return [
+                {
+                    "id": int(team["id"]),
+                    "display_name": str(team["display_name"]),
+                    "initials": _initials(str(team["display_name"])),
+                    "players": unit_of_work.identity.available_players_for_team(int(team["id"])),
+                }
+                for team in teams
+            ]
 
     def list_teams(self) -> list[dict[str, Any]]:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
@@ -173,10 +247,40 @@ class IdentityService:
             )
             return unit_of_work.identity.get_user(user_id) or {"id": user_id}
 
-    def register_player(self, *, team_member_id: int, username: str, password: str) -> int:
+    def register_player(
+        self,
+        *,
+        team_member_id: int,
+        username: str,
+        password: str,
+        team_id: int | None = None,
+    ) -> int:
+        """Cria a conta do atleta e a vincula ao seu perfil no elenco.
+
+        `team_id` é o time escolhido no passo 1 do assistente. Ele chega do
+        formulário, então é tratado como entrada não confiável: só serve para
+        *restringir* a lista de atletas aceitáveis, conferida contra o banco
+        aqui. Nada de tema, permissão ou vínculo é derivado dele — o vínculo
+        real continua vindo de player_user_links, e o tema de
+        resolve_active_team_view depois do login.
+        """
         if not password:
             raise ValueError("A senha não pode ficar vazia.")
         with self._unit_of_work_factory() as unit_of_work:
+            if team_id is not None:
+                active_team_ids = {
+                    int(team["id"])
+                    for team in unit_of_work.identity.list_teams()
+                    if team["active"]
+                }
+                if int(team_id) not in active_team_ids:
+                    raise ValueError("Time indisponível para cadastro.")
+                allowed = {
+                    int(player["id"])
+                    for player in unit_of_work.identity.available_players_for_team(int(team_id))
+                }
+                if int(team_member_id) not in allowed:
+                    raise ValueError("Atleta indisponível para cadastro neste time.")
             return unit_of_work.identity.register_player(
                 team_member_id=team_member_id,
                 username=username,

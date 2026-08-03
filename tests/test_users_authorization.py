@@ -224,6 +224,64 @@ def test_player_can_self_register_once_and_enters_hub(tmp_path: Path) -> None:
     assert second.status_code == 400
 
 
+def test_signup_wizard_lists_active_teams_without_wearing_their_identity(
+    tmp_path: Path,
+) -> None:
+    """Passo 1 do assistente: os times ativos viram opção escolhível.
+
+    O nome do time é dado do formulário; a página continua neutra (Caso A).
+    """
+    client, manager, _ = make_v2(tmp_path)
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        team = unit_of_work.identity.list_teams()[0]
+
+    body = client.get("/login").text
+
+    assert f'data-team-option="{team["id"]}"' in body
+    assert str(team["display_name"]) in body
+    assert 'data-theme="neutral"' in body
+    assert "data-team=" not in body
+
+
+def test_signup_refuses_athlete_that_does_not_belong_to_the_chosen_team(
+    tmp_path: Path,
+) -> None:
+    """O time vem do formulário, então é entrada não confiável.
+
+    Ele só restringe a lista de atletas aceitáveis, e a conferência é no
+    servidor: pedir um atleta do time A dizendo ter escolhido o time B é
+    recusado, e nenhuma conta nasce disso.
+    """
+    client, manager, _ = make_v2(tmp_path)
+    with manager.unit_of_work() as unit_of_work:
+        available = unit_of_work.identity.available_player_registrations()
+        other_team_id = unit_of_work.identity.create_team(
+            code="OUTRO_TIME",
+            slug="outro-time",
+            display_name="Outro Time",
+            season_label="2026.2",
+            actor_user_id=1,
+        )
+    assert available
+
+    refused = client.post(
+        "/register",
+        data={
+            "team_id": other_team_id,
+            "team_member_id": available[0]["id"],
+            "username": "invasor",
+            "password": "x",
+            "password_confirmation": "x",
+        },
+        follow_redirects=False,
+    )
+
+    assert refused.status_code == 400
+    assert client.get("/api/v1/me").status_code == 401
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        assert unit_of_work.identity.get_user_by_username("invasor") is None
+
+
 def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     csrf = login(client, "player", data["passwords"]["player"])
