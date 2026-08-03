@@ -1,18 +1,20 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#0b1f33">
   <title>Consultas SQL · Hub Handebol</title>
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/sql-explorer.js" defer></script>
 </head>
 <body class="platform-body" data-sql-explorer data-csrf-token="{{ session.csrf_token }}" data-can-write="{{ 'true' if can_write else 'false' }}">
   <header class="topbar"><div class="topbar-inner">
-    <a class="identity" href="/app"><div class="mini-mark" aria-hidden="true">H</div><div><strong>Consultas SQL</strong><span>Ambiente interno</span></div></a>
+    {% set page_subtitle = "Consultas SQL" %}
+    {% include "partials/_brand.html" %}
     <div class="top-actions"><a class="text-button" href="/app">Hub</a><form method="post" action="/logout" data-platform-logout><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><button class="text-button logout-button" type="submit">Sair</button></form></div>
   </div></header>
   <main class="module-shell sql-shell">

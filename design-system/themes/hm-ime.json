@@ -1,0 +1,28 @@
+{
+  "kind": "team",
+  "slug": "hm-ime",
+  "display_name": "HM-IME",
+  "formal_name": "Handebol Masculino IME-USP",
+  "athletics_name": "AAAMAT",
+  "monogram": "HM",
+  "logo_url": "/static/hm-ime-logo.jpg",
+  "colors": {
+    "brand_primary": "#D71920",
+    "brand_primary_hover": "#A40E17",
+    "brand_on_primary": "#FFFFFF",
+    "canvas": "#F7F4F2",
+    "surface": "#FFFFFF",
+    "surface_raised": "#FFFFFF",
+    "text": "#171717",
+    "text_muted": "#6B6464",
+    "border": "#E6DEDB",
+    "focus": "rgba(215, 25, 32, .4)"
+  },
+  "fonts": {
+    "heading": "\"Roboto Condensed\", \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif"
+  },
+  "sources": [
+    "docs/HM-IME-IDENTIDADE-VISUAL.md",
+    "docs/design-system/teams/hm-ime/RESEARCH.md"
+  ]
+}

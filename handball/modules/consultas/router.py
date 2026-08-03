@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from handball.core.auth import session_from_request
 from handball.core.authorization import AccessContext, Permission, require_read_only_permission
+from handball.modules.usuarios.service import IdentityService
 
 from .schemas import SqlChangeExecuteInput, SqlChangeInput, SqlQueryInput
 from .service import SqlChangeConflict, SqlExplorerService
@@ -42,7 +43,7 @@ def _admin_write_context(request: Request) -> AccessContext:
     return session.to_access_context()
 
 
-def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> APIRouter:
+def create_router(service: SqlExplorerService, identity_service: IdentityService, templates: Jinja2Templates) -> APIRouter:
     router = APIRouter()
     @router.get("/app/consultas", response_class=HTMLResponse)
     def page(request: Request) -> Response:
@@ -51,10 +52,16 @@ def create_router(service: SqlExplorerService, templates: Jinja2Templates) -> AP
             return RedirectResponse("/login", status_code=303)
         if Permission.SQL_EXPLORE not in session.permissions and Permission.SQL_ADMIN not in session.permissions:
             raise HTTPException(status_code=403)
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "consultas/index.html",
-            {"session": session, "can_write": Permission.SQL_ADMIN in session.permissions},
+            {
+                "session": session,
+                "can_write": Permission.SQL_ADMIN in session.permissions,
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
+            },
         )
 
     @router.get("/api/v1/sql/catalog")

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -9,12 +9,13 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/playbook.js" defer></script>
 </head>
 <body
-  class="platform-body playbook-app theme-hm-ime"
+  class="platform-body playbook-app"
   data-playbook
   data-csrf-token="{{ session.csrf_token }}"
   data-user-id="{{ session.user_id }}"

@@ -14,7 +14,6 @@ from handball.core.authorization import (
     require_permission,
     require_team_access,
 )
-from handball.core.organization import ORGANIZATION
 
 from .schemas import (
     OwnPasswordChange,
@@ -50,10 +49,16 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
             return RedirectResponse("/login", status_code=303)
         if Permission.REPORTS_READ_SELF not in session.permissions:
             raise HTTPException(status_code=403)
+        team_view = service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "usuarios/report.html",
-            {"session": session, "report": service.own_report(session.to_access_context()), "organization": ORGANIZATION},
+            {
+                "session": session,
+                "report": service.own_report(session.to_access_context()),
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
+            },
         )
 
     @router.get("/app/admin/usuarios", response_class=HTMLResponse)
@@ -63,6 +68,7 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
             return RedirectResponse("/login", status_code=303)
         if Permission.USERS_MANAGE not in session.permissions:
             raise HTTPException(status_code=403)
+        team_view = service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "usuarios/admin.html",
@@ -71,7 +77,8 @@ def create_router(service: IdentityService, templates: Jinja2Templates) -> APIRo
                 "users": service.list_users(),
                 "options": service.options(),
                 "teams": service.list_teams(),
-                "organization": ORGANIZATION,
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
             },
         )
 

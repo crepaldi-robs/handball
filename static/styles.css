@@ -21,25 +21,15 @@
   --shadow: 0 18px 45px rgba(7, 21, 35, .1);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
-
-  /* Fundação de plataforma compartilhada (HM-IME) — valores espelham
-     handball/core/team_theme.py::TEAM_THEMES["hm-ime"]. */
-  --hm-primary: #D71920;
-  --hm-primary-dark: #A40E17;
-  --hm-canvas: #F7F4F2;
-  --hm-surface: #FFFFFF;
-  --hm-ink: #171717;
-  --hm-muted: #6B6464;
-  --hm-border: #E6DEDB;
-  --hm-success: #0F7B5A;
-  --hm-warning: #B45F06;
-  --hm-destructive: #7F1D1D;
 }
 
 /* -------------------------------------------------------------------------
    Casco compartilhado: app bar e marca do produto (docs/HM-IME-IDENTIDADE-VISUAL.md).
-   Novos componentes; .topbar/.mini-mark continuam servindo as telas ainda
-   não migradas.
+   Consome os tokens de static/css/tokens.generated.css (fonte: design-system/
+   platform.json + design-system/themes/*.json — ver docs/design-system/
+   ARCHITECTURE.md). As antigas variáveis --hm-* foram removidas em favor de
+   --color-*, que já variam por [data-team] em vez de fixar sempre o HM-IME.
+   .topbar/.mini-mark continuam servindo as telas ainda não migradas (Fase 7).
    ------------------------------------------------------------------------- */
 .platform-appbar {
   position: sticky;
@@ -47,8 +37,8 @@
   z-index: 50;
   height: 68px;
   color: #fff;
-  background: var(--hm-ink);
-  border-bottom: 3px solid var(--hm-primary);
+  background: var(--color-text);
+  border-bottom: 3px solid var(--color-brand-primary);
   padding-top: env(safe-area-inset-top);
 }
 .platform-brand {
@@ -57,7 +47,7 @@
   width: 35px;
   height: 35px;
   color: white;
-  background: var(--hm-primary);
+  background: var(--color-brand-primary);
   border-radius: 9px 4px 9px 4px;
   font-family: Georgia, serif;
   font-weight: 800;
@@ -73,17 +63,19 @@
 /* -------------------------------------------------------------------------
    Playbook: biblioteca de quadra, árvore dinâmica e roteiro de treino.
    ------------------------------------------------------------------------- */
+/* Deriva do token compartilhado em vez de manter paleta própria (bordô) —
+   ver docs/design-system/AUDIT.md §6 e ARCHITECTURE.md. */
 .playbook-app {
-  --playbook-primary: #7f1d1d;
-  --playbook-primary-dark: #581c1c;
-  --playbook-canvas: #f8f6f1;
-  --playbook-surface: #fffdfa;
-  --playbook-ink: #192330;
-  --playbook-muted: #617080;
-  --playbook-line: #ded8cf;
-  --playbook-success: #16714b;
-  --playbook-warning: #a86204;
-  --playbook-danger: #b42318;
+  --playbook-primary: var(--color-brand-primary);
+  --playbook-primary-dark: var(--color-brand-primary-hover);
+  --playbook-canvas: var(--color-canvas);
+  --playbook-surface: var(--color-surface);
+  --playbook-ink: var(--color-text);
+  --playbook-muted: var(--color-text-muted);
+  --playbook-line: var(--color-border);
+  --playbook-success: var(--color-success);
+  --playbook-warning: var(--color-warning);
+  --playbook-danger: var(--color-danger);
   color: var(--playbook-ink);
   background: var(--playbook-canvas);
 }
@@ -566,13 +558,14 @@ h2 { margin-bottom: .35rem; font-size: 1.15rem; letter-spacing: -.02em; }
   display: grid;
   place-items: center;
   color: white;
-  background: var(--orange);
   font-family: Georgia, serif;
   font-weight: 800;
   transform: rotate(-4deg);
 }
-.mini-mark { width: 35px; height: 35px; border-radius: 9px 4px 9px 4px; }
-.brand-mark { width: 92px; height: 92px; border-radius: 24px 9px 24px 9px; font-size: 3rem; box-shadow: 16px 16px 0 rgba(255, 255, 255, .08); }
+/* .mini-mark segue nas telas legadas (navy/laranja) ainda não migradas (Fase 7). */
+.mini-mark { width: 35px; height: 35px; background: var(--orange); border-radius: 9px 4px 9px 4px; }
+/* .brand-mark é exclusiva do login neutro: consome os tokens canônicos, nunca marca de time. */
+.brand-mark { width: 92px; height: 92px; background: var(--color-brand-primary); border-radius: 24px 9px 24px 9px; font-size: 3rem; box-shadow: 16px 16px 0 rgba(255, 255, 255, .08); }
 
 .status-badge {
   padding: 7px 10px;
@@ -627,7 +620,7 @@ h2 { margin-bottom: .35rem; font-size: 1.15rem; letter-spacing: -.02em; }
 }
 .nav-item span { display: inline-block; width: 24px; color: #8a98a4; }
 .nav-item:hover { background: rgba(255,255,255,.72); }
-.nav-item.active { color: white; background: var(--navy-900); box-shadow: 0 8px 20px rgba(11,31,51,.14); }
+.nav-item.active { color: white; background: var(--color-brand-primary); box-shadow: 0 8px 20px rgba(11,31,51,.14); }
 .nav-item.active span { color: #ffb089; }
 .module-nav-link { display: block; }
 .sidebar-footer { padding: 14px; border-top: 1px solid var(--line); }
@@ -764,8 +757,8 @@ textarea { resize: vertical; }
 }
 .button:hover { border-color: #8fa0ad; }
 .button:disabled { opacity: .5; cursor: not-allowed; }
-.button-primary { border-color: var(--navy-900); color: white; background: var(--navy-900); }
-.button-primary:hover { background: var(--navy-800); }
+.button-primary { border-color: var(--color-brand-primary); color: white; background: var(--color-brand-primary); }
+.button-primary:hover { background: var(--color-brand-primary-hover); }
 .button-danger { border-color: #e6b3ae; color: var(--danger); background: var(--danger-bg); }
 .button-large { min-height: 50px; width: 100%; }
 
@@ -868,12 +861,12 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   display: grid;
   place-items: center;
   color: white;
-  background: var(--hm-ink);
+  background: var(--color-text);
   border-radius: 14px;
   font-size: 1.35rem;
   font-weight: 800;
 }
-.module-card-available .module-icon { background: var(--hm-success); }
+.module-card-available .module-icon { background: var(--color-success); }
 .module-status {
   margin: 22px 0 15px;
   padding: 6px 9px;
@@ -896,7 +889,7 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   font-size: .78rem;
   font-weight: 800;
 }
-.module-card-action b { margin-left: 5px; color: var(--hm-primary); font-size: 1rem; }
+.module-card-action b { margin-left: 5px; color: var(--color-brand-primary); font-size: 1rem; }
 .platform-note { margin: 30px 0 0; color: var(--muted); font-size: .74rem; text-align: center; }
 .skeleton-shell { width: min(900px, calc(100% - 40px)); }
 .back-link { display: inline-flex; margin-bottom: 24px; color: var(--navy-700); font-size: .82rem; font-weight: 800; }
@@ -929,23 +922,40 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .skeleton-panel > p { max-width: 620px; color: var(--muted); font-size: 1rem; line-height: 1.65; }
 .skeleton-panel .skeleton-scope { margin: 26px 0; padding-left: 14px; border-left: 3px solid var(--orange); font-size: .82rem; }
 
-.login-body { background: var(--navy-950); }
+/* Login: camada neutra da plataforma (missão de design system, Camada 1).
+   Usa exclusivamente static/css/tokens.generated.css — nenhuma marca ou cor
+   de time. Ver docs/design-system/ARCHITECTURE.md §Camada 1. */
+.login-body { background: var(--color-text); }
 .login-shell { min-height: 100vh; display: grid; grid-template-columns: 1.2fr .8fr; }
-.login-brand { position: relative; overflow: hidden; padding: clamp(48px, 8vw, 120px); color: white; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(145deg, var(--navy-900), #123a59); }
+.login-brand { position: relative; overflow: hidden; padding: clamp(48px, 8vw, 120px); color: white; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(145deg, var(--color-text), var(--color-brand-primary-hover)); }
 .login-brand::after { content: ""; position: absolute; width: 420px; height: 420px; border: 1px solid rgba(255,255,255,.09); border-radius: 50%; right: -170px; bottom: -170px; box-shadow: 0 0 0 70px rgba(255,255,255,.025), 0 0 0 140px rgba(255,255,255,.018); }
 .login-brand h1 { max-width: 680px; font-size: clamp(3.2rem, 7vw, 6.8rem); }
 .login-brand p { max-width: 560px; color: #bdcbd6; font-size: clamp(1rem, 2vw, 1.25rem); line-height: 1.6; }
 .login-brand .brand-mark { margin-top: 38px; }
-.login-card { padding: clamp(36px, 7vw, 92px); display: flex; flex-direction: column; justify-content: center; background: var(--cream); }
+.login-card { padding: clamp(36px, 7vw, 92px); display: flex; flex-direction: column; justify-content: center; background: var(--color-canvas); }
 .login-card h2 { font-size: 2rem; margin-bottom: .5rem; }
 .login-card .stack-form { margin-top: 28px; }
-.registration-panel { margin-top: 20px; border-top: 1px solid var(--line, #d6d0c5); padding-top: 18px; }
-.registration-panel summary { cursor: pointer; font-weight: 700; color: var(--navy-900); }
+.registration-panel { margin-top: 20px; border-top: 1px solid var(--color-border); padding-top: 18px; }
+.registration-panel summary { cursor: pointer; font-weight: 700; color: var(--color-text); }
 .registration-panel .stack-form { margin-top: 16px; }
 .player-attendance-shell { max-width: 760px; }
 .player-attendance-shell fieldset { display: grid; gap: 10px; border: 1px solid var(--line, #d6d0c5); border-radius: 12px; padding: 16px; }
 .player-attendance-shell legend { font-weight: 700; padding: 0 6px; }
 .inline-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.player-playbook-preparation { margin: 20px 0; padding: clamp(18px, 4vw, 26px); }
+.player-playbook-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.player-playbook-heading .eyebrow { margin-bottom: 6px; }
+.player-playbook-heading h2 { margin: 0; font-size: clamp(1.2rem, 3vw, 1.45rem); }
+.player-playbook-heading .text-button { flex: 0 0 auto; }
+.player-playbook-status { margin: 12px 0 0; color: var(--muted); font-size: .9rem; }
+.player-playbook-status[data-state="notice"] { color: var(--warning, #8a5700); }
+.player-playbook-status[data-state="unavailable"] { color: var(--muted); }
+.player-playbook-lessons { display: grid; gap: 12px; margin-top: 18px; }
+.player-playbook-lesson { padding: 16px; border: 1px solid var(--line, #d6d0c5); border-radius: 12px; background: var(--surface, #fff); }
+.player-playbook-lesson h3 { margin: 0 0 10px; font-size: 1rem; }
+.player-playbook-lesson > div { margin-top: 8px; color: var(--muted); font-size: .9rem; line-height: 1.5; }
+.player-playbook-lesson > div strong { color: var(--ink, #0b1f33); }
+.player-playbook-steps span { white-space: pre-line; }
 .security-note { margin: 24px 0 0; color: var(--muted); font-size: .75rem; text-align: center; }
 
 .bottom-nav { display: none; }
@@ -1120,17 +1130,21 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 }
 
 /* Calendário operacional v2 */
+/* Deriva do token compartilhado em vez de duplicar hexadecimais — ver
+   docs/design-system/AUDIT.md §5 e ARCHITECTURE.md. As duas ocorrências de
+   rgba(215,25,32,...) mais abaixo (glow decorativo e outline de foco) ficam
+   como estão: efeito cosmético, não a cor de marca em si — ver ACCESSIBILITY.md. */
 .calendar-v2 {
-  --calendar-primary: #d71920;
-  --calendar-primary-dark: #a40e17;
-  --calendar-canvas: #f7f4f2;
-  --calendar-surface: #fff;
-  --calendar-ink: #171717;
-  --calendar-muted: #6b6464;
-  --calendar-line: #e6dedb;
-  --calendar-success: #0f7b5a;
-  --calendar-warning: #b45f06;
-  --calendar-danger: #7f1d1d;
+  --calendar-primary: var(--color-brand-primary);
+  --calendar-primary-dark: var(--color-brand-primary-hover);
+  --calendar-canvas: var(--color-canvas);
+  --calendar-surface: var(--color-surface);
+  --calendar-ink: var(--color-text);
+  --calendar-muted: var(--color-text-muted);
+  --calendar-line: var(--color-border);
+  --calendar-success: var(--color-success);
+  --calendar-warning: var(--color-warning);
+  --calendar-danger: var(--color-danger);
   color: var(--calendar-ink);
   background:
     radial-gradient(circle at 88% 9%, rgba(215, 25, 32, .08), transparent 22rem),

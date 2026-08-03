@@ -6,11 +6,10 @@ from fastapi.templating import Jinja2Templates
 
 from handball.core.auth import session_from_request
 from handball.core.authorization import Permission
-from handball.core.organization import ORGANIZATION
-from handball.core.team_theme import team_theme
+from handball.modules.usuarios.service import IdentityService
 
 
-def create_router(templates: Jinja2Templates) -> APIRouter:
+def create_router(identity_service: IdentityService, templates: Jinja2Templates) -> APIRouter:
     router = APIRouter()
 
     @router.get("/app", response_class=HTMLResponse)
@@ -18,6 +17,7 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
         session = session_from_request(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "hub.html",
@@ -33,8 +33,8 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
                 "can_calendar": Permission.CALENDAR_READ_TEAM in session.permissions,
                 "can_playbook": Permission.PLAYBOOK_READ in session.permissions,
                 "can_sql_explorer": Permission.SQL_EXPLORE in session.permissions or Permission.SQL_ADMIN in session.permissions,
-                "organization": ORGANIZATION,
-                "team_theme": team_theme(ORGANIZATION.slug).to_dict(),
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
             },
         )
 

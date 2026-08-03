@@ -20,7 +20,7 @@ from handball.core.auth import (
     session_from_request,
 )
 from handball.core.authorization import AccessContext, Permission, require_permission
-from handball.core.organization import ORGANIZATION
+from handball.modules.usuarios.service import IdentityService
 
 from .domain import history_to_dataframe
 from .schemas import MemberCreate, MemberUpdate, SelfConfirmationInput, SessionNotes, SyncBatch
@@ -45,6 +45,7 @@ def _csv_response(dataframe: pd.DataFrame, filename: str) -> StreamingResponse:
 
 def create_router(
     service: AttendanceService,
+    identity_service: IdentityService,
     templates: Jinja2Templates,
 ) -> APIRouter:
     router = APIRouter()
@@ -56,14 +57,22 @@ def create_router(
             return RedirectResponse("/login", status_code=303)
         if Permission.ATTENDANCE_READ_TEAM not in session.permissions and Permission.ATTENDANCE_READ_SELF not in session.permissions:
             raise HTTPException(status_code=403)
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
         if Permission.ATTENDANCE_READ_TEAM not in session.permissions:
             return templates.TemplateResponse(
-                request, "presencas/player.html", {"session": session, "organization": ORGANIZATION}
+                request,
+                "presencas/player.html",
+                {"session": session, "organization": team_view["organization"], "team_theme": team_view["team_theme"]},
             )
         return templates.TemplateResponse(
             request,
             "presencas/index.html",
-            {"username": session.username, "session": session, "organization": ORGANIZATION},
+            {
+                "username": session.username,
+                "session": session,
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
+            },
         )
 
     @router.get("/api/v1/auth/session")

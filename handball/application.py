@@ -155,11 +155,11 @@ def create_app(
         return RedirectResponse(target, status_code=303)
 
     application.include_router(create_auth_router(settings, templates))
-    application.include_router(create_hub_router(templates))
-    application.include_router(create_attendance_router(attendance_service, templates))
-    application.include_router(create_statistics_router(statistics_service, templates))
-    application.include_router(create_calendar_router(calendar_service, templates))
-    application.include_router(create_playbook_router(playbook_service, templates))
-    application.include_router(create_sql_explorer_router(sql_explorer_service, templates))
+    application.include_router(create_hub_router(identity_service, templates))
+    application.include_router(create_attendance_router(attendance_service, identity_service, templates))
+    application.include_router(create_statistics_router(statistics_service, identity_service, templates))
+    application.include_router(create_calendar_router(calendar_service, identity_service, templates))
+    application.include_router(create_playbook_router(playbook_service, identity_service, templates))
+    application.include_router(create_sql_explorer_router(sql_explorer_service, identity_service, templates))
     application.include_router(create_users_router(identity_service, templates))
     return application

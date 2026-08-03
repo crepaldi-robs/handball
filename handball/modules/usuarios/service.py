@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date
 from typing import Any
@@ -9,7 +10,10 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from handball.core.authorization import AccessContext, require_team_access
 from handball.core.organization import CURRENT_SEASON_LABEL, ORGANIZATION
+from handball.core.team_theme import team_theme
 from handball.database.contracts import UnitOfWorkFactoryContract
+
+logger = logging.getLogger(__name__)
 
 
 class IdentityService:
@@ -39,6 +43,39 @@ class IdentityService:
                 "display_name": ORGANIZATION.display_name,
             },
         }
+
+    def resolve_active_team_view(self, context: AccessContext) -> dict[str, Any]:
+        """Resolve a identidade organizacional e visual do time ativo da sessão.
+
+        O slug nunca vem do cliente: sempre parte de context.team_ids, que o
+        backend calcula a partir de team_memberships ativas (ver
+        docs/design-system/AUDIT.md §11). Usuário sem time (Caso D) ou time
+        sem tema cadastrado/inativo (Caso E) caem no tema neutro sem quebrar a
+        renderização. Quando a sessão tem mais de um time vinculado, o
+        provisório é escolher o de menor id, de forma determinística — não há
+        hoje seletor de time ativo nem armazenamento persistente da escolha;
+        isso é limitação conhecida e documentada em
+        docs/design-system/ARCHITECTURE.md (Caso C), não decidida aqui.
+        """
+        team_row: dict[str, Any] | None = None
+        if context.team_ids:
+            with self._unit_of_work_factory(read_only=True) as unit_of_work:
+                teams = unit_of_work.identity.get_teams_by_ids(context.team_ids)
+            if teams:
+                team_row = teams[0]
+            else:
+                logger.warning(
+                    "Sessão do usuário %s tem team_ids sem linha ativa correspondente em 'teams'; "
+                    "usando tema neutro.",
+                    context.user_id,
+                )
+        identity = team_theme(team_row["slug"] if team_row else None)
+        organization = (
+            {"code": team_row["code"], "slug": team_row["slug"], "display_name": team_row["display_name"]}
+            if team_row is not None
+            else {"code": None, "slug": identity.slug, "display_name": identity.display_name}
+        )
+        return {"organization": organization, "team_theme": identity.to_dict()}
 
     def own_attendance(self, context: AccessContext) -> list[dict[str, Any]]:
         if context.linked_player_id is None:

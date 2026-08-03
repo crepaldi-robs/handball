@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,16 +8,15 @@
   <title>{{ module.title }} · Hub Handebol</title>
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
 </head>
 <body class="platform-body">
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
-        <div class="mini-mark" aria-hidden="true">H</div>
-        <div><strong>Estatísticas</strong><span>Hub Handebol</span></div>
-      </a>
+      {% set page_subtitle = "Estatísticas" %}
+      {% include "partials/_brand.html" %}
       <div class="top-actions">
         <a class="text-button" href="/app">Hub</a>
         <form method="post" action="/logout" data-platform-logout>

@@ -10,8 +10,7 @@ from fastapi.templating import Jinja2Templates
 from handball.core.auth import require_write_session, session_from_request
 from handball.core.authorization import AccessContext, Permission, require_permission
 from handball.core.errors import PlaybookProblem
-from handball.core.organization import ORGANIZATION
-from handball.core.team_theme import team_theme
+from handball.modules.usuarios.service import IdentityService
 
 from .schemas import (
     ContentInput,
@@ -102,7 +101,7 @@ def _handle_error(exc: Exception, request: Request | None = None) -> HTTPExcepti
     return HTTPException(status_code=500, detail=problem.to_detail(request_id=request_id))
 
 
-def create_router(service: PlaybookService, templates: Jinja2Templates) -> APIRouter:
+def create_router(service: PlaybookService, identity_service: IdentityService, templates: Jinja2Templates) -> APIRouter:
     router = APIRouter()
 
     @router.get("/app/playbook", response_class=HTMLResponse)
@@ -119,13 +118,14 @@ def create_router(service: PlaybookService, templates: Jinja2Templates) -> APIRo
             team_ids = list(page_context["team_ids"])
         except PlaybookProblem:
             upgrade_required = True
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "playbook/index.html",
             {
                 "session": session,
-                "organization": ORGANIZATION,
-                "team_theme": team_theme(ORGANIZATION.slug).to_dict(),
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
                 "can_manage": Permission.PLAYBOOK_MANAGE in session.permissions,
                 "team_ids": team_ids,
                 "upgrade_required": upgrade_required,

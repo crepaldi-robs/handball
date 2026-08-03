@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,18 +7,28 @@
   <meta name="theme-color" content="#0b1f33">
   <title>Minha confirmação · {{ organization.display_name }}</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/player-attendance.js" defer></script>
 </head>
 <body class="platform-body" data-csrf-token="{{ session.csrf_token }}">
   <header class="topbar"><div class="topbar-inner">
-    <a class="identity" href="/app"><div class="mini-mark" aria-hidden="true">H</div><div><strong>{{ organization.display_name }}</strong><span>Minha confirmação</span></div></a>
+    {% set page_subtitle = "Minha confirmação" %}
+    {% include "partials/_brand.html" %}
     <div class="top-actions"><span class="user-label">{{ session.display_name }}</span><form method="post" action="/logout" data-platform-logout><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><button class="text-button logout-button" type="submit">Sair</button></form></div>
   </div></header>
   <main class="module-shell player-attendance-shell">
     <section class="hub-intro"><span class="eyebrow">PRÓXIMO TREINO</span><h1>Minha presença</h1><p id="player-training-description">Carregando seu próximo treino…</p></section>
     <section id="player-attendance-alert" aria-live="polite"></section>
+    <section id="player-playbook-preparation" class="panel player-playbook-preparation hidden" aria-labelledby="player-playbook-title">
+      <div class="player-playbook-heading">
+        <div><span class="eyebrow">PLAYBOOK</span><h2 id="player-playbook-title">Para se preparar para este treino</h2></div>
+        <a id="player-playbook-link" class="text-button hidden" href="/app/playbook">Abrir no Playbook</a>
+      </div>
+      <p id="player-playbook-status" class="player-playbook-status" role="status" aria-live="polite">Carregando a preparação…</p>
+      <div id="player-playbook-lessons" class="player-playbook-lessons"></div>
+    </section>
     <form id="player-attendance-form" class="panel stack-form hidden">
       <h2 id="player-training-title">Treino</h2>
       <fieldset><legend>Você vai ao treino?</legend><label><input type="radio" name="response" value="GOING" required> Vou</label><label><input type="radio" name="response" value="NOT_GOING"> Não vou</label></fieldset>

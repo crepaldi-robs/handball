@@ -1,0 +1,53 @@
+{
+  "kind": "platform",
+  "name": "Plataforma Handball — camada neutra",
+  "identity": {
+    "slug": "neutral",
+    "display_name": "Handball",
+    "monogram": "H"
+  },
+  "colors": {
+    "brand_primary": "#334155",
+    "brand_primary_hover": "#1E293B",
+    "brand_on_primary": "#FFFFFF",
+    "canvas": "#F4F6F8",
+    "surface": "#FFFFFF",
+    "surface_raised": "#FFFFFF",
+    "text": "#171717",
+    "text_muted": "#667085",
+    "border": "#DDE2E7",
+    "focus": "rgba(51, 65, 85, .45)",
+    "success": "#0F7B5A",
+    "warning": "#B45F06",
+    "danger": "#7F1D1D",
+    "info": "#1D4ED8"
+  },
+  "fonts": {
+    "interface": "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "heading": "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "mono": "ui-monospace, SFMono-Regular, Consolas, monospace"
+  },
+  "space": {
+    "1": "4px",
+    "2": "8px",
+    "3": "12px",
+    "4": "16px",
+    "6": "24px",
+    "8": "32px",
+    "12": "48px"
+  },
+  "radius": {
+    "control": "12px",
+    "card": "16px",
+    "dialog": "20px"
+  },
+  "shadow": {
+    "low": "0 1px 2px rgba(15, 23, 42, .08)",
+    "medium": "0 8px 24px rgba(15, 23, 42, .10)",
+    "high": "0 18px 45px rgba(15, 23, 42, .12)"
+  },
+  "duration": {
+    "fast": "120ms",
+    "normal": "220ms"
+  }
+}

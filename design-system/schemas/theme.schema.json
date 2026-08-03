@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://handball.crepaldi.com.br/design-system/schemas/theme.schema.json",
+  "title": "Handball design system — team theme",
+  "description": "Contrato de um arquivo de tema de time em design-system/themes/<slug>.json. Validado sem dependência externa por handball/core/design_tokens.py (mesma lógica usada por scripts/build_design_tokens.py). Este arquivo documenta o contrato; não é lido em runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "slug", "display_name", "monogram", "logo_url", "colors"],
+  "properties": {
+    "kind": { "const": "team" },
+    "slug": {
+      "type": "string",
+      "description": "Identificador estável do time. Nunca aceito vindo do cliente; sempre resolvido no backend a partir da sessão autenticada.",
+      "pattern": "^[a-z][a-z0-9-]{1,39}$"
+    },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "formal_name": { "type": "string", "maxLength": 160 },
+    "athletics_name": { "type": "string", "maxLength": 160 },
+    "monogram": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "description": "Usado apenas como fallback textual quando logo_url estiver ausente ou não carregar."
+    },
+    "logo_url": {
+      "type": ["string", "null"],
+      "description": "Caminho interno começando por /static/. Nunca uma URL externa arbitrária; validado por handball/core/design_tokens.py.",
+      "pattern": "^/static/[a-zA-Z0-9_\\-./]+$"
+    },
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Somente os tokens de marca do time. success/warning/danger/info não podem ser redefinidos aqui — são fundamentos semânticos herdados de platform.json (missão HM-IME §3.2).",
+      "properties": {
+        "brand_primary": { "$ref": "#/$defs/hexOrRgba" },
+        "brand_primary_hover": { "$ref": "#/$defs/hexOrRgba" },
+        "brand_on_primary": { "$ref": "#/$defs/hexOrRgba" },
+        "canvas": { "$ref": "#/$defs/hexOrRgba" },
+        "surface": { "$ref": "#/$defs/hexOrRgba" },
+        "surface_raised": { "$ref": "#/$defs/hexOrRgba" },
+        "text": { "$ref": "#/$defs/hexOrRgba" },
+        "text_muted": { "$ref": "#/$defs/hexOrRgba" },
+        "border": { "$ref": "#/$defs/hexOrRgba" },
+        "focus": { "$ref": "#/$defs/hexOrRgba" }
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Apenas 'heading' pode ser sobrescrito por um time (uso restrito a títulos esportivos, nunca a texto operacional). 'interface' e 'mono' são fundamentos da camada neutra.",
+      "properties": {
+        "heading": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Caminhos de documentação/pesquisa que fundamentam este tema (hierarquia de evidências da missão de design system).",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "hexOrRgba": {
+      "type": "string",
+      "pattern": "^(#[0-9A-Fa-f]{6}|rgba\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*(0|1|0?\\.\\d+)\\s*\\))$"
+    }
+  }
+}

@@ -13,9 +13,8 @@ from handball.core.authorization import (
     Permission,
     require_permission,
 )
-from handball.core.organization import ORGANIZATION
 from handball.core.errors import CalendarProblem
-from handball.core.team_theme import team_theme
+from handball.modules.usuarios.service import IdentityService
 
 from .schemas import (
     CalendarActionInput,
@@ -101,6 +100,7 @@ def _handle_error(exc: Exception, request: Request | None = None) -> HTTPExcepti
 
 def create_router(
     service: CalendarService,
+    identity_service: IdentityService,
     templates: Jinja2Templates,
 ) -> APIRouter:
     router = APIRouter()
@@ -112,13 +112,14 @@ def create_router(
             return RedirectResponse("/login", status_code=303)
         if Permission.CALENDAR_READ_TEAM not in session.permissions:
             raise HTTPException(status_code=403)
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
         return templates.TemplateResponse(
             request,
             "calendario/index.html",
             {
                 "session": session,
-                "organization": ORGANIZATION,
-                "team_theme": team_theme(ORGANIZATION.slug).to_dict(),
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
                 "active_season_label": ACTIVE_SEASON_LABEL,
                 "can_manage": Permission.CALENDAR_MANAGE in session.permissions,
                 "can_justify": (

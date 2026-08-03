@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -12,6 +12,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/app.js" defer></script>
@@ -19,13 +20,8 @@
 <body data-user-id="{{ session.user_id }}" data-team-id="{{ session.team_ids|list|first or 0 }}" data-vault-format="2">
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="identity" href="/app" aria-label="Voltar ao Hub Handebol">
-        <div class="mini-mark" aria-hidden="true">H</div>
-        <div>
-          <strong>Registro de Presenças</strong>
-          <span>{{ organization.display_name }} · {{ session.display_name }} · {{ (session.system_roles | list)|join(' + ') }}</span>
-        </div>
-      </a>
+      {% set page_subtitle = "Registro de Presenças · " ~ session.display_name ~ " · " ~ ((session.system_roles | list)|join(' + ')) %}
+      {% include "partials/_brand.html" %}
       <div class="top-actions">
         <a class="text-button hub-text-link" href="/app">Hub</a>
         <button id="offline-lock-button" class="icon-button" type="button" title="Proteção offline" aria-label="Proteção offline">⌁</button>

@@ -1,65 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from .design_tokens import TeamVisualIdentity, load_registry
 
+__all__ = ["TeamVisualIdentity", "NEUTRAL_THEME", "TEAM_THEMES", "team_theme"]
 
-@dataclass(frozen=True)
-class TeamVisualIdentity:
-    slug: str
-    display_name: str
-    monogram: str
-    logo_url: str | None
-    primary: str
-    primary_dark: str
-    canvas: str
-    surface: str
-    ink: str
-    muted: str
-    border: str
-    success: str
-    warning: str
-    destructive: str
-
-    def to_dict(self) -> dict[str, str | None]:
-        return asdict(self)
-
-
-NEUTRAL_THEME = TeamVisualIdentity(
-    slug="neutral",
-    display_name="Handball",
-    monogram="H",
-    logo_url=None,
-    primary="#334155",
-    primary_dark="#1E293B",
-    canvas="#F4F6F8",
-    surface="#FFFFFF",
-    ink="#171717",
-    muted="#667085",
-    border="#DDE2E7",
-    success="#0F7B5A",
-    warning="#B45F06",
-    destructive="#7F1D1D",
-)
-
-TEAM_THEMES: dict[str, TeamVisualIdentity] = {
-    "hm-ime": TeamVisualIdentity(
-        slug="hm-ime",
-        display_name="HM-IME",
-        monogram="HM",
-        logo_url="/static/hm-ime-logo.jpg",
-        primary="#D71920",
-        primary_dark="#A40E17",
-        canvas="#F7F4F2",
-        surface="#FFFFFF",
-        ink="#171717",
-        muted="#6B6464",
-        border="#E6DEDB",
-        success="#0F7B5A",
-        warning="#B45F06",
-        destructive="#7F1D1D",
-    ),
-}
+# Fonte única de verdade: design-system/platform.json + design-system/themes/*.json,
+# validados por handball/core/design_tokens.py. Não copie valores hexadecimais
+# manualmente aqui nem em CSS — gere static/css/tokens.generated.css com
+# scripts/build_design_tokens.py.
+NEUTRAL_THEME, TEAM_THEMES = load_registry()
 
 
 def team_theme(slug: str | None) -> TeamVisualIdentity:
+    """Resolve a identidade visual de um slug de time; nunca lança para slug desconhecido.
+
+    Um slug ausente, vazio ou não cadastrado sempre cai no tema neutro
+    (Caso E da missão de design system: time sem identidade cadastrada nunca
+    quebra a renderização nem herda a identidade de outro time).
+    """
     return TEAM_THEMES.get(str(slug or "").strip().casefold(), NEUTRAL_THEME)

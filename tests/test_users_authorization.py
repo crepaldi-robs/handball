@@ -229,6 +229,7 @@ def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> 
     csrf = login(client, "player", data["passwords"]["player"])
     assert client.get("/api/v1/attendance/trainings").status_code == 403
     assert client.get("/api/v1/audit").status_code == 403
+    assert client.get("/api/v1/admin/audit").status_code == 403
     assert client.get("/api/v1/exports/history.csv").status_code == 403
     assert client.get("/api/v1/backup").status_code == 403
     assert client.post("/api/v1/sessions/1/finalize", headers={"X-CSRF-Token": csrf}).status_code == 403
@@ -427,6 +428,205 @@ def test_ct_write_records_actor_and_offline_creator_is_revalidated(tmp_path: Pat
     audit = client.get("/api/v1/audit")
     assert audit.status_code == 200
     assert audit.json()["items"][0]["actor_user_id"] == data["ct_id"]
+
+
+def test_admin_audit_endpoint_is_scoped_to_users_manage(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "dev", data["passwords"]["dev"])
+    created = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "nova-ct-audit",
+            "temporary_password": "temporaria",
+            "roles": ["CT"],
+            "full_name": "Nova CT Audit",
+            "team_id": data["team_id"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201, created.text
+    new_user_id = created.json()["id"]
+
+    admin_audit = client.get("/api/v1/admin/audit")
+    assert admin_audit.status_code == 200, admin_audit.text
+    items = admin_audit.json()["items"]
+    assert any(
+        item["action"] == "user.create" and item["target_id"] == str(new_user_id)
+        for item in items
+    )
+    logout(client)
+
+    login(client, "ct", data["passwords"]["ct"])
+    assert client.get("/api/v1/admin/audit").status_code == 403
+    logout(client)
+
+    login(client, "player", data["passwords"]["player"])
+    assert client.get("/api/v1/admin/audit").status_code == 403
+
+
+def test_audit_log_api_exposes_old_and_new_values_for_confirmation_presence_and_notes(
+    tmp_path: Path,
+) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    payload = open_calendar_training(client, csrf, "2026-08-10")
+    session_id = payload["session"]["id"]
+    record = payload["records"][0]
+    member_id = record["member_id"]
+
+    confirm = client.put(
+        f"/api/v1/sessions/{session_id}/records",
+        json={
+            "operations": [
+                {
+                    "operation_id": "audit-content-0001",
+                    "member_id": member_id,
+                    "base_version": record["version"],
+                    "confirmation_status": "CONFIRMED_EARLY",
+                    "notes": "",
+                }
+            ],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert confirm.status_code == 200, confirm.text
+    version_after_confirm = confirm.json()["results"][0]["record"]["version"]
+
+    mark_present = client.put(
+        f"/api/v1/sessions/{session_id}/records",
+        json={
+            "operations": [
+                {
+                    "operation_id": "audit-content-0002",
+                    "member_id": member_id,
+                    "base_version": version_after_confirm,
+                    "confirmation_status": "CONFIRMED_EARLY",
+                    "present": True,
+                    "notes": "",
+                }
+            ],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert mark_present.status_code == 200, mark_present.text
+    version_after_present = mark_present.json()["results"][0]["record"]["version"]
+
+    edit_notes = client.put(
+        f"/api/v1/sessions/{session_id}/records",
+        json={
+            "operations": [
+                {
+                    "operation_id": "audit-content-0003",
+                    "member_id": member_id,
+                    "base_version": version_after_present,
+                    "confirmation_status": "CONFIRMED_EARLY",
+                    "present": True,
+                    "notes": "Chegou atrasado",
+                }
+            ],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert edit_notes.status_code == 200, edit_notes.text
+
+    audit = client.get("/api/v1/audit?limit=50")
+    assert audit.status_code == 200
+    by_operation = {item["operation_id"]: item for item in audit.json()["items"]}
+
+    first = by_operation["audit-content-0001"]
+    assert first["old_confirmation_status"] == "PENDING"
+    assert first["new_confirmation_status"] == "CONFIRMED_EARLY"
+    assert first["old_present"] is None
+    assert first["new_present"] is None
+    assert first["old_notes"] == ""
+    assert first["new_notes"] == ""
+    assert first["source"] == "pwa-online"
+    assert first["target_id"] == f"{session_id}:{member_id}"
+
+    second = by_operation["audit-content-0002"]
+    assert second["old_confirmation_status"] == "CONFIRMED_EARLY"
+    assert second["new_confirmation_status"] == "CONFIRMED_EARLY"
+    assert second["old_present"] is None
+    assert second["new_present"] == 1
+    assert second["old_notes"] == ""
+    assert second["new_notes"] == ""
+
+    third = by_operation["audit-content-0003"]
+    assert third["old_confirmation_status"] == "CONFIRMED_EARLY"
+    assert third["new_confirmation_status"] == "CONFIRMED_EARLY"
+    assert third["old_present"] == 1
+    assert third["new_present"] == 1
+    assert third["old_notes"] == ""
+    assert third["new_notes"] == "Chegou atrasado"
+
+
+def test_finalize_session_audit_log_records_null_present_as_zero(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    payload = open_calendar_training(client, csrf, "2026-08-11")
+    session_id = payload["session"]["id"]
+    untouched_member_id = payload["records"][0]["member_id"]
+
+    finalized = client.post(
+        f"/api/v1/sessions/{session_id}/finalize",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert finalized.status_code == 200, finalized.text
+
+    audit = client.get("/api/v1/audit?limit=200")
+    assert audit.status_code == 200
+    target_id = f"{session_id}:{untouched_member_id}"
+    matches = [
+        item
+        for item in audit.json()["items"]
+        if item["target_id"] == target_id and item["action"] == "attendance.finalize"
+    ]
+    assert len(matches) == 1
+    finalize_entry = matches[0]
+    assert finalize_entry["old_confirmation_status"] == "PENDING"
+    assert finalize_entry["new_confirmation_status"] == "PENDING"
+    assert finalize_entry["old_present"] is None
+    assert finalize_entry["new_present"] == 0
+
+
+def test_audit_endpoint_respects_limit_query_param(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    payload = open_calendar_training(client, csrf, "2026-08-12")
+    session_id = payload["session"]["id"]
+    records = payload["records"][:3]
+    operations = [
+        {
+            "operation_id": f"audit-limit-{index:04d}",
+            "member_id": record["member_id"],
+            "base_version": record["version"],
+            "confirmation_status": "CONFIRMED_EARLY",
+            "notes": "",
+        }
+        for index, record in enumerate(records)
+    ]
+    written = client.put(
+        f"/api/v1/sessions/{session_id}/records",
+        json={"operations": operations},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert written.status_code == 200, written.text
+
+    limited = client.get("/api/v1/audit?limit=2")
+    assert limited.status_code == 200
+    assert len(limited.json()["items"]) == 2
+
+    floor = client.get("/api/v1/audit?limit=0")
+    assert floor.status_code == 200
+    assert len(floor.json()["items"]) == 1
+
+    negative = client.get("/api/v1/audit?limit=-5")
+    assert negative.status_code == 200
+    assert len(negative.json()["items"]) == 1
+
+    default = client.get("/api/v1/audit")
+    assert default.status_code == 200
+    assert len(default.json()["items"]) == len(records)
 
 
 def test_player_report_is_scoped_in_query_and_excludes_internal_notes(tmp_path: Path) -> None:

@@ -47,6 +47,23 @@ class IdentityRepository:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_teams_by_ids(self, team_ids: Iterable[int]) -> list[dict[str, Any]]:
+        """Le teams(id,code,slug,display_name) para os IDs informados, ordenado por id.
+
+        Somente leitura; usada para resolver a identidade visual do time ativo
+        a partir de AccessContext.team_ids (nunca a partir de dado do cliente).
+        """
+        ids = sorted({int(value) for value in team_ids})
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = self.connection.execute(
+            f"SELECT id,code,slug,display_name FROM teams "
+            f"WHERE id IN ({placeholders}) AND active=1 ORDER BY id",
+            ids,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_teams(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT id,code,slug,display_name,active FROM teams ORDER BY display_name COLLATE NOCASE"
