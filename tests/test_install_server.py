@@ -28,6 +28,7 @@ EXPECTED_RUNTIME_ITEMS = {
     "requirements.txt",
     "attendance",
     "handball",
+    "design-system",
     "templates",
     "static",
 }

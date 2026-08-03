@@ -1047,6 +1047,7 @@ $RuntimeItems = @(
     "requirements.txt",
     "attendance",
     "handball",
+    "design-system",
     "templates",
     "static"
 )
