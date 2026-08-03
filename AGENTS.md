@@ -52,10 +52,12 @@ nos treinos.
 23. `free_explorer`, `free_worker`, `free_tester`, `free_reviewer` e
     `free_peer_coordinator` são os únicos perfis delegáveis. Um executor
     gratuito não cria outros subagentes.
-24. Claude Pro e Antigravity/Gemini são pareceristas de planejamento. São
-    consultados exclusivamente por `free_peer_coordinator`, por meio de
-    `scripts/consultar_planejadores.py`, sem ferramentas e a partir de um
-    diretório vazio fora da árvore de código.
+24. **No fluxo OmniRoute/Codex**, Claude Pro e Antigravity/Gemini são
+    pareceristas de planejamento. São consultados exclusivamente por
+    `free_peer_coordinator`, por meio de `scripts/consultar_planejadores.py`,
+    sem ferramentas e a partir de um diretório vazio fora da árvore de código.
+    As regras 20 a 24 governam esse fluxo; elas não descrevem o uso direto
+    descrito na regra 28.
 25. Credenciais de assinatura do ChatGPT, Claude ou Antigravity nunca passam
     pelo OmniRoute. O gateway aceita somente chaves de API com cota gratuita e
     deve falhar quando a rota `auto/coding:free` não tiver candidato.
@@ -65,6 +67,42 @@ nos treinos.
     marcador e fora do OneDrive e do Git.
 27. Nenhum agente cria commit, faz push, abre PR, publica release ou altera
     serviço externo sem uma autorização humana explícita e específica.
+
+## Uso direto de um agente pago
+
+28. Existem dois modos de uso, e só o primeiro é restringido pelas regras 20 a 24:
+
+    - **Modo parecerista** — Claude Code ou Antigravity acionados de dentro do
+      fluxo OmniRoute/Codex, por `free_peer_coordinator`. Continuam sem
+      ferramentas, rodando em `planner-sandbox`, com `ANTHROPIC_BASE_URL`,
+      `OMNIROUTE_*` e segredos removidos do ambiente-filho.
+    - **Modo direto** — Claude Code ou Codex invocados pelo próprio usuário na
+      raiz do repositório. Aqui o agente tem plenas capacidades de leitura,
+      escrita e execução, e responde às demais regras deste arquivo como
+      qualquer agente de código.
+
+29. As duas ferramentas podem falar com o servidor MCP do OmniRoute deste
+    projeto, em `http://127.0.0.1:32128/api/mcp/stream`. Configuração
+    versionada em `.mcp.json` (Claude Code) e no bloco
+    `[mcp_servers.omniroute_project]` de `.codex/codex-home.config.toml`
+    (Codex). Requer `mcpEnabled=true` e `mcpTransport="streamable-http"` no
+    OmniRoute.
+
+    Esse MCP expõe **99 ferramentas**, e nem todas são de gestão do gateway.
+    Nenhuma lê ou escreve arquivos deste repositório, mas existem superfícies
+    de escrita e execução fora dele: `obsidian_*` (16 ferramentas, incluindo
+    `obsidian_write_note`, `obsidian_delete_note` e `obsidian_execute_command`),
+    `notion_*`, `plugin_install`/`plugin_activate`,
+    `omniroute_github_skills_install` e `omniroute_skills_execute`. Na
+    instalação atual as famílias `obsidian_*` e `notion_*` estão inertes por
+    falta de credencial e não há plugin instalado, mas o `status` do MCP reporta
+    `scopesEnforced: false` — não há restrição de escopo ativa. Antes de deixar
+    um agente usar esse MCP sem supervisão, restrinja os escopos
+    (`omniroute mcp scopes`).
+
+30. A regra 25 continua valendo nos dois modos: credencial de assinatura nunca
+    entra no gateway. Apontar um cliente **para** o OmniRoute é permitido;
+    entregar a credencial da assinatura **ao** OmniRoute, não.
 
 ## Verificação obrigatória
 

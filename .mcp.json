@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "omniroute-project": {
+      "type": "http",
+      "url": "http://127.0.0.1:32128/api/mcp/stream"
+    }
+  }
+}

@@ -8,7 +8,8 @@ credenciais no Git.
 
 ## Resultado pretendido
 
-O usuário conversa somente com o Codex. A separação é:
+Dentro do fluxo OmniRoute/Codex, o usuário conversa somente com o Codex. A
+separação é:
 
 | Papel | Cliente e conta | Pode acessar o repositório? |
 | --- | --- | --- |
@@ -19,6 +20,12 @@ O usuário conversa somente com o Codex. A separação é:
 | Implementação | `free_worker` via OmniRoute | Sim, leitura e escrita |
 | Testes | `free_tester` via OmniRoute | Sim, sem editar código-fonte |
 | Revisão | `free_reviewer` via OmniRoute | Sim, somente leitura |
+
+Essa tabela descreve **apenas** o fluxo acima. Ela não proíbe o uso direto: o
+usuário também pode abrir o Claude Code ou o Codex na raiz do repositório e
+trabalhar com plenas capacidades, sem passar por `free_peer_coordinator`. Nesse
+modo direto valem as demais regras do `AGENTS.md`, não a linha "sem tools" da
+tabela. A distinção está formalizada na regra 28 do `AGENTS.md`.
 
 Os executores usam exclusivamente `auto/coding:free`. Essa rota do OmniRoute
 3.8.48 falha quando não existe candidato gratuito; não cai silenciosamente no
@@ -239,6 +246,71 @@ O lançador antigo continua funcionando como ponte:
 .\scripts\agente.ps1 -Pedido "revise o próximo commit"
 ```
 
+## Servidor MCP do OmniRoute
+
+O mesmo OmniRoute da porta `32128` expõe um servidor MCP em
+`http://127.0.0.1:32128/api/mcp/stream`, com **99 ferramentas** (`tools/list` do
+servidor ao vivo; `GET /api/mcp/tools` mostra só as 36 mapeadas para endpoints
+REST).
+
+A maioria é de gestão do próprio gateway — saúde, combos, quota, custo, cache,
+compressão, catálogo de modelos. Nenhuma lê ou escreve arquivos deste
+repositório. Mas há superfícies de escrita e execução **fora** dele que valem
+atenção antes de liberar uso não supervisionado:
+
+| Família | Risco |
+| --- | --- |
+| `obsidian_*` (16) | escreve, apaga e move notas; `obsidian_execute_command` |
+| `notion_*` (6) | lê e anexa blocos em bases do Notion |
+| `plugin_*` (8) | instala, ativa e desinstala plugins |
+| `omniroute_github_skills_install` | instala skills vindas do GitHub |
+| `omniroute_skills_execute` | executa skills |
+| `omniroute_web_search`, `omniroute_web_fetch` | saída de rede |
+
+Na instalação atual, `obsidian_*` e `notion_*` estão inertes por falta de
+credencial (`obsidian_check_status` retorna "API token not configured") e
+`plugin_list` volta vazio. Ainda assim, `GET /api/mcp/status` reporta
+`scopesEnforced: false`: não há restrição de escopo ativa. Para restringir, veja
+`omniroute mcp scopes`.
+
+Ele **não vem ligado**. Sem as duas chaves abaixo o endpoint responde `503`
+(desabilitado) ou `400` (`MCP transport is set to "stdio"`):
+
+```powershell
+Invoke-WebRequest -Method Patch -Uri "http://127.0.0.1:32128/api/settings" `
+  -ContentType "application/json" -Body '{"mcpEnabled":true}'
+Invoke-WebRequest -Method Patch -Uri "http://127.0.0.1:32128/api/settings" `
+  -ContentType "application/json" -Body '{"mcpTransport":"streamable-http"}'
+Invoke-RestMethod "http://127.0.0.1:32128/api/mcp/status"   # espera online=True
+```
+
+As configurações dos clientes são versionadas: `.mcp.json` para o Claude Code e
+`[mcp_servers.omniroute_project]` em `.codex/codex-home.config.toml` para o
+Codex. O bloco do Codex precisa ficar no repositório porque
+`ecossistema-agentes.ps1` recopia esse arquivo sobre o `CODEX_HOME` isolado a
+cada execução — um `codex mcp add` direto seria sobrescrito.
+
+Servidor vindo de `.mcp.json` aparece como `⏸ Pending approval` até ser aprovado
+uma vez numa sessão interativa do Claude Code. Isso é do próprio Claude Code e
+não é contornável.
+
+## Limitações conhecidas do diagnóstico
+
+Duas falhas de `scripts/ecossistema-agentes.ps1` afetam **apenas o relatório**,
+não o gateway:
+
+1. `Test-OmniReady` usa `-TimeoutSec 3`, mas `/v1/models` responde em 6,6–11 s
+   nesta máquina (265 modelos). O diagnóstico conclui "OmniRoute do projeto nao
+   esta ativo" mesmo com o servidor no ar e **pula em silêncio** o catálogo, o
+   smoke test de custo zero e a lista de provedores.
+2. `Show-Diagnostics` chama `omniroute providers list` sem antes rodar
+   `Set-OmniProcessEnvironment`. Sem `DATA_DIR`, a CLI lê o armazenamento
+   **global** e imprime "No providers configured", em vez dos 10 provedores
+   deste projeto.
+
+Enquanto isso não for corrigido, verifique manualmente com `-TimeoutSec` maior e
+com `DATA_DIR` apontando para `%LOCALAPPDATA%\cpx\<hash>\omniroute`.
+
 ## Garantias e limitações
 
 - `%LOCALAPPDATA%\cpx\<hash-do-projeto>` contém estado, chaves e autenticação.
@@ -265,8 +337,9 @@ O lançador antigo continua funcionando como ponte:
 ## Arquivos que definem a política
 
 - `.codex/config.toml`: ativa hooks e multiagente no projeto.
-- `.codex/codex-home.config.toml`: provedor local copiado para o CODEX_HOME
-  isolado.
+- `.codex/codex-home.config.toml`: provedor local e servidor MCP copiados para o
+  CODEX_HOME isolado.
+- `.mcp.json`: servidor MCP do OmniRoute para o Claude Code.
 - `.codex/agent-templates/*.toml`: perfis gratuitos.
 - `.codex/hooks.json` e `.codex/hooks/enforce_planner_policy.py`: bloqueio
   planner/executor.

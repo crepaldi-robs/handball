@@ -21,3 +21,10 @@ requires_openai_auth = false
 request_max_retries = 1
 stream_max_retries = 1
 stream_idle_timeout_ms = 120000
+
+# Servidor MCP do mesmo OmniRoute, na porta deste projeto. Precisa ficar aqui
+# porque ecossistema-agentes.ps1 recopia este arquivo sobre o CODEX_HOME
+# isolado a cada execucao; um "codex mcp add" direto seria sobrescrito.
+# Exige mcpEnabled=true e mcpTransport="streamable-http" no OmniRoute.
+[mcp_servers.omniroute_project]
+url = "http://127.0.0.1:32128/api/mcp/stream"
