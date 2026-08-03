@@ -560,3 +560,63 @@ def test_independent_plan_series_sessions_links_revisions_and_player_visibility(
         json={"execution_status": "COMPLETED"},
         headers={"X-CSRF-Token": player_csrf},
     ).status_code == 403
+
+
+def test_player_next_training_plan_exposes_only_published_preparation(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, handball_id, published_content = _seed_and_content(client, csrf)
+    published_content_id = int(published_content["id"])
+    assert client.post(
+        f"/api/v1/playbook/contents/{published_content_id}/publish",
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    draft_response = client.post(
+        "/api/v1/playbook/contents",
+        json=_content_payload(team_id, handball_id, title="Rascunho interno"),
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert draft_response.status_code == 201, draft_response.text
+    draft_content = draft_response.json()
+    _, season_id = _team_and_season(client)
+    training = _create_training(
+        client,
+        csrf,
+        team_id,
+        season_id,
+        starts_at="2035-11-04T19:00:00-03:00",
+        ends_at="2035-11-04T21:00:00-03:00",
+        is_player_visible=True,
+    )
+    event_id = int(training["id"])
+    saved = client.put(
+        f"/api/v1/playbook/events/{event_id}/plan",
+        json={
+            "title": "Preparação da defesa 6x0",
+            "seasonal_objective": "Ler a troca antes do contato.",
+            "context_adjustment": "",
+            "notes": "",
+            "items": [
+                {"content_id": published_content_id, "sort_order": 0, "planned_minutes": 15, "notes": "Revisar antes de sair."},
+                {"content_id": int(draft_content["id"]), "sort_order": 1, "planned_minutes": 10, "notes": "Não publicar ainda."},
+            ],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert saved.status_code == 200, saved.text
+    opened = client.post(
+        f"/api/v1/attendance/trainings/{event_id}/session",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert opened.status_code == 200, opened.text
+
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    active = client.post("/api/v1/me/attendance/active", headers={"X-CSRF-Token": player_csrf})
+    assert active.status_code == 200, active.text
+    assert int(active.json()["item"]["event"]["id"]) == event_id
+    plan = client.get(f"/api/v1/playbook/events/{event_id}/plan")
+    assert plan.status_code == 200, plan.text
+    assert [item["content_id"] for item in plan.json()["items"]] == [published_content_id]
+    assert plan.json()["items"][0]["planned_minutes"] == 15
+    assert plan.json()["items"][0]["notes"] == "Revisar antes de sair."
