@@ -805,6 +805,7 @@ recomendação operacional: usar senha longa, única e protegida.
 | API | auth, validação, no-store, erro e efeito no SQLite |
 | frontend | desktop, móvel, teclado, cache antigo e service worker novo |
 | backup | consistência SQLite, rotação, falha de caminho, integridade |
+| trilha de auditoria (confirmação/presença/observação) | teste estrutural (AST: todo UPDATE em attendance_records tocando confirmation_status/present/notes grava em attendance_audit_log na mesma função) + conteúdo old/new via API (`GET /api/v1/audit`) + regressão de `IMMUTABLE_RELATIONS` |
 | instalador | parser PowerShell, SIDs, allowlists de runtime/operação, ponteiro e preservação de estado |
 | dependências | suíte completa, compileall e smoke local |
 | contrato público | `/`, `/login`, `/app`, `/health` e hostname |
