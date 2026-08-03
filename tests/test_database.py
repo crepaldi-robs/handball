@@ -49,7 +49,14 @@ def test_initialization_and_audit(tmp_path):
 
     audit = repo.get_audit_log()
     assert len(audit) == 1
-    assert audit[0]["source"] == "pytest"
+    entry = audit[0]
+    assert entry["source"] == "pytest"
+    assert entry["old_confirmation_status"] == "PENDING"
+    assert entry["new_confirmation_status"] == "CONFIRMED_EARLY"
+    assert entry["old_present"] is None
+    assert entry["new_present"] == 1
+    assert entry["old_notes"] == ""
+    assert entry["new_notes"] == "Teste"
 
 
 def test_finalize_marks_unchecked_as_absent(tmp_path):

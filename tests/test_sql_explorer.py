@@ -8,6 +8,12 @@ from handball.application import create_app
 from tests.test_users_authorization import login, make_v2
 
 
+def test_immutable_relations_include_both_audit_tables() -> None:
+    from handball.database.repositories.sql_explorer import IMMUTABLE_RELATIONS
+
+    assert {"attendance_audit_log", "security_audit_events"} <= IMMUTABLE_RELATIONS
+
+
 def test_ct_can_catalog_query_explain_and_export_csv_without_mutation(
     tmp_path: Path,
 ) -> None:
@@ -181,6 +187,12 @@ def test_dev_still_cannot_touch_restricted_tables_or_engine_commands(tmp_path: P
         "ATTACH DATABASE 'x.db' AS other",
         "VACUUM",
         "CREATE TRIGGER trg AFTER DELETE ON seasons BEGIN SELECT 1; END",
+        "DELETE FROM attendance_audit_log",
+        "UPDATE attendance_audit_log SET source='tampered'",
+        "INSERT INTO attendance_audit_log(session_id,member_id,old_confirmation_status,new_confirmation_status,old_present,new_present,old_notes,new_notes,changed_at,source) VALUES(1,1,'PENDING','PENDING',NULL,NULL,'','','2026-01-01T00:00:00-03:00','tampered')",
+        "DELETE FROM security_audit_events",
+        "UPDATE security_audit_events SET action='tampered'",
+        "INSERT INTO security_audit_events(actor_user_id,occurred_at,action,entity,target_id,origin,before_json,after_json,request_id) VALUES(NULL,'2026-01-01T00:00:00-03:00','tampered','x','1','x',NULL,NULL,NULL)",
     ):
         response = client.post(
             "/api/v1/sql/changes/preview",
