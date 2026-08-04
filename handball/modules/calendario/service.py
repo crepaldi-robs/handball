@@ -315,11 +315,7 @@ class CalendarService:
             and event_type in {"TRAINING", "GAME"}
         ):
             actions.append("justify")
-            if int(event["id"]) == next_player_training_id and event_type == "TRAINING":
-                actions.append("respond")
-                primary_action = "respond"
-            else:
-                primary_action = "justify"
+            primary_action = "justify"
         return {
             "display_title": self._event_title(event),
             "available_actions": actions,

@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
 from uuid import uuid4
@@ -488,8 +488,16 @@ class AttendanceRepository:
         with self.connection() as conn:
             if not self._read_only:
                 self._ensure_attendance_records(conn, session_id)
+            decision_projection = (
+                "ar.confirmation_decided_at"
+                if any(
+                    str(item[1]) == "confirmation_decided_at"
+                    for item in conn.execute("PRAGMA table_info(attendance_records)")
+                )
+                else "NULL AS confirmation_decided_at"
+            )
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     ar.id AS record_id,
                     ar.session_id,
@@ -500,7 +508,8 @@ class AttendanceRepository:
                     ar.present,
                     ar.notes,
                     ar.version,
-                    ar.updated_at
+                    ar.updated_at,
+                    {decision_projection}
                 FROM attendance_records ar
                 JOIN team_members tm ON tm.id = ar.member_id
                 WHERE ar.session_id = ?
@@ -536,6 +545,7 @@ class AttendanceRepository:
         positions: list[str],
         base_version: int,
         actor_user_id: int,
+        training_starts_at: str,
     ) -> dict[str, Any]:
         if confirmation_status not in VALID_CONFIRMATION_STATUSES:
             raise ValueError("Situação de confirmação inválida.")
@@ -550,7 +560,7 @@ class AttendanceRepository:
             if bool(session["is_finalized"]):
                 raise ValueError("A chamada já foi encerrada.")
             row = conn.execute(
-                """SELECT id,confirmation_status,present,notes,version
+                """SELECT id,confirmation_status,present,notes,version,confirmation_decided_at
                    FROM attendance_records WHERE session_id=? AND member_id=?""",
                 (int(session_id), int(member_id)),
             ).fetchone()
@@ -568,12 +578,50 @@ class AttendanceRepository:
             normalized_positions = [str(value).strip().upper() for value in positions]
             if any(not value for value in normalized_positions) or len(set(normalized_positions)) != len(normalized_positions):
                 raise ValueError("Posições inválidas.")
-            changed = str(row["confirmation_status"]) != confirmation_status or old_positions != normalized_positions
+            old_status = str(row["confirmation_status"])
+            old_category = old_status.split("_", 1)[0]
+            target_category = confirmation_status.split("_", 1)[0]
+            old_decision_at = row["confirmation_decided_at"]
+            decision_at = old_decision_at
+            timing_note: str | None = None
+            if old_category != target_category:
+                now = _now_iso()
+                decision_at = now
+                latest = conn.execute(
+                    """SELECT old_confirmation_status,new_confirmation_status,
+                              old_confirmation_decided_at,new_confirmation_decided_at,changed_at
+                         FROM attendance_audit_log
+                        WHERE session_id=? AND member_id=? AND source='player-self'
+                        ORDER BY id DESC LIMIT 1""",
+                    (int(session_id), int(member_id)),
+                ).fetchone()
+                if latest is not None:
+                    latest_old = str(latest["old_confirmation_status"]).split("_", 1)[0]
+                    latest_new = str(latest["new_confirmation_status"]).split("_", 1)[0]
+                    elapsed = datetime.fromisoformat(now) - datetime.fromisoformat(str(latest["changed_at"]))
+                    restored_at = latest["old_confirmation_decided_at"]
+                    if (
+                        latest_old == target_category
+                        and latest_new == old_category
+                        and timedelta(0) <= elapsed <= timedelta(hours=3)
+                        and restored_at
+                    ):
+                        decision_at = str(restored_at)
+                        timing_note = "Decisão anterior restaurada: reversão em até 3 horas."
+                starts_at = datetime.fromisoformat(training_starts_at)
+                effective_at = datetime.fromisoformat(str(decision_at))
+                is_early = starts_at - effective_at >= timedelta(hours=24)
+                confirmation_status = (
+                    f"{target_category}_{'EARLY' if is_early else 'LATE'}"
+                )
+            else:
+                confirmation_status = old_status
+            changed = old_status != confirmation_status or old_positions != normalized_positions
             if changed:
                 now = _now_iso()
                 conn.execute(
-                    "UPDATE attendance_records SET confirmation_status=?,version=version+1,updated_at=? WHERE id=?",
-                    (confirmation_status, now, int(row["id"])),
+                    "UPDATE attendance_records SET confirmation_status=?,confirmation_decided_at=?,version=version+1,updated_at=? WHERE id=?",
+                    (confirmation_status, decision_at, now, int(row["id"])),
                 )
                 conn.execute("DELETE FROM attendance_record_positions WHERE attendance_record_id=?", (int(row["id"]),))
                 conn.executemany(
@@ -582,10 +630,12 @@ class AttendanceRepository:
                 )
                 audit_cursor = conn.execute(
                     """INSERT INTO attendance_audit_log(session_id,member_id,old_confirmation_status,new_confirmation_status,
-                           old_present,new_present,old_notes,new_notes,changed_at,source)
-                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                           old_present,new_present,old_notes,new_notes,changed_at,source,
+                           old_confirmation_decided_at,new_confirmation_decided_at,decision_timing_note)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (int(session_id), int(member_id), row["confirmation_status"], confirmation_status,
-                     row["present"], row["present"], row["notes"] or "", row["notes"] or "", now, "player-self"),
+                     row["present"], row["present"], row["notes"] or "", row["notes"] or "", now, "player-self",
+                     old_decision_at, decision_at, timing_note),
                 )
                 self._attach_audit_actor(
                     conn, int(audit_cursor.lastrowid), actor_user_id=actor_user_id,
@@ -1130,6 +1180,11 @@ class AttendanceRepository:
                 if "actor_user_id" in columns
                 else ""
             )
+            decision_projection = (
+                ", log.old_confirmation_decided_at, log.new_confirmation_decided_at, log.decision_timing_note"
+                if "decision_timing_note" in columns
+                else ", NULL old_confirmation_decided_at, NULL new_confirmation_decided_at, NULL decision_timing_note"
+            )
             rows = conn.execute(
                 f"""
                 SELECT
@@ -1145,6 +1200,7 @@ class AttendanceRepository:
                     log.new_notes,
                     log.source
                     {actor_projection}
+                    {decision_projection}
                 FROM attendance_audit_log log
                 JOIN training_sessions ts ON ts.id = log.session_id
                 JOIN team_members tm ON tm.id = log.member_id

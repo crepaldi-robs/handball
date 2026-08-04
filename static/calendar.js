@@ -71,7 +71,6 @@ if (calendarRoot) {
     create_attendance: "Criar chamada",
     finish_training: "Encerrar treino",
     justify: "Justificar ausência",
-    respond: "Responder presença",
   };
   const attendanceGroupLabels = {
     confirmed: "Confirmados",
@@ -148,7 +147,7 @@ if (calendarRoot) {
         code: "calendar.offline_read_only",
         title: "Você está sem conexão",
         message: "A última agenda continua disponível apenas para consulta.",
-        suggestion: "Reconecte-se à internet para criar, editar ou responder.",
+        suggestion: "Reconecte-se à internet para criar, editar ou justificar.",
       }, 0);
     }
     const headers = { Accept: "application/json", ...(options.headers || {}) };
@@ -1084,7 +1083,6 @@ if (calendarRoot) {
       </header>
       <div class="calendar-detail-status">
         <span class="calendar-status-pill ${statusClass(event.status)}">${escapeHtml(labels[event.status] || event.status)}</span>
-        ${!canManage && event.is_next_player_training ? "<span>Próximo treino para responder</span>" : ""}
       </div>
       <dl class="calendar-detail-grid">
         <div><dt>Quando</dt><dd>${escapeHtml(localDateTime(event.starts_at))} · até ${escapeHtml(localDateTime(event.ends_at))}</dd></div>
@@ -1227,7 +1225,7 @@ if (calendarRoot) {
       return;
     }
     if (
-      ["cancel", "reschedule", "justify", "respond", "history", "finish_training"].includes(action)
+      ["cancel", "reschedule", "justify", "history", "finish_training"].includes(action)
       && !detailDialog.open
     ) {
       openDetail(event);
@@ -1318,10 +1316,6 @@ if (calendarRoot) {
       );
       return;
     }
-    if (action === "respond") {
-      await openAttendanceResponse(event);
-      return;
-    }
     if (action === "history") {
       await showHistory(event);
       return;
@@ -1343,61 +1337,6 @@ if (calendarRoot) {
         setBusy(sourceButton, false);
       }
     }
-  }
-
-  async function openAttendanceResponse(event) {
-    let active;
-    try {
-      active = await request("/api/v1/me/attendance/active", {
-        method: "POST",
-        body: "{}",
-      });
-    } catch (error) {
-      showProblem(error);
-      return;
-    }
-    const item = active.item;
-    if (!item || Number(item.event.id) !== Number(event.id)) {
-      showProblem(new CalendarRequestError({
-        title: "A chamada deste treino ainda não está disponível",
-        message: "Somente o próximo treino com chamada aberta pode receber resposta.",
-        suggestion: "Atualize a agenda mais tarde ou fale com o CT.",
-      }, 409));
-      return;
-    }
-    const selected = new Set(item.record.training_positions || []);
-    const positionOptions = item.allowed_positions.map((position) => `
-      <label><input name="positions" type="checkbox" value="${escapeHtml(position)}" ${selected.has(position) ? "checked" : ""}><span>${escapeHtml(position)}</span></label>
-    `).join("");
-    composer(
-      "Confirmar presença",
-      `
-        <fieldset class="calendar-response-picker">
-          <legend>Você vai ao treino?</legend>
-          <label><input name="response" type="radio" value="GOING" required><span>Vou</span></label>
-          <label><input name="response" type="radio" value="NOT_GOING" required><span>Não vou</span></label>
-        </fieldset>
-        <fieldset class="calendar-position-picker"><legend>Posições no treino</legend>${positionOptions}</fieldset>
-        <label><span>Observação <small>opcional</small></span><textarea name="justification" rows="2">${escapeHtml(item.justification || "")}</textarea></label>
-      `,
-      async (data) => {
-        const response = data.get("response");
-        const positions = response === "GOING" ? data.getAll("positions") : [];
-        await request(`/api/v1/me/attendance/events/${event.id}`, {
-          method: "PUT",
-          body: JSON.stringify({
-            response,
-            positions,
-            justification: data.get("justification") || "",
-            base_version: item.record.version,
-          }),
-        });
-        closeDialog(detailDialog);
-        showMessage(response === "GOING" ? "Presença confirmada." : "Ausência informada.");
-        await loadCalendar();
-      },
-      "Salvar resposta",
-    );
   }
 
   async function showHistory(event) {

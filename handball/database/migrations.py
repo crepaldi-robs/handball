@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 10
+MAX_SUPPORTED_SCHEMA_VERSION = 11
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -633,6 +633,30 @@ MIGRATION_V10_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[10] = (MIGRATION_V10_NAME, MIGRATION_V10_CHECKSUM)
 
+# O instante efetivo é separado do instante de cada clique. A trilha de
+# auditoria continua imutável e torna explícita a restauração de uma decisão
+# anterior quando a pessoa volta ao mesmo estado em até três horas.
+SCHEMA_V11_STATEMENTS = (
+    "ALTER TABLE attendance_records ADD COLUMN confirmation_decided_at TEXT",
+    "UPDATE attendance_records SET confirmation_decided_at=updated_at WHERE confirmation_decided_at IS NULL AND confirmation_status<>'PENDING'",
+    "ALTER TABLE attendance_audit_log ADD COLUMN old_confirmation_decided_at TEXT",
+    "ALTER TABLE attendance_audit_log ADD COLUMN new_confirmation_decided_at TEXT",
+    "ALTER TABLE attendance_audit_log ADD COLUMN decision_timing_note TEXT",
+    "CREATE INDEX idx_attendance_audit_member_changed ON attendance_audit_log(session_id,member_id,changed_at DESC,id DESC)",
+)
+MIGRATION_V11_NAME = "attendance_effective_decision_timing"
+MIGRATION_V11_CHECKSUM = _migration_checksum(
+    11,
+    MIGRATION_V11_NAME,
+    SCHEMA_V11_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "effective_decision": "first-decision-restored-on-return-within-3-hours",
+        "audit": "every-click-kept-with-effective-timing-note",
+    },
+)
+KNOWN_MIGRATIONS[11] = (MIGRATION_V11_NAME, MIGRATION_V11_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -858,6 +882,11 @@ def _apply_schema_v8(conn: sqlite3.Connection) -> None:
 
 def _apply_schema_v9(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_V9_STATEMENTS:
+        conn.execute(statement)
+
+
+def _apply_schema_v11(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V11_STATEMENTS:
         conn.execute(statement)
 
 
@@ -1173,6 +1202,14 @@ def _record_schema_v10(conn: sqlite3.Connection, *, app_version: str, origin: st
     conn.execute("PRAGMA user_version = 10").close()
 
 
+def _record_schema_v11(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (11, MIGRATION_V11_NAME, MIGRATION_V11_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 11").close()
+
+
 class DatabaseSchemaError(RuntimeError):
     """O banco não pode ser usado ou migrado de forma comprovadamente segura."""
 
@@ -1288,6 +1325,17 @@ def _column_layout_problems(
             tuple(item for item in expected if item[0] != "version")
             + (version_column,)
         )
+    if table == "attendance_records":
+        allowed_layouts.add(
+            expected + (("confirmation_decided_at", "TEXT", False, None, 0),)
+        )
+    if table == "attendance_audit_log":
+        v11_layout = expected + (
+            ("old_confirmation_decided_at", "TEXT", False, None, 0),
+            ("new_confirmation_decided_at", "TEXT", False, None, 0),
+            ("decision_timing_note", "TEXT", False, None, 0),
+        )
+        allowed_layouts.add(v11_layout)
     if actual in allowed_layouts:
         return []
 
@@ -1785,6 +1833,23 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 11:
+            required_v11_columns = {
+                "attendance_records": {"confirmation_decided_at"},
+                "attendance_audit_log": {
+                    "old_confirmation_decided_at",
+                    "new_confirmation_decided_at",
+                    "decision_timing_note",
+                },
+            }
+            for table, required_columns in required_v11_columns.items():
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas de decisão efetiva ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -2113,6 +2178,10 @@ class DatabaseMigrator:
                 _apply_schema_v10(conn)
                 _record_schema_v10(conn, app_version=app_version, origin=origin)
                 effective_version = 10
+            if effective_version >= 10 and effective_version < 11:
+                _apply_schema_v11(conn)
+                _record_schema_v11(conn, app_version=app_version, origin=origin)
+                effective_version = 11
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -2199,6 +2268,8 @@ class DatabaseMigrator:
                 _record_schema_v9(conn, app_version=app_version, origin=origin)
                 _apply_schema_v10(conn)
                 _record_schema_v10(conn, app_version=app_version, origin=origin)
+                _apply_schema_v11(conn)
+                _record_schema_v11(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

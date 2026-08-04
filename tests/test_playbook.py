@@ -95,8 +95,8 @@ def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
 
     status = DatabaseMigrator(manager.db_path).status()
 
-    assert status.current_version == 10
-    assert status.latest_version == 10
+    assert status.current_version == 11
+    assert status.latest_version == 11
     assert status.compatible is True
     with manager.read_only_connection() as connection:
         row = connection.execute(

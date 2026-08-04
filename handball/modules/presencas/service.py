@@ -103,11 +103,8 @@ class AttendanceService:
         return list(dict.fromkeys(part.strip().upper() for part in value.replace(",", "/").split("/") if part.strip()))
 
     @staticmethod
-    def _confirmation_code(response: str, training_date: str) -> str:
-        early = datetime.now(LOCAL_TIMEZONE).date() < date.fromisoformat(training_date)
-        if response == "GOING":
-            return "CONFIRMED_EARLY" if early else "CONFIRMED_LATE"
-        return "CANCELLED_EARLY" if early else "CANCELLED_LATE"
+    def _confirmation_code(response: str) -> str:
+        return "CONFIRMED_LATE" if response == "GOING" else "CANCELLED_LATE"
 
     def active_self_confirmation(
         self, *, team_ids: Iterable[int], player_member_id: int, actor_user_id: int
@@ -115,7 +112,7 @@ class AttendanceService:
         with self._unit_of_work_factory() as unit_of_work:
             event = unit_of_work.calendar.active_training_event(
                 team_ids,
-                player_visible_only=True,
+                player_visible_only=False,
             )
             if event is None:
                 return None
@@ -150,7 +147,7 @@ class AttendanceService:
         with self._unit_of_work_factory() as unit_of_work:
             active = unit_of_work.calendar.active_training_event(
                 team_ids,
-                player_visible_only=True,
+                player_visible_only=False,
             )
             if active is None or int(active["id"]) != int(event_id):
                 raise ValueError("Este não é mais o treino ativo para confirmação.")
@@ -169,8 +166,9 @@ class AttendanceService:
                 raise ValueError("Selecione apenas posições cadastradas para você.")
             updated = unit_of_work.attendance.update_self_confirmation(
                 int(linked["session"]["id"]), member_id=player_member_id,
-                confirmation_status=self._confirmation_code(response, str(linked["session"]["training_date"])),
+                confirmation_status=self._confirmation_code(response),
                 positions=normalized_positions, base_version=base_version, actor_user_id=actor_user_id,
+                training_starts_at=str(linked["event"]["starts_at"]),
             )
             clean_justification = justification.strip()
             if clean_justification:

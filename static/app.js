@@ -1128,6 +1128,7 @@ async function loadAudit() {
           ["Treino", `${formatDate(item.training_date)} · ${item.source}`],
           ["Confirmação", statusChangeOf(item)],
           ["Presença", presenceChangeOf(item)],
+          ...(item.decision_timing_note ? [["Decisão efetiva", item.decision_timing_note]] : []),
         ],
       )));
     }

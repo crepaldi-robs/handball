@@ -164,7 +164,7 @@ def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.current_version == 10
+    assert result.current_version == 11
     assert result.pending_versions == ()
     assert verify_database(database_path)["ok"] is True
     with sqlite3.connect(database_path) as conn:

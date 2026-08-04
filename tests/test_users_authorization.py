@@ -12,6 +12,7 @@ from handball.core.authorization import Permission, ROLE_PERMISSIONS
 from handball.core.config import AppSettings
 from handball.database import DatabaseManager
 from handball.database.migrations import DatabaseMigrator, logical_fingerprint, verify_database
+from handball.database.repositories import attendance as attendance_repository
 
 
 def make_v2(tmp_path: Path) -> tuple[TestClient, DatabaseManager, dict[str, object]]:
@@ -162,7 +163,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 10
+    assert DatabaseMigrator(manager.db_path).status().current_version == 11
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -170,7 +171,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 10
+    assert client.get("/ready").json()["schema_version"] == 11
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:
@@ -325,6 +326,45 @@ def test_player_confirms_active_training_with_many_positions_and_justification(t
         headers={"X-CSRF-Token": player_csrf},
     )
     assert forbidden.status_code == 409
+
+
+def test_player_reconfirmation_within_three_hours_restores_effective_first_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, manager, data = make_v2(tmp_path)
+    ct_csrf = login(client, "ct", data["passwords"]["ct"])
+    opened = open_calendar_training(client, ct_csrf, "2099-01-10")
+    event_id = int(opened["calendar_event"]["id"])
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+
+    def save(response: str, now: str, version: int) -> dict[str, object]:
+        monkeypatch.setattr(attendance_repository, "_now_iso", lambda: now)
+        result = client.put(
+            f"/api/v1/me/attendance/events/{event_id}",
+            json={"response": response, "positions": ["PD"] if response == "GOING" else [], "justification": "", "base_version": version},
+            headers={"X-CSRF-Token": player_csrf},
+        )
+        assert result.status_code == 200, result.text
+        return result.json()["record"]
+
+    active = client.post("/api/v1/me/attendance/active", headers={"X-CSRF-Token": player_csrf}).json()["item"]
+    first = save("GOING", "2099-01-08T10:00:00-03:00", int(active["record"]["version"]))
+    cancelled = save("NOT_GOING", "2099-01-09T10:00:00-03:00", int(first["version"]))
+    restored = save("GOING", "2099-01-09T12:00:00-03:00", int(cancelled["version"]))
+
+    assert restored["confirmation_status"] == "CONFIRMED_EARLY"
+    assert restored["confirmation_decided_at"] == "2099-01-08T10:00:00-03:00"
+    with manager.read_only_connection() as connection:
+        audit = connection.execute(
+            """SELECT old_confirmation_decided_at,new_confirmation_decided_at,decision_timing_note
+                 FROM attendance_audit_log ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert tuple(audit) == (
+        "2099-01-09T10:00:00-03:00",
+        "2099-01-08T10:00:00-03:00",
+        "Decisão anterior restaurada: reversão em até 3 horas.",
+    )
 
 
 def test_active_confirmation_prefers_next_training_over_stale_past_one(tmp_path: Path) -> None:

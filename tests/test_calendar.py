@@ -65,7 +65,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 10
+    assert status.current_version == 11
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -120,7 +120,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         "calendar_event_transitions",
         "calendar_command_receipts",
     } <= tables
-    assert client.get("/ready").json()["schema_version"] == 10
+    assert client.get("/ready").json()["schema_version"] == 11
     assert data["before_ids"]
 
 
@@ -829,7 +829,7 @@ def test_calendar_v7_recurring_series_previews_and_creates_transactionally(
     assert conflicting.json()["detail"]["code"] == "calendar.series_conflict"
 
 
-def test_player_calendar_exposes_response_only_for_next_training(
+def test_player_calendar_does_not_expose_attendance_response_actions(
     tmp_path: Path,
 ) -> None:
     client, _, data = make_v2(tmp_path)
@@ -861,8 +861,8 @@ def test_player_calendar_exposes_response_only_for_next_training(
     ).json()["items"]
     assert [item["id"] for item in listed] == [item["id"] for item in events]
     assert listed[0]["is_next_player_training"] is True
-    assert listed[0]["primary_action"] == "respond"
-    assert "respond" in listed[0]["available_actions"]
+    assert listed[0]["primary_action"] == "justify"
+    assert "respond" not in listed[0]["available_actions"]
     assert listed[1]["is_next_player_training"] is False
     assert "respond" not in listed[1]["available_actions"]
 
