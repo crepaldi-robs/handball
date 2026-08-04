@@ -138,11 +138,12 @@
       <section id="view-roster" class="view" aria-labelledby="roster-title">
         <div class="page-heading"><div><span class="eyebrow">EQUIPE</span><h1 id="roster-title">Elenco</h1></div></div>
         <div class="roster-grid">
-          <div class="panel table-wrap stacked-table"><table><thead><tr><th>Nome</th><th>Posição</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
+          <div class="panel table-wrap stacked-table"><table><thead><tr><th>Nome</th><th>Ataque</th><th>Defesa</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
           <form id="member-form" class="panel stack-form compact-form">
             <h2>Adicionar atleta</h2>
             <label><span>Nome</span><input id="member-name" required maxlength="120"></label>
-            <label><span>Posição</span><input id="member-position" required maxlength="40" placeholder="Ex.: GOL, PD/PE"></label>
+            <fieldset id="member-attack-positions"><legend>Posições de ataque</legend><div class="inline-options">{% for position in ['GOL','PE','ME','C','MD','PD','PV'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ position }}</span></label>{% endfor %}</div></fieldset>
+            <fieldset id="member-defense-positions"><legend>Posições de defesa</legend><div class="inline-options">{% for position in ['M1','M2','M3','AVANCADO'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ 'Avançado' if position == 'AVANCADO' else position }}</span></label>{% endfor %}</div><p class="muted">Sem marcação defensiva: marcador genérico.</p></fieldset>
             <button class="button button-primary" type="submit">Adicionar</button>
           </form>
           {% if 'player_accounts.manage' in session.permissions %}

@@ -170,7 +170,7 @@
       <input id="playbook-content-id" type="hidden">
       <div class="playbook-form-grid">
         <label><span>Título</span><input id="playbook-content-title" name="title" maxlength="220" required></label>
-        <label><span>Tipo</span><input id="playbook-content-kind" name="content_kind" maxlength="80" value="Jogada"></label>
+        <label><span>Tipo</span><input id="playbook-content-kind" name="content_kind" maxlength="80" value="CONTENT" list="playbook-content-kinds"><datalist id="playbook-content-kinds"><option value="CONTENT"><option value="JOGADA"><option value="EXERCISE"></datalist></label>
         <label><span>Perspectiva</span><select id="playbook-content-perspective" name="perspective"><option value="">Não se aplica</option><option value="ATTACK">Ataque</option><option value="DEFENSE">Defesa</option><option value="NEUTRAL">Neutro</option></select></label>
         <label><span>Posições <small>separe por vírgula</small></span><input id="playbook-content-positions" name="positions" maxlength="1000" placeholder="Armador, Pivô"></label>
       </div>
@@ -180,6 +180,7 @@
       <label><span>Passo a passo</span><textarea id="playbook-content-steps" name="steps" maxlength="24000" rows="7" required></textarea></label>
       <label><span>Observações</span><textarea id="playbook-content-notes" name="notes" maxlength="8000" rows="3"></textarea></label>
       <label><span>Apelidos <small>separe por vírgula</small></span><input id="playbook-content-aliases" name="aliases" maxlength="3000"></label>
+      <fieldset id="playbook-exercise-spec" hidden><legend>Participantes do exercício</legend><p class="playbook-form-hint">Defina variantes e papéis em JSON estruturado. Grupos: ATTACK, DEFENSE, GOALKEEPER e NEUTRAL. Posições: GOL, PE, ME, C, MD, PD, PV; defesa: M1, M2, M3, AVANCADO.</p><textarea id="playbook-exercise-variants" rows="12" spellcheck="false" placeholder='[{"label":"Lado direito","roles":[{"group":"ATTACK","label":"Ponta direita","count":1,"attack_positions":["PD"]},{"group":"ATTACK","label":"Meia direita","count":1,"attack_positions":["MD"]},{"group":"DEFENSE","label":"1º marcador","count":1,"defensive_positions":["M1"]}]}]'></textarea><button id="playbook-exercise-example" class="playbook-soft-button" type="button">Inserir exemplo 2x1 na ponta</button></fieldset>
       <fieldset><legend>Pastas de navegação</legend><div id="playbook-content-folders" class="playbook-folder-picker"></div></fieldset>
       <label><span>Nota desta versão <small>opcional</small></span><input id="playbook-content-change-note" name="change_note" maxlength="500"></label>
       <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Salvar rascunho</button></div>

@@ -1208,6 +1208,10 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
    topo e números que já existem — nenhum indicador inventado.
    ------------------------------------------------------------------------- */
 .player-report-shell { width: min(640px, calc(100% - 80px)); }
+
+.roster-position-options { min-width: 180px; gap: 5px; }
+.roster-position-options label { white-space: nowrap; }
+#playbook-exercise-variants { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .82rem; }
 .action-card {
   display: flex;
   align-items: center;

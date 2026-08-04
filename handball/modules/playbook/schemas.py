@@ -63,6 +63,40 @@ class ContentPlacementInput(BaseModel):
     sort_order: int = Field(default=0, ge=0)
 
 
+class ExerciseRoleInput(BaseModel):
+    group: Literal["ATTACK", "DEFENSE", "GOALKEEPER", "NEUTRAL"]
+    label: str = Field(min_length=1, max_length=120)
+    count: int = Field(default=1, ge=1, le=20)
+    attack_positions: list[Literal["GOL", "PE", "ME", "C", "MD", "PD", "PV"]] = Field(default_factory=list, max_length=7)
+    defensive_positions: list[Literal["M1", "M2", "M3", "AVANCADO"]] = Field(default_factory=list, max_length=4)
+    allow_generic_defender: bool = False
+
+    @field_validator("label")
+    @classmethod
+    def strip_role_label(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_role_positions(self) -> "ExerciseRoleInput":
+        if self.group == "GOALKEEPER" and self.attack_positions not in ([], ["GOL"]):
+            raise ValueError("O papel de goleiro só aceita a posição GOL.")
+        if self.group == "DEFENSE" and self.attack_positions:
+            raise ValueError("Um papel defensivo não deve exigir posição ofensiva.")
+        if self.group == "ATTACK" and self.defensive_positions:
+            raise ValueError("Um papel ofensivo não deve exigir marcador defensivo.")
+        return self
+
+
+class ExerciseVariantInput(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    roles: list[ExerciseRoleInput] = Field(min_length=1, max_length=40)
+
+    @field_validator("label")
+    @classmethod
+    def strip_variant_label(cls, value: str) -> str:
+        return value.strip()
+
+
 class ContentInput(BaseModel):
     team_id: int = Field(gt=0)
     title: str = Field(min_length=1, max_length=220)
@@ -75,6 +109,7 @@ class ContentInput(BaseModel):
     notes: str = Field(default="", max_length=8000)
     aliases: list[str] = Field(default_factory=list, max_length=80)
     positions: list[str] = Field(default_factory=list, max_length=40)
+    exercise_variants: list[ExerciseVariantInput] = Field(default_factory=list, max_length=20)
     placements: list[ContentPlacementInput] = Field(min_length=1, max_length=100)
     change_note: str = Field(default="", max_length=500)
 
@@ -99,6 +134,13 @@ class ContentInput(BaseModel):
         if any(len(value) > 120 for value in normalized):
             raise ValueError("Cada nome alternativo ou posição pode ter no máximo 120 caracteres.")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_exercise_spec(self) -> "ContentInput":
+        is_exercise = self.content_kind.strip().upper() == "EXERCISE"
+        if self.exercise_variants and not is_exercise:
+            raise ValueError("Requisitos de participantes só podem ser usados em conteúdo do tipo EXERCISE.")
+        return self
 
 
 class ContentUpdateInput(ContentInput):

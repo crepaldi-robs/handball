@@ -12,6 +12,7 @@ from handball.database.contracts import (
 )
 
 from .domain import CONFIRMATION_LABELS, build_coach_message, summarize_records
+from .planner import build_coach_report, render_coach_report
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -38,7 +39,9 @@ class AttendanceService:
                 training_date, actor_user_id=actor_user_id
             )
             records = unit_of_work.attendance.get_session_records(int(training["id"]))
+        records = self._effective_records(records)
         summary = summarize_records(records)
+        coach_report = build_coach_report(records)
         return {
             "session": training,
             "records": records,
@@ -50,11 +53,12 @@ class AttendanceService:
                 "absent": len(summary["absent"]),
                 "unknown_presence": len(summary["unknown_presence"]),
             },
+            "coach_report": coach_report,
             "coach_message": build_coach_message(
                 training_date,
                 records,
                 is_finalized=bool(training["is_finalized"]),
-            ),
+            ) + render_coach_report(coach_report),
             "confirmation_labels": CONFIRMATION_LABELS,
         }
 
@@ -64,8 +68,11 @@ class AttendanceService:
         records: list[dict[str, Any]],
         *,
         calendar_event: dict[str, Any] | None,
+        exercises: Iterable[dict[str, Any]] = (),
     ) -> dict[str, Any]:
+        records = AttendanceService._effective_records(records)
         summary = summarize_records(records)
+        coach_report = build_coach_report(records, exercises)
         return {
             "session": training,
             "calendar_event": calendar_event,
@@ -78,11 +85,12 @@ class AttendanceService:
                 "absent": len(summary["absent"]),
                 "unknown_presence": len(summary["unknown_presence"]),
             },
+            "coach_report": coach_report,
             "coach_message": build_coach_message(
                 date.fromisoformat(str(training["training_date"])),
                 records,
                 is_finalized=bool(training["is_finalized"]),
-            ),
+            ) + render_coach_report(coach_report),
             "confirmation_labels": CONFIRMATION_LABELS,
         }
 
@@ -128,7 +136,7 @@ class AttendanceService:
             )
         return {
             "event": linked["event"], "session": linked["session"], "record": record,
-            "allowed_positions": self._allowed_positions(str(record["position"])),
+            "allowed_positions": list(record.get("attack_positions") or self._allowed_positions(str(record["position"]))),
             "justification": justification["reason"] if justification else "",
         }
 
@@ -156,10 +164,8 @@ class AttendanceService:
             )
             records = unit_of_work.attendance.get_session_records(int(linked["session"]["id"]))
             record = next(item for item in records if int(item["member_id"]) == int(player_member_id))
-            allowed = set(self._allowed_positions(str(record["position"])))
+            allowed = set(record.get("attack_positions") or self._allowed_positions(str(record["position"])))
             normalized_positions = [str(value).strip().upper() for value in positions]
-            if response == "GOING" and not normalized_positions:
-                raise ValueError("Selecione ao menos uma posição para confirmar presença.")
             if response == "NOT_GOING" and normalized_positions:
                 raise ValueError("Posições só se aplicam quando você vai ao treino.")
             if any(position not in allowed for position in normalized_positions):
@@ -199,10 +205,12 @@ class AttendanceService:
             records = unit_of_work.attendance.get_session_records(
                 int(linked["session"]["id"])
             )
+            exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
         return self._payload(
             linked["session"],
             records,
             calendar_event=linked["event"],
+            exercises=exercises,
         )
 
     def calendar_session_payload(
@@ -220,7 +228,8 @@ class AttendanceService:
             if calendar_event is None:
                 raise KeyError("Chamada sem vínculo com um treino autorizado.")
             records = unit_of_work.attendance.get_session_records(session_id)
-        return self._payload(training, records, calendar_event=calendar_event)
+            exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
+        return self._payload(training, records, calendar_event=calendar_event, exercises=exercises)
 
     def sync_records(
         self,
@@ -273,9 +282,15 @@ class AttendanceService:
         with self._unit_of_work_factory(read_only=True) as unit_of_work:
             return unit_of_work.attendance.list_members(include_inactive=True)
 
-    def add_member(self, name: str, position: str, *, actor_user_id: int | None = None) -> list[dict[str, Any]]:
+    def add_member(
+        self, name: str, position: str, *, attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None, actor_user_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         with self._unit_of_work_factory() as unit_of_work:
-            unit_of_work.attendance.add_member(name, position, actor_user_id=actor_user_id)
+            unit_of_work.attendance.add_member(
+                name, position, attack_positions=attack_positions,
+                defensive_positions=defensive_positions, actor_user_id=actor_user_id,
+            )
             return unit_of_work.attendance.list_members(include_inactive=True)
 
     def update_member(
@@ -284,6 +299,8 @@ class AttendanceService:
         *,
         position: str,
         active: bool,
+        attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None,
         actor_user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         with self._unit_of_work_factory() as unit_of_work:
@@ -291,6 +308,8 @@ class AttendanceService:
                 member_id,
                 position=position,
                 active=active,
+                attack_positions=attack_positions,
+                defensive_positions=defensive_positions,
                 actor_user_id=actor_user_id,
             )
             return unit_of_work.attendance.list_members(include_inactive=True)
@@ -313,3 +332,15 @@ class AttendanceService:
 
     def create_backup_download(self) -> BackupDownload:
         return self._backup_provider.create_backup_download()
+    @staticmethod
+    def _effective_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for raw in records:
+            item = dict(raw)
+            selected = list(item.get("training_positions") or ())
+            profile = list(item.get("attack_positions") or ())
+            item["effective_attack_positions"] = selected or profile
+            item["attack_position_source"] = "SELECTED" if selected else ("PROFILE_DEFAULT" if profile else "INCOMPLETE")
+            item["defensive_generic"] = not bool(item.get("defensive_positions"))
+            result.append(item)
+        return result

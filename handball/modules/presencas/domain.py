@@ -99,9 +99,14 @@ def _names_with_pos(records: list[dict[str, Any]]) -> str:
     if not records:
         return "nenhum"
     return ", ".join(
-        f"{r['name']} ({r['position']})" if r.get("position") else r["name"]
+        f"{r['name']} ({_effective_position_text(r)})" if _effective_position_text(r) else r["name"]
         for r in records
     )
+
+
+def _effective_position_text(record: dict[str, Any]) -> str:
+    positions = record.get("training_positions") or record.get("attack_positions") or []
+    return "/".join(str(value) for value in positions) or str(record.get("position") or "")
 
 
 def classify_position_categories(position: str) -> list[str]:
@@ -277,7 +282,7 @@ def build_coach_message(
 
     goleiros, pontas, meias, pivos, outros = [], [], [], [], []
     for r in confirmed_records:
-        cats = classify_position_categories(r.get("position", ""))
+        cats = classify_position_categories(_effective_position_text(r))
         if "Goleiros" in cats:
             goleiros.append(r)
         if "Pontas" in cats:

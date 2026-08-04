@@ -163,7 +163,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 11
+    assert DatabaseMigrator(manager.db_path).status().current_version == 12
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -171,7 +171,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 11
+    assert client.get("/ready").json()["schema_version"] == 12
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:
@@ -295,6 +295,37 @@ def test_player_is_denied_team_write_audit_export_and_backup(tmp_path: Path) -> 
     assert client.get("/app/presencas").status_code == 200
 
 
+def test_ct_manages_structured_attack_and_defensive_positions(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    member_id = int(data["player_member_id"])
+
+    updated = client.put(
+        f"/api/v1/members/{member_id}",
+        json={
+            "position": "PD/PE",
+            "attack_positions": ["PD", "PE"],
+            "defensive_positions": ["M1", "M2"],
+            "active": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert updated.status_code == 200, updated.text
+    member = next(item for item in updated.json()["items"] if int(item["id"]) == member_id)
+    assert member["attack_positions"] == ["PD", "PE"]
+    assert member["defensive_positions"] == ["M1", "M2"]
+    assert member["defensive_generic"] is False
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    forbidden = client.put(
+        f"/api/v1/members/{member_id}",
+        json={"position": "PD", "attack_positions": ["PD"], "defensive_positions": [], "active": True},
+        headers={"X-CSRF-Token": player_csrf},
+    )
+    assert forbidden.status_code == 403
+
+
 def test_player_confirms_active_training_with_many_positions_and_justification(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     with manager.unit_of_work() as unit_of_work:
@@ -320,12 +351,30 @@ def test_player_confirms_active_training_with_many_positions_and_justification(t
     assert body["record"]["confirmation_status"] == "CONFIRMED_EARLY"
     assert body["record"]["training_positions"] == ["PD", "PE"]
     assert body["justification"] == "Vou chegar alguns minutos depois."
+    fallback = client.put(
+        f"/api/v1/me/attendance/events/{event_id}",
+        json={"response": "GOING", "positions": [], "justification": "", "base_version": body["record"]["version"]},
+        headers={"X-CSRF-Token": player_csrf},
+    )
+    assert fallback.status_code == 200, fallback.text
+    assert fallback.json()["record"]["training_positions"] == []
     forbidden = client.put(
         f"/api/v1/me/attendance/events/{event_id}",
-        json={"response": "GOING", "positions": ["GOL"], "justification": "", "base_version": body["record"]["version"]},
+        json={"response": "GOING", "positions": ["GOL"], "justification": "", "base_version": fallback.json()["record"]["version"]},
         headers={"X-CSRF-Token": player_csrf},
     )
     assert forbidden.status_code == 409
+    logout(client)
+    login(client, "ct", data["passwords"]["ct"])
+    report_payload = client.get(f"/api/v1/sessions/{int(opened['session']['id'])}")
+    assert report_payload.status_code == 200, report_payload.text
+    player_record = next(
+        item for item in report_payload.json()["records"]
+        if int(item["member_id"]) == int(data["player_member_id"])
+    )
+    assert player_record["effective_attack_positions"] == ["PD", "PE"]
+    assert player_record["attack_position_source"] == "PROFILE_DEFAULT"
+    assert report_payload.json()["coach_report"]["generated_at"]
 
 
 def test_player_reconfirmation_within_three_hours_restores_effective_first_decision(

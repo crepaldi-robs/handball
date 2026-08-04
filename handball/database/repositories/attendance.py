@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
 from uuid import uuid4
 
+from handball.core.positions import normalize_defensive_positions, parse_attack_positions
+
 from ..contracts import DatabaseCompatibilityError
 from ..migrations import (
     LATEST_SCHEMA_VERSION,
@@ -518,6 +520,7 @@ class AttendanceRepository:
                 (session_id,),
             ).fetchall()
             result = [dict(row) for row in rows]
+            self._attach_member_positions(conn, result)
             if self._table_exists(conn, "attendance_record_positions") and result:
                 position_rows = conn.execute(
                     """SELECT attendance_record_id,position FROM attendance_record_positions
@@ -535,6 +538,68 @@ class AttendanceRepository:
                 for item in result:
                     item["training_positions"] = []
         return result
+
+    @staticmethod
+    def _attach_member_positions(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> None:
+        if not items:
+            return
+        available_tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "member_attack_positions" not in available_tables:
+            for item in items:
+                item["attack_positions"] = parse_attack_positions(str(item.get("position") or ""))
+                item["defensive_positions"] = []
+                item["defensive_generic"] = True
+            return
+        member_ids = sorted({int(item.get("member_id", item.get("id"))) for item in items})
+        placeholders = ",".join("?" for _ in member_ids)
+        attack: dict[int, list[str]] = {member_id: [] for member_id in member_ids}
+        defense: dict[int, list[str]] = {member_id: [] for member_id in member_ids}
+        for row in conn.execute(
+            f"SELECT member_id,position FROM member_attack_positions WHERE member_id IN ({placeholders}) ORDER BY member_id,ordinal",
+            tuple(member_ids),
+        ).fetchall():
+            attack[int(row["member_id"])].append(str(row["position"]))
+        for row in conn.execute(
+            f"SELECT member_id,position FROM member_defensive_positions WHERE member_id IN ({placeholders}) ORDER BY member_id,ordinal",
+            tuple(member_ids),
+        ).fetchall():
+            defense[int(row["member_id"])].append(str(row["position"]))
+        for item in items:
+            member_id = int(item.get("member_id", item.get("id")))
+            item["attack_positions"] = attack[member_id]
+            item["defensive_positions"] = defense[member_id]
+            item["defensive_generic"] = not defense[member_id]
+
+    @staticmethod
+    def _replace_member_positions(
+        conn: sqlite3.Connection,
+        member_id: int,
+        *,
+        attack_positions: Iterable[str],
+        defensive_positions: Iterable[str],
+    ) -> tuple[list[str], list[str]]:
+        attack = parse_attack_positions(attack_positions)
+        defense = normalize_defensive_positions(defensive_positions)
+        available_tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "member_attack_positions" not in available_tables:
+            return attack, defense
+        conn.execute("DELETE FROM member_attack_positions WHERE member_id=?", (int(member_id),))
+        conn.execute("DELETE FROM member_defensive_positions WHERE member_id=?", (int(member_id),))
+        conn.executemany(
+            "INSERT INTO member_attack_positions(member_id,position,ordinal) VALUES(?,?,?)",
+            [(int(member_id), position, ordinal) for ordinal, position in enumerate(attack)],
+        )
+        conn.executemany(
+            "INSERT INTO member_defensive_positions(member_id,position,ordinal) VALUES(?,?,?)",
+            [(int(member_id), position, ordinal) for ordinal, position in enumerate(defense)],
+        )
+        return attack, defense
 
     def update_self_confirmation(
         self,
@@ -1221,13 +1286,17 @@ class AttendanceRepository:
 
         with self.connection() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+            result = [dict(row) for row in rows]
+            self._attach_member_positions(conn, result)
+        return result
 
     def add_member(
         self,
         name: str,
         position: str,
         *,
+        attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None,
         actor_user_id: int | None = None,
     ) -> None:
         cleaned_name = name.strip()
@@ -1253,14 +1322,31 @@ class AttendanceRepository:
             member = conn.execute(
                 "SELECT id FROM team_members WHERE name=? COLLATE NOCASE", (cleaned_name,)
             ).fetchone()
+            member_id = int(member[0] if member else cursor.lastrowid)
+            existing_attack = [
+                str(row[0]) for row in conn.execute(
+                    "SELECT position FROM member_attack_positions WHERE member_id=? ORDER BY ordinal", (member_id,)
+                ).fetchall()
+            ] if self._table_exists(conn, "member_attack_positions") else []
+            existing_defense = [
+                str(row[0]) for row in conn.execute(
+                    "SELECT position FROM member_defensive_positions WHERE member_id=? ORDER BY ordinal", (member_id,)
+                ).fetchall()
+            ] if self._table_exists(conn, "member_defensive_positions") else []
+            normalized_attack, normalized_defense = self._replace_member_positions(
+                conn,
+                member_id,
+                attack_positions=(existing_attack or parse_attack_positions(cleaned_position)) if attack_positions is None else attack_positions,
+                defensive_positions=existing_defense if defensive_positions is None else defensive_positions,
+            )
             self._security_audit(
                 conn,
                 actor_user_id=actor_user_id,
                 action="member.create_or_reactivate",
                 entity="team_member",
-                target_id=str(member[0] if member else cursor.lastrowid),
+                target_id=str(member_id),
                 source="ui",
-                after_json=json.dumps({"name": cleaned_name, "position": cleaned_position}, ensure_ascii=False),
+                after_json=json.dumps({"name": cleaned_name, "position": cleaned_position, "attack_positions": normalized_attack, "defensive_positions": normalized_defense}, ensure_ascii=False),
             )
 
     def update_member(
@@ -1269,6 +1355,8 @@ class AttendanceRepository:
         *,
         position: str,
         active: bool,
+        attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None,
         actor_user_id: int | None = None,
     ) -> None:
         cleaned_position = position.strip().upper()
@@ -1276,6 +1364,11 @@ class AttendanceRepository:
             raise ValueError("A posição não pode ficar vazia.")
 
         with self.connection() as conn:
+            existing_defense = [
+                str(row[0]) for row in conn.execute(
+                    "SELECT position FROM member_defensive_positions WHERE member_id=? ORDER BY ordinal", (int(member_id),)
+                ).fetchall()
+            ] if self._table_exists(conn, "member_defensive_positions") else []
             before = conn.execute(
                 "SELECT position,active FROM team_members WHERE id=?", (member_id,)
             ).fetchone()
@@ -1287,6 +1380,12 @@ class AttendanceRepository:
                 """,
                 (cleaned_position, int(active), _now_iso(), member_id),
             )
+            normalized_attack, normalized_defense = self._replace_member_positions(
+                conn,
+                member_id,
+                attack_positions=parse_attack_positions(cleaned_position) if attack_positions is None else attack_positions,
+                defensive_positions=existing_defense if defensive_positions is None else defensive_positions,
+            )
             self._security_audit(
                 conn,
                 actor_user_id=actor_user_id,
@@ -1295,7 +1394,7 @@ class AttendanceRepository:
                 target_id=str(member_id),
                 source="ui",
                 before_json=json.dumps(dict(before) if before else None, ensure_ascii=False),
-                after_json=json.dumps({"position": cleaned_position, "active": bool(active)}, ensure_ascii=False),
+                after_json=json.dumps({"position": cleaned_position, "active": bool(active), "attack_positions": normalized_attack, "defensive_positions": normalized_defense}, ensure_ascii=False),
             )
 
     def backup_to(

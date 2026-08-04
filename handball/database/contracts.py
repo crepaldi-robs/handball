@@ -27,6 +27,9 @@ class MemberDTO(TypedDict, total=False):
     active: int
     created_at: str
     updated_at: str
+    attack_positions: list[str]
+    defensive_positions: list[str]
+    defensive_generic: bool
 
 
 class TrainingSessionDTO(TypedDict, total=False):
@@ -49,6 +52,12 @@ class AttendanceRecordDTO(TypedDict, total=False):
     notes: str
     version: int
     updated_at: str
+    training_positions: list[str]
+    attack_positions: list[str]
+    effective_attack_positions: list[str]
+    attack_position_source: str
+    defensive_positions: list[str]
+    defensive_generic: bool
 
 
 class AttendanceUpdateDTO(TypedDict, total=False):
@@ -121,7 +130,10 @@ class AttendanceRepositoryContract(Protocol):
         include_inactive: bool = True,
     ) -> list[dict[str, Any]]: ...
 
-    def add_member(self, name: str, position: str, *, actor_user_id: int | None = None) -> None: ...
+    def add_member(
+        self, name: str, position: str, *, attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None, actor_user_id: int | None = None
+    ) -> None: ...
 
     def update_member(
         self,
@@ -129,6 +141,8 @@ class AttendanceRepositoryContract(Protocol):
         *,
         position: str,
         active: bool,
+        attack_positions: Iterable[str] | None = None,
+        defensive_positions: Iterable[str] | None = None,
         actor_user_id: int | None = None,
     ) -> None: ...
 
@@ -478,6 +492,8 @@ class PlaybookRepositoryContract(Protocol):
         actor_user_id: int,
         change_note: str = "",
     ) -> dict[str, Any]: ...
+
+    def list_published_exercise_specs(self, team_ids: Iterable[int]) -> list[dict[str, Any]]: ...
 
     def move_contents(
         self,

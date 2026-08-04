@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from handball.core.positions import parse_attack_positions
+
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 11
+LATEST_SCHEMA_VERSION = 12
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 11
+MAX_SUPPORTED_SCHEMA_VERSION = 12
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -657,6 +659,35 @@ MIGRATION_V11_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[11] = (MIGRATION_V11_NAME, MIGRATION_V11_CHECKSUM)
 
+# Perfis esportivos e requisitos de exercícios são dados normalizados. O texto
+# legado de posição continua existindo para exportações e compatibilidade, mas
+# deixa de ser a fonte usada pelo planejador tático.
+SCHEMA_V12_STATEMENTS = (
+    "CREATE TABLE member_attack_positions (member_id INTEGER NOT NULL, position TEXT NOT NULL CHECK(position IN('GOL','PE','ME','C','MD','PD','PV')), ordinal INTEGER NOT NULL CHECK(ordinal>=0), PRIMARY KEY(member_id,position), UNIQUE(member_id,ordinal), FOREIGN KEY(member_id) REFERENCES team_members(id) ON DELETE CASCADE)",
+    "CREATE TABLE member_defensive_positions (member_id INTEGER NOT NULL, position TEXT NOT NULL CHECK(position IN('M1','M2','M3','AVANCADO')), ordinal INTEGER NOT NULL CHECK(ordinal>=0), PRIMARY KEY(member_id,position), UNIQUE(member_id,ordinal), FOREIGN KEY(member_id) REFERENCES team_members(id) ON DELETE CASCADE)",
+    "CREATE TABLE playbook_exercise_specs (content_id INTEGER PRIMARY KEY, spec_json TEXT NOT NULL CHECK(json_valid(spec_json)), updated_at TEXT NOT NULL, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE)",
+    "CREATE INDEX idx_member_attack_position ON member_attack_positions(position,member_id)",
+    "CREATE INDEX idx_member_defensive_position ON member_defensive_positions(position,member_id)",
+)
+MIGRATION_V12_NAME = "tactical_positions_and_exercise_specs"
+MIGRATION_V12_CHECKSUM = _migration_checksum(
+    12,
+    MIGRATION_V12_NAME,
+    SCHEMA_V12_STATEMENTS,
+    conditional_steps=(
+        {
+            "condition": "for each legacy team_members.position recognized by the canonical parser",
+            "sql": "INSERT INTO member_attack_positions(member_id,position,ordinal) VALUES(?,?,?)",
+        },
+    ),
+    canonical_contract={
+        "empty_training_positions": "all-profile-attack-positions",
+        "empty_defense_profile": "generic-defender-only",
+        "exercise_source": "published-playbook-structured-spec",
+    },
+)
+KNOWN_MIGRATIONS[12] = (MIGRATION_V12_NAME, MIGRATION_V12_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -800,6 +831,12 @@ V10_REQUIRED_COLUMNS = {
     },
 }
 
+V12_REQUIRED_COLUMNS = {
+    "member_attack_positions": {"member_id", "position", "ordinal"},
+    "member_defensive_positions": {"member_id", "position", "ordinal"},
+    "playbook_exercise_specs": {"content_id", "spec_json", "updated_at"},
+}
+
 
 def _apply_schema_v4(conn: sqlite3.Connection) -> None:
     duplicates = _fetchall(
@@ -888,6 +925,17 @@ def _apply_schema_v9(conn: sqlite3.Connection) -> None:
 def _apply_schema_v11(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_V11_STATEMENTS:
         conn.execute(statement)
+
+
+def _apply_schema_v12(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V12_STATEMENTS:
+        conn.execute(statement)
+    for member in conn.execute("SELECT id,position FROM team_members ORDER BY id").fetchall():
+        positions = parse_attack_positions(str(member["position"]))
+        conn.executemany(
+            "INSERT INTO member_attack_positions(member_id,position,ordinal) VALUES(?,?,?)",
+            [(int(member["id"]), position, ordinal) for ordinal, position in enumerate(positions)],
+        )
 
 
 def _v10_snapshot(value: dict[str, Any]) -> str:
@@ -1210,6 +1258,14 @@ def _record_schema_v11(conn: sqlite3.Connection, *, app_version: str, origin: st
     conn.execute("PRAGMA user_version = 11").close()
 
 
+def _record_schema_v12(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (12, MIGRATION_V12_NAME, MIGRATION_V12_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 12").close()
+
+
 class DatabaseSchemaError(RuntimeError):
     """O banco não pode ser usado ou migrado de forma comprovadamente segura."""
 
@@ -1321,9 +1377,14 @@ def _column_layout_problems(
         item[0] == "version" for item in expected
     ):
         version_column = next(item for item in expected if item[0] == "version")
-        allowed_layouts.add(
+        legacy_version_layout = (
             tuple(item for item in expected if item[0] != "version")
             + (version_column,)
+        )
+        allowed_layouts.add(legacy_version_layout)
+        allowed_layouts.add(
+            legacy_version_layout
+            + (("confirmation_decided_at", "TEXT", False, None, 0),)
         )
     if table == "attendance_records":
         allowed_layouts.add(
@@ -1850,6 +1911,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 12:
+            required_v12 = set(V12_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela de planejamento posicional obrigatória ausente: {table}."
+                for table in sorted(required_v12 - tables)
+            )
+            for table, required_columns in V12_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas de planejamento posicional ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -2182,6 +2259,10 @@ class DatabaseMigrator:
                 _apply_schema_v11(conn)
                 _record_schema_v11(conn, app_version=app_version, origin=origin)
                 effective_version = 11
+            if effective_version >= 11 and effective_version < 12:
+                _apply_schema_v12(conn)
+                _record_schema_v12(conn, app_version=app_version, origin=origin)
+                effective_version = 12
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -2270,6 +2351,8 @@ class DatabaseMigrator:
                 _record_schema_v10(conn, app_version=app_version, origin=origin)
                 _apply_schema_v11(conn)
                 _record_schema_v11(conn, app_version=app_version, origin=origin)
+                _apply_schema_v12(conn)
+                _record_schema_v12(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

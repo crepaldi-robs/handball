@@ -32,6 +32,28 @@ def _make_unversioned_current(database_path) -> AttendanceRepository:
     return repository
 
 
+def test_v12_backfills_recognized_attack_positions_and_creates_tactical_tables(tmp_path) -> None:
+    database_path = tmp_path / "v12.db"
+    repository = AttendanceRepository(database_path)
+    repository.bootstrap()
+
+    status = DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("admin", "test-password-hash"),
+        app_version="pytest-v12",
+        origin="pytest",
+    )
+
+    assert status.current_version == 12
+    with sqlite3.connect(database_path) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        positions = connection.execute(
+            "SELECT position FROM member_attack_positions WHERE member_id=(SELECT id FROM team_members WHERE name='Arthur') ORDER BY ordinal"
+        ).fetchall()
+    assert {"member_attack_positions", "member_defensive_positions", "playbook_exercise_specs"} <= tables
+    assert positions == [("PD",)]
+
+
 def _make_v5_database(database_path) -> None:
     AttendanceRepository(database_path).bootstrap()
     DatabaseMigrator(database_path).apply_pending(
@@ -164,7 +186,7 @@ def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.current_version == 11
+    assert result.current_version == 12
     assert result.pending_versions == ()
     assert verify_database(database_path)["ok"] is True
     with sqlite3.connect(database_path) as conn:

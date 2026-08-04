@@ -729,7 +729,7 @@ if (playbookRoot) {
     document.querySelector("#playbook-content-dialog-title").textContent = content ? "Editar conteúdo" : "Novo conteúdo";
     document.querySelector("#playbook-content-id").value = content?.id || "";
     document.querySelector("#playbook-content-title").value = content?.title || "";
-    document.querySelector("#playbook-content-kind").value = content?.content_kind || "Jogada";
+    document.querySelector("#playbook-content-kind").value = content?.content_kind || "CONTENT";
     document.querySelector("#playbook-content-perspective").value = content?.perspective || "";
     document.querySelector("#playbook-content-positions").value = (content?.positions || []).join(", ");
     document.querySelector("#playbook-content-objective").value = content?.objective || "";
@@ -739,6 +739,8 @@ if (playbookRoot) {
     document.querySelector("#playbook-content-notes").value = content?.notes || "";
     document.querySelector("#playbook-content-aliases").value = (content?.aliases || []).join(", ");
     document.querySelector("#playbook-content-change-note").value = "";
+    document.querySelector("#playbook-exercise-variants").value = content?.exercise_variants?.length ? JSON.stringify(content.exercise_variants, null, 2) : "";
+    toggleExerciseSpec();
     renderContentFolderPicker(content?.folders || (state.folderId ? [{ id: state.folderId }] : []));
     elements.contentDialog.showModal();
     document.querySelector("#playbook-content-title").focus();
@@ -753,12 +755,26 @@ if (playbookRoot) {
       showProblem(new PlaybookRequestError({ title: "Escolha uma pasta", message: "Cada conteúdo precisa estar em ao menos uma pasta de navegação.", suggestion: "Marque uma pasta antes de salvar." }, 422));
       return;
     }
+    let exerciseVariants = [];
+    const exerciseText = document.querySelector("#playbook-exercise-variants").value.trim();
+    if (exerciseText) {
+      try { exerciseVariants = JSON.parse(exerciseText); }
+      catch (_) {
+        showProblem(new PlaybookRequestError({ title: "JSON do exercício inválido", message: "A estrutura de variantes não pôde ser lida.", suggestion: "Revise vírgulas, aspas e colchetes antes de salvar." }, 422));
+        return;
+      }
+      if (!Array.isArray(exerciseVariants)) {
+        showProblem(new PlaybookRequestError({ title: "Estrutura inválida", message: "As variantes precisam formar uma lista JSON.", suggestion: "Use o botão de exemplo como ponto de partida." }, 422));
+        return;
+      }
+    }
     const payload = {
       team_id: state.teamId,
       title: document.querySelector("#playbook-content-title").value,
       content_kind: document.querySelector("#playbook-content-kind").value,
       perspective: document.querySelector("#playbook-content-perspective").value || null,
       positions: splitComma(document.querySelector("#playbook-content-positions").value),
+      exercise_variants: exerciseVariants,
       objective: document.querySelector("#playbook-content-objective").value,
       when_to_use: document.querySelector("#playbook-content-when").value,
       prerequisites: document.querySelector("#playbook-content-prerequisites").value,
@@ -775,6 +791,24 @@ if (playbookRoot) {
       await refreshAfterMutation(Number(result.id));
     } catch (error) { showProblem(error); }
   }
+
+  function toggleExerciseSpec() {
+    const isExercise = document.querySelector("#playbook-content-kind").value.trim().toUpperCase() === "EXERCISE";
+    document.querySelector("#playbook-exercise-spec").hidden = !isExercise;
+  }
+
+  document.querySelector("#playbook-content-kind").addEventListener("input", toggleExerciseSpec);
+  document.querySelector("#playbook-exercise-example").addEventListener("click", () => {
+    document.querySelector("#playbook-content-kind").value = "EXERCISE";
+    document.querySelector("#playbook-exercise-variants").value = JSON.stringify([
+      { label: "Lado direito", roles: [
+        { group: "ATTACK", label: "Ponta direita", count: 1, attack_positions: ["PD"], defensive_positions: [], allow_generic_defender: false },
+        { group: "ATTACK", label: "Meia direita", count: 1, attack_positions: ["MD"], defensive_positions: [], allow_generic_defender: false },
+        { group: "DEFENSE", label: "1º marcador", count: 1, attack_positions: [], defensive_positions: ["M1"], allow_generic_defender: false },
+      ] },
+    ], null, 2);
+    toggleExerciseSpec();
+  });
 
   async function refreshAfterMutation(contentId = null) {
     await loadLibrary();

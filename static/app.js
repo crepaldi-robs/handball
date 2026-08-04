@@ -8,6 +8,8 @@ const athleteNameCollator = new Intl.Collator("pt-BR", {
   numeric: true,
   sensitivity: "base",
 });
+const ATTACK_POSITIONS = ["GOL", "PE", "ME", "C", "MD", "PD", "PV"];
+const DEFENSIVE_POSITIONS = ["M1", "M2", "M3", "AVANCADO"];
 
 const state = {
   csrf: "",
@@ -673,7 +675,13 @@ function renderSession() {
   if (!state.payload) return;
   renderMetrics();
   renderAthletes();
-  $("#coach-message").textContent = buildCoachMessage();
+  const automaticReport = state.payload.coach_message || buildCoachMessage();
+  const freshness = state.payload.coach_report?.generated_at
+    ? new Date(state.payload.coach_report.generated_at).toLocaleString("pt-BR")
+    : "horário não informado";
+  $("#coach-message").textContent = state.online
+    ? automaticReport
+    : `⚠️ ANÁLISE OFFLINE — última geração em ${freshness}. Pode estar desatualizada.\n\n${automaticReport}`;
   $("#session-notes").value = state.payload.session.notes || "";
   $("#session-export").href = `/api/v1/exports/session/${state.payload.session.id}.csv`;
   const finalized = Boolean(state.payload.session.is_finalized);
@@ -1033,29 +1041,58 @@ async function loadRoster() {
     body.replaceChildren(...data.items.map((member) => {
       const row = document.createElement("tr");
       const name = document.createElement("td"); name.textContent = member.name; name.dataset.label = "Nome";
-      const positionCell = document.createElement("td"); positionCell.dataset.label = "Posição";
-      const position = document.createElement("input"); position.value = member.position; position.maxLength = 40; positionCell.append(position);
+      const positionCell = document.createElement("td"); positionCell.dataset.label = "Ataque";
+      const attackChecks = positionChecks(ATTACK_POSITIONS, member.attack_positions || []); positionCell.append(attackChecks);
+      const defenseCell = document.createElement("td"); defenseCell.dataset.label = "Defesa";
+      const defenseChecks = positionChecks(DEFENSIVE_POSITIONS, member.defensive_positions || []); defenseCell.append(defenseChecks);
       const activeCell = document.createElement("td"); activeCell.dataset.label = "Ativo";
       const active = document.createElement("input"); active.type = "checkbox"; active.checked = Boolean(member.active); activeCell.append(active);
       const action = document.createElement("td"); action.dataset.label = "Ação";
       const save = document.createElement("button"); save.type = "button"; save.className = "button"; save.textContent = "Salvar";
       save.addEventListener("click", async () => {
         try {
-          await api(`/api/v1/members/${member.id}`, { method: "PUT", body: JSON.stringify({ position: position.value, active: active.checked }) });
+          const attackPositions = checkedPositions(attackChecks);
+          const defensivePositions = checkedPositions(defenseChecks);
+          if (!attackPositions.length) throw new Error("Marque ao menos uma posição ofensiva.");
+          await api(`/api/v1/members/${member.id}`, { method: "PUT", body: JSON.stringify({
+            position: attackPositions.join("/"), attack_positions: attackPositions,
+            defensive_positions: defensivePositions, active: active.checked,
+          }) });
+          if (state.payload?.session?.id) await loadSession(state.payload.session.id);
           setAlert(`${member.name} atualizado.`);
         } catch (error) { setAlert(error.message, "error", 0); }
       });
-      action.append(save); row.append(name, positionCell, activeCell, action); return row;
+      action.append(save); row.append(name, positionCell, defenseCell, activeCell, action); return row;
     }));
   } catch (error) { setAlert(error.message, "error", 0); }
+}
+
+function positionChecks(choices, selected) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "inline-options roster-position-options";
+  const current = new Set(selected || []);
+  for (const value of choices) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox"; input.value = value; input.checked = current.has(value);
+    label.append(input, document.createTextNode(` ${value === "AVANCADO" ? "Avançado" : value}`)); wrapper.append(label);
+  }
+  return wrapper;
+}
+
+function checkedPositions(root) {
+  return $$("input:checked", root).map((input) => input.value);
 }
 
 async function addMember(event) {
   event.preventDefault();
   try {
+    const attackPositions = $$("#member-attack-positions input:checked").map((input) => input.value);
+    const defensivePositions = $$("#member-defense-positions input:checked").map((input) => input.value);
+    if (!attackPositions.length) throw new Error("Marque ao menos uma posição ofensiva.");
     await api("/api/v1/members", {
       method: "POST",
-      body: JSON.stringify({ name: $("#member-name").value, position: $("#member-position").value }),
+      body: JSON.stringify({ name: $("#member-name").value, position: attackPositions.join("/"), attack_positions: attackPositions, defensive_positions: defensivePositions }),
     });
     event.target.reset();
     await loadRoster();

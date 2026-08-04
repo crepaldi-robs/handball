@@ -253,6 +253,11 @@ class PlaybookRepository:
                 (int(content_id),),
             ).fetchall()
         ]
+        exercise_row = self.connection.execute(
+            "SELECT spec_json FROM playbook_exercise_specs WHERE content_id=?",
+            (int(content_id),),
+        ).fetchone() if self._table_exists("playbook_exercise_specs") else None
+        exercise_variants = [] if exercise_row is None else json.loads(str(exercise_row[0])).get("variants", [])
         return {
             "title": str(content["title"]),
             "content_kind": str(content["content_kind"]),
@@ -265,7 +270,28 @@ class PlaybookRepository:
             "aliases": aliases,
             "positions": positions,
             "folders": folders,
+            "exercise_variants": exercise_variants,
         }
+
+    def _replace_exercise_spec(self, content_id: int, payload: Mapping[str, Any]) -> None:
+        variants = list(payload.get("exercise_variants") or ())
+        content_kind = str(payload.get("content_kind") or "CONTENT").strip().upper()
+        if variants and content_kind != "EXERCISE":
+            raise ValueError("Requisitos de exercício exigem conteúdo do tipo EXERCISE.")
+        if not self._table_exists("playbook_exercise_specs"):
+            if variants:
+                raise RuntimeError("O banco ainda não recebeu a atualização de requisitos de exercícios.")
+            return
+        self.connection.execute("DELETE FROM playbook_exercise_specs WHERE content_id=?", (int(content_id),))
+        if variants:
+            self.connection.execute(
+                "INSERT INTO playbook_exercise_specs(content_id,spec_json,updated_at) VALUES(?,?,?)",
+                (
+                    int(content_id),
+                    json.dumps({"variants": variants}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    _now_iso(),
+                ),
+            )
 
     def _store_revision(
         self,
@@ -973,6 +999,11 @@ class PlaybookRepository:
                 (int(content_id),),
             ).fetchall()
         ]
+        exercise_row = self.connection.execute(
+            "SELECT spec_json FROM playbook_exercise_specs WHERE content_id=?",
+            (int(content_id),),
+        ).fetchone() if self._table_exists("playbook_exercise_specs") else None
+        result["exercise_variants"] = [] if exercise_row is None else json.loads(str(exercise_row[0])).get("variants", [])
         result["folders"] = [
             dict(row)
             for row in self.connection.execute(
@@ -1008,6 +1039,32 @@ class PlaybookRepository:
                 (int(content_id),),
             ).fetchall()
         ]
+        return result
+
+    def list_published_exercise_specs(self, team_ids: Iterable[int]) -> list[dict[str, Any]]:
+        self._require_available()
+        if not self._table_exists("playbook_exercise_specs"):
+            return []
+        allowed = _ids(team_ids)
+        if not allowed:
+            return []
+        rows = self.connection.execute(
+            f"""SELECT c.id content_id,c.title,s.spec_json
+                  FROM playbook_contents c
+                  JOIN playbook_exercise_specs s ON s.content_id=c.id
+                 WHERE c.team_id IN ({_placeholders(allowed)})
+                   AND c.status='PUBLISHED' AND UPPER(c.content_kind)='EXERCISE'
+                 ORDER BY c.title COLLATE NOCASE,c.id""",
+            allowed,
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            spec = json.loads(str(row["spec_json"]))
+            variants = spec.get("variants") if isinstance(spec, dict) else None
+            if isinstance(variants, list) and variants:
+                result.append(
+                    {"content_id": int(row["content_id"]), "title": str(row["title"]), "variants": variants}
+                )
         return result
 
     def create_content(
@@ -1053,6 +1110,7 @@ class PlaybookRepository:
         )
         content_id = int(cursor.lastrowid)
         self._replace_aliases_positions(content_id, payload)
+        self._replace_exercise_spec(content_id, payload)
         self._replace_placements(
             content_id,
             int(team_id),
@@ -1113,6 +1171,7 @@ class PlaybookRepository:
             ),
         )
         self._replace_aliases_positions(content_id, payload)
+        self._replace_exercise_spec(content_id, payload)
         self._replace_placements(content_id, int(before["team_id"]), payload.get("placements") or ())
         self._store_revision(
             content_id,
@@ -1362,6 +1421,7 @@ class PlaybookRepository:
             ),
         )
         self._replace_aliases_positions(content_id, snapshot)
+        self._replace_exercise_spec(content_id, snapshot)
         # Uma pasta pode ter sido excluída definitivamente depois desta versão.
         # Restaurar o texto e as relações de um conteúdo histórico não deve
         # falhar nem ressuscitar uma pasta que já foi removida. Só repomos as
@@ -2824,11 +2884,12 @@ class PlaybookRepository:
             params.append(_now_iso())
         if player_visible_only:
             clauses.append("e.is_player_visible=1")
+        order_expression = "COALESCE(e.starts_at,ps.starts_at)" if join else "ps.starts_at"
         rows = self.connection.execute(
             f"""SELECT DISTINCT ps.id
                 FROM playbook_sessions ps {join}
                 WHERE {' AND '.join(clauses)}
-                ORDER BY COALESCE(e.starts_at,ps.starts_at) ASC,ps.id ASC""",
+                ORDER BY {order_expression} ASC,ps.id ASC""",
             tuple(params),
         ).fetchall()
         return [

@@ -95,8 +95,8 @@ def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
 
     status = DatabaseMigrator(manager.db_path).status()
 
-    assert status.current_version == 11
-    assert status.latest_version == 11
+    assert status.current_version == 12
+    assert status.latest_version == 12
     assert status.compatible is True
     with manager.read_only_connection() as connection:
         row = connection.execute(
@@ -127,7 +127,41 @@ def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
         "playbook_session_event_links",
         "playbook_session_event_history",
         "playbook_session_evaluations",
+        "playbook_exercise_specs",
     } <= tables
+
+
+def test_published_exercise_keeps_structured_participant_requirements(tmp_path: Path) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, folder_id, _ = _seed_and_content(client, csrf)
+    payload = _content_payload(team_id, folder_id, title="2x1 na ponta")
+    payload.update({
+        "content_kind": "EXERCISE",
+        "exercise_variants": [{
+            "label": "Lado direito",
+            "roles": [
+                {"group": "ATTACK", "label": "Ponta", "count": 1, "attack_positions": ["PD"]},
+                {"group": "ATTACK", "label": "Meia", "count": 1, "attack_positions": ["MD"]},
+                {"group": "DEFENSE", "label": "1º marcador", "count": 1, "defensive_positions": ["M1"]},
+            ],
+        }],
+    })
+    created = client.post(
+        "/api/v1/playbook/contents", json=payload, headers={"X-CSRF-Token": csrf}
+    )
+    assert created.status_code == 201, created.text
+    content_id = int(created.json()["id"])
+    assert created.json()["exercise_variants"][0]["roles"][2]["defensive_positions"] == ["M1"]
+    published = client.post(
+        f"/api/v1/playbook/contents/{content_id}/publish", headers={"X-CSRF-Token": csrf}
+    )
+    assert published.status_code == 200, published.text
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        specs = unit_of_work.playbook.list_published_exercise_specs([team_id])
+    exercise = next(item for item in specs if item["content_id"] == content_id)
+    assert exercise["title"] == "2x1 na ponta"
+    assert exercise["variants"][0]["label"] == "Lado direito"
 
 
 def test_playbook_library_content_permissions_and_protected_media(tmp_path: Path) -> None:
@@ -413,6 +447,9 @@ def test_independent_plan_series_sessions_links_revisions_and_player_visibility(
     assert created_series.status_code == 201, created_series.text
     series_id = int(created_series.json()["id"])
     assert client.get("/api/v1/playbook/series").json()["items"][0]["id"] == series_id
+    empty_sessions = client.get(f"/api/v1/playbook/sessions?team_id={team_id}")
+    assert empty_sessions.status_code == 200, empty_sessions.text
+    assert empty_sessions.json() == {"items": []}
 
     unlinked_session = client.post(
         "/api/v1/playbook/sessions",

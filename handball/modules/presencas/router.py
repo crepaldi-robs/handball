@@ -251,7 +251,10 @@ def create_router(
         try:
             if Permission.MEMBERS_MANAGE not in context.permissions:
                 raise HTTPException(status_code=403)
-            return {"items": service.add_member(body.name, body.position, actor_user_id=context.user_id or None)}
+            return {"items": service.add_member(
+                body.name, body.position, attack_positions=body.attack_positions,
+                defensive_positions=body.defensive_positions, actor_user_id=context.user_id or None,
+            )}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -269,6 +272,8 @@ def create_router(
                     member_id,
                     position=body.position,
                     active=body.active,
+                    attack_positions=body.attack_positions,
+                    defensive_positions=body.defensive_positions,
                     actor_user_id=context.user_id or None,
                 )
             }
