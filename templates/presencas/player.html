@@ -21,23 +21,8 @@
     <div class="top-actions"><span class="user-label">{{ session.display_name }}</span><form method="post" action="/logout" data-platform-logout><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><button class="text-button logout-button" type="submit">Sair</button></form></div>
   </div></header>
   <main class="module-shell player-attendance-shell">
-    <section class="hub-intro"><span class="eyebrow">PRÓXIMO TREINO</span><h1>Minha presença</h1><p id="player-training-description">Carregando seu próximo treino…</p></section>
-    <section id="player-attendance-alert" aria-live="polite"></section>
-    <section id="player-playbook-preparation" class="panel player-playbook-preparation hidden" aria-labelledby="player-playbook-title">
-      <div class="player-playbook-heading">
-        <div><span class="eyebrow">PLAYBOOK</span><h2 id="player-playbook-title">Para se preparar para este treino</h2></div>
-        <a id="player-playbook-link" class="text-button hidden" href="/app/playbook">Abrir no Playbook</a>
-      </div>
-      <p id="player-playbook-status" class="player-playbook-status" role="status" aria-live="polite">Carregando a preparação…</p>
-      <div id="player-playbook-lessons" class="player-playbook-lessons"></div>
-    </section>
-    <form id="player-attendance-form" class="panel stack-form hidden">
-      <h2 id="player-training-title">Treino</h2>
-      <fieldset><legend>Você vai ao treino?</legend><label><input type="radio" name="response" value="GOING" required> Vou</label><label><input type="radio" name="response" value="NOT_GOING"> Não vou</label></fieldset>
-      <fieldset id="player-positions"><legend>Posições para este treino</legend><div id="player-position-options" class="inline-options"></div><p class="muted">Se não marcar nenhuma, você ficará disponível em todas as posições do seu cadastro.</p></fieldset>
-      <label><span>Justificativa ou observação para a CT (opcional)</span><textarea id="player-justification" rows="4" maxlength="1000" placeholder="Ex.: vou chegar atrasado, consulta médica…"></textarea></label>
-      <button class="button button-primary button-large" type="submit">Salvar minha resposta</button>
-    </form>
+    {% include "partials/_attendance_response_widget.html" %}
   </main>
+  {% include "partials/_player_bottom_nav.html" %}
 </body>
 </html>

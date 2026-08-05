@@ -11,6 +11,7 @@ from uuid import uuid4
 from handball.core.authorization import AccessContext, Permission
 from handball.core.errors import PlaybookProblem
 from handball.database.contracts import UnitOfWorkFactoryContract
+from handball.modules.presencas.planner import confirmed_player_profiles, exercise_fit
 
 
 MEDIA_LIMITS: dict[str, int] = {
@@ -229,6 +230,47 @@ class PlaybookService:
                     team_ids=team_ids,
                 )
         return result
+
+    def content_fit(self, content_id: int, event_id: int, context: AccessContext) -> dict[str, Any]:
+        """Filtro "Fecha com os confirmados" (handoff HM-IME §7, B3).
+
+        Só orquestra dado que já existe: as variantes/papéis do próprio
+        conteúdo (content_detail, já lido pela tela) e os confirmados do
+        treino (mesma leitura que build_coach_report faz para a chamada da
+        CT). Nenhuma tabela, coluna ou campo persistido novo — ver AGENTS.md
+        regra 13/19 e a decisão registrada no handoff de design.
+        """
+
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        team_ids = self._team_ids(context)
+        published_only = self._published_only(context)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            detail = unit_of_work.playbook.content_detail(
+                content_id, team_ids=team_ids, published_only=published_only
+            )
+            variants = detail.get("exercise_variants") or []
+            event = next(
+                (
+                    item
+                    for item in unit_of_work.calendar.list_training_events(team_ids)
+                    if int(item["id"]) == int(event_id)
+                ),
+                None,
+            )
+            if event is None:
+                raise KeyError("Treino não encontrado.")
+            session_id = event.get("attendance_session_id")
+            confirmed = (
+                confirmed_player_profiles(unit_of_work.attendance.get_session_records(int(session_id)))
+                if session_id
+                else []
+            )
+        return {
+            "content_id": int(content_id),
+            "event_id": int(event_id),
+            "confirmed_count": len(confirmed),
+            "variants": exercise_fit(confirmed, variants),
+        }
 
     def mark_view(self, content_id: int, context: AccessContext) -> None:
         """Registra a consulta pessoal somente por comando CSRF protegido."""

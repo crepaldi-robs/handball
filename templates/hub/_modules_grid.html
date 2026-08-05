@@ -1,0 +1,69 @@
+<section class="module-grid" aria-label="Módulos da plataforma">
+  {% if can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
+    <span class="module-icon" aria-hidden="true">✓</span>
+    <span class="module-status module-status-available">Disponível</span>
+    <span class="module-card-copy">
+      <strong>Presenças</strong>
+      <span>Confirmações, chamada, histórico, elenco e auditoria.</span>
+    </span>
+    <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+  </a>{% endif %}
+
+  {% if can_self_attendance and not can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
+    <span class="module-icon" aria-hidden="true">✓</span>
+    <span class="module-status module-status-available">Disponível</span>
+    <span class="module-card-copy"><strong>Minha presença</strong><span>Confirme o próximo treino, posições e justificativa.</span></span>
+    <span class="module-card-action" aria-hidden="true">Responder <b>→</b></span>
+  </a>{% endif %}
+
+  {% if can_report %}<a class="module-card module-card-available" href="/app/meu-relatorio">
+    <span class="module-icon" aria-hidden="true">◎</span>
+    <span class="module-status module-status-available">Disponível</span>
+    <span class="module-card-copy"><strong>Meu relatório</strong><span>Suas confirmações, presenças e evolução mensal.</span></span>
+    <span class="module-card-action" aria-hidden="true">Abrir relatório <b>→</b></span>
+  </a>{% endif %}
+
+
+
+  {% if can_calendar %}<a class="module-card module-card-available" href="/app/calendario">
+    <span class="module-icon" aria-hidden="true">□</span>
+    <span class="module-status module-status-available">Disponível</span>
+    <span class="module-card-copy">
+      <strong>Calendário</strong>
+      <span>Treinos, jogos, campeonatos, restrições e justificativas individuais.</span>
+    </span>
+    <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+  </a>{% endif %}
+
+  {% if can_playbook %}<a class="module-card module-card-available" href="/app/playbook">
+    <span class="module-icon" aria-hidden="true">▤</span>
+    <span class="module-status module-status-available">Disponível</span>
+    <span class="module-card-copy">
+      <strong>Playbook</strong>
+      <span>Biblioteca tática, conteúdos do treino e roteiro de quadra.</span>
+    </span>
+    <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+  </a>{% endif %}
+
+  {% if can_attendance %}<a class="module-card" href="/app/estatisticas">
+    <span class="module-icon" aria-hidden="true">↗</span>
+    <span class="module-status">Em preparação</span>
+    <span class="module-card-copy">
+      <strong>Estatísticas</strong>
+      <span>Indicadores esportivos e leitura de desempenho da equipe.</span>
+    </span>
+    <span class="module-card-action" aria-hidden="true">Ver módulo <b>→</b></span>
+  </a>{% endif %}
+  {% if can_admin %}<a class="module-card module-card-available" href="/app/admin/usuarios">
+    <span class="module-icon" aria-hidden="true">⚙</span>
+    <span class="module-status module-status-available">DEV</span>
+    <span class="module-card-copy"><strong>Usuários</strong><span>Contas, papéis, credenciais e sessões.</span></span>
+    <span class="module-card-action" aria-hidden="true">Administrar <b>→</b></span>
+  </a>{% endif %}
+  {% if can_sql_explorer %}<a class="module-card module-card-available" href="/app/consultas">
+    <span class="module-icon" aria-hidden="true">⌕</span>
+    <span class="module-status module-status-available">Interno</span>
+    <span class="module-card-copy"><strong>Consultas SQL</strong><span>Catálogo, consultas de leitura, plano e exportação.</span></span>
+    <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
+  </a>{% endif %}
+</section>

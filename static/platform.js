@@ -28,6 +28,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("form[data-platform-logout]").forEach((form) => {
     form.addEventListener("submit", handlePlatformLogout);
   });
+  // CSP (style-src 'self') recusa o atributo style="" vindo do HTML — a
+  // altura de barra que antes era Jinja inline vira um data-attribute lido
+  // aqui e aplicado via CSSOM, que a mesma política permite.
+  document.querySelectorAll("[data-height-percent]").forEach((node) => {
+    node.style.height = `${node.dataset.heightPercent}%`;
+  });
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js", { scope: "/" })
       .catch(() => { /* a plataforma continua disponível somente online */ });

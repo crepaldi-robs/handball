@@ -16,7 +16,7 @@
 </head>
 {# Tela do atleta, não da comissão técnica: copy em segunda pessoa e a ação de
    maior valor (confirmar o próximo treino) acima da dobra no celular. #}
-<body class="platform-body">
+<body class="platform-body" data-csrf-token="{{ session.csrf_token }}">
   <header class="topbar">
     <div class="topbar-inner">
       {% set page_subtitle = "Meu relatório" %}
@@ -63,6 +63,25 @@
       </article>
     </section>
 
+    {% if report.monthly_evolution %}
+    {% set current_month = report.monthly_evolution[-1].month %}
+    <section aria-labelledby="player-evolution-title">
+      <h2 id="player-evolution-title">Evolução mensal</h2>
+      <div class="player-evolution-chart" role="img" aria-label="Presença por mês: {% for row in report.monthly_evolution %}{{ row.month }} {% if row.attendance_rate is not none %}{{ (row.attendance_rate * 100)|round|int }}%{% else %}sem treinos apurados{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}">
+        {% for row in report.monthly_evolution %}
+        <div class="player-evolution-bar-col">
+          <div class="player-evolution-bar-track">
+            <div class="player-evolution-bar{% if row.month == current_month %} player-evolution-bar-current{% endif %}{% if row.attendance_rate is none %} player-evolution-bar-empty{% endif %}"
+                 data-height-percent="{{ ((row.attendance_rate or 0) * 100)|round|int }}"></div>
+          </div>
+          <span class="player-evolution-bar-label">{{ row.month[5:7] }}/{{ row.month[2:4] }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="muted">Contagem sobre treinos em que você estava elegível.</p>
+    </section>
+    {% endif %}
+
     <section>
       <h2>Seu histórico pessoal</h2>
       {# O rótulo textual é obrigatório: a informação não pode depender só da
@@ -94,5 +113,7 @@
       <p class="muted">{{ report.completeness.message }}</p>
     </section>
   </main>
+  {% set player_nav_active = "report" %}
+  {% include "partials/_player_bottom_nav.html" %}
 </body>
 </html>

@@ -80,10 +80,11 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     response = client.get("/app")
 
     assert response.status_code == 200
-    # O hero passou a saudar pelo primeiro nome de quem entrou: é a tela que o
-    # atleta abre todo dia, e o lema desceu para o subtítulo justamente para
-    # não virar assinatura repetida (handoff de identidade §4.2).
-    assert '<h1 id="hub-title">Bem-vindo de volta, ' in response.text
+    # Fase 2 do redesenho: quem tem chamada de time (CT/DEV+CT, como o admin
+    # de bootstrap) cai na fila "Precisa de você", não no hero de boas-vindas.
+    # A grade de módulos continua alcançável em "Todos os módulos" — daí os
+    # hrefs abaixo ainda aparecerem sem mudança.
+    assert '<h2 id="ct-queue-title"' in response.text
     assert 'href="/app/presencas"' in response.text
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
@@ -171,7 +172,7 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v13"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v14"' in worker
     # A identidade visual só sobrevive offline se os tokens e as fontes
     # auto-hospedadas estiverem no shell — sem isso a chamada no ginásio sem
     # sinal cai no CSS do navegador.

@@ -31,6 +31,19 @@
   --hm-institutional-blue: #0064A0;
 }
 
+/* Tintas de brand-primary (fundo de pílula/chip/seleção, nunca texto).
+   color-mix em vez de rgba(130,20,60,...) fixo: acompanha o tema resolvido
+   (neutro ou de um segundo time) sem precisar de uma regra por marca. */
+:root {
+  --color-brand-primary-tint-05: color-mix(in srgb, var(--color-brand-primary) 5%, transparent);
+  --color-brand-primary-tint-08: color-mix(in srgb, var(--color-brand-primary) 8%, transparent);
+  --color-brand-primary-tint-25: color-mix(in srgb, var(--color-brand-primary) 25%, transparent);
+  --color-success-tint: color-mix(in srgb, var(--color-success) 10%, transparent);
+  --color-success-tint-border: color-mix(in srgb, var(--color-success) 25%, transparent);
+  --color-warning-tint: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-warning-tint-border: color-mix(in srgb, var(--color-warning) 32%, transparent);
+}
+
 /* REGRA DE ACESSIBILIDADE OBRIGATÓRIA (RESEARCH.md):
    branco sobre dourado = 1,99:1 → REPROVADO em WCAG AA.
    Dourado só recebe carvão (#111111, 9,50:1) ou vinho (#82143C, 5,00:1).

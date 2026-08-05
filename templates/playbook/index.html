@@ -14,7 +14,12 @@
   <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
+  {% if can_manage %}
+  <script src="/static/coach-report.js" defer></script>
   <script src="/static/playbook.js" defer></script>
+  {% else %}
+  <script src="/static/playbook-player.js" defer></script>
+  {% endif %}
 </head>
 <body
   class="platform-body playbook-app"
@@ -22,6 +27,7 @@
   data-csrf-token="{{ session.csrf_token }}"
   data-user-id="{{ session.user_id }}"
   data-can-manage="{{ 'true' if can_manage else 'false' }}"
+  data-can-dev-tools="{{ 'true' if can_dev_tools else 'false' }}"
   data-team-ids='{{ team_ids|tojson }}'
   data-upgrade-required="{{ 'true' if upgrade_required else 'false' }}"
 >
@@ -41,6 +47,66 @@
   </header>
 
   <main class="playbook-workspace">
+    {% if not can_manage %}
+    {# B1 · Playbook do jogador — três portas de entrada, sem árvore de
+       pastas. B3 (explorador completo) fica no ramo can_manage abaixo. #}
+    <section class="playbook-hero" aria-labelledby="playbook-title">
+      <div>
+        <span class="playbook-kicker">SEU PLAYBOOK</span>
+        <h1 id="playbook-title">Playbook do {{ organization.display_name }}</h1>
+        <p>Busque por nome ou apelido, ou veja o que vale para o seu próximo treino e sua posição.</p>
+      </div>
+    </section>
+
+    {% if upgrade_required %}
+    <section id="playbook-upgrade" class="playbook-upgrade" role="status">
+      <strong>O módulo está pronto, mas a base ainda não recebeu a migração controlada.</strong>
+      <span>Nada foi criado automaticamente. A biblioteca ficará disponível após a janela DB_MIGRATION.</span>
+    </section>
+    {% endif %}
+
+    <div id="playbook-player-view" class="playbook-player">
+      <label class="playbook-search">
+        <span class="sr-only">Buscar no Playbook por nome ou apelido</span>
+        <input id="pbp-search" type="search" maxlength="220" placeholder="Buscar jogada, apelido ou palavra-chave">
+      </label>
+
+      <section aria-labelledby="pbp-training-title">
+        <h2 id="pbp-training-title" class="player-week-title">Para o seu próximo treino</h2>
+        <div id="pbp-training-list" class="pbp-content-list"><p class="muted">Carregando…</p></div>
+      </section>
+
+      <section aria-labelledby="pbp-position-title">
+        <h2 id="pbp-position-title" class="player-week-title">Da sua posição</h2>
+        <div id="pbp-position-list" class="pbp-content-list"><p class="muted">Carregando…</p></div>
+      </section>
+
+      <section aria-labelledby="pbp-offline-title">
+        <h2 id="pbp-offline-title" class="player-week-title">Salvos para ver sem internet</h2>
+        <div id="pbp-offline-list" class="pbp-content-list"><p class="muted">Carregando…</p></div>
+      </section>
+
+      <section id="pbp-search-results" class="hidden" aria-labelledby="pbp-search-title">
+        <h2 id="pbp-search-title" class="player-week-title">Resultados da busca</h2>
+        <div id="pbp-search-list" class="pbp-content-list"></div>
+      </section>
+    </div>
+
+    <div id="playbook-player-detail" class="playbook-player-detail hidden">
+      <button id="pbp-detail-back" class="text-button" type="button">← Voltar</button>
+      <header class="pbp-detail-header">
+        <span id="pbp-detail-trail" class="pbp-detail-trail"></span>
+        <h1 id="pbp-detail-title"></h1>
+        <span id="pbp-detail-subtitle" class="muted"></span>
+      </header>
+      <div id="pbp-responsibility" class="pbp-responsibility hidden"></div>
+      <section id="pbp-when" class="pbp-detail-section hidden"><h2>Quando usar</h2><p id="pbp-when-text"></p></section>
+      <section id="pbp-steps" class="pbp-detail-section hidden"><h2>Passo a passo</h2><p id="pbp-steps-text"></p></section>
+      <section id="pbp-relations" class="pbp-detail-section"></section>
+      <button id="pbp-mark-seen" class="button button-primary" type="button">Marcar que já vi</button>
+    </div>
+
+    {% else %}
     <section class="playbook-hero" aria-labelledby="playbook-title">
       <div>
         {# Título informativo, não slogan: é ferramenta de consulta diária. #}
@@ -131,6 +197,7 @@
             <button type="button" data-playbook-filter="ATTACK">Ataque</button>
             <button type="button" data-playbook-filter="DEFENSE">Defesa</button>
             <button type="button" data-playbook-filter="NEUTRAL">Neutro</button>
+            <button id="playbook-fit-toggle" type="button" aria-pressed="false" title="Marca exercícios que fecham com quem confirmou o próximo treino">Fecha com os confirmados</button>
           </div>
         </header>
         <div id="playbook-bulk-actions" class="playbook-bulk-actions" hidden>
@@ -152,6 +219,26 @@
         </div>
       </aside>
     </section>
+
+    {% if can_dev_tools %}
+    {# B4 · Playbook do DEV — acervo. Só os indicadores que já têm dado sem
+       consulta nova: órfãos e essenciais offline vêm de endpoints já
+       existentes (GET /api/v1/playbook, GET /api/v1/playbook/offline); a
+       exclusão com impacto real reaproveita o fluxo já implementado para
+       pastas (GET /api/v1/playbook/folders/{id}/impact). "Links do Drive
+       quebrados" ficou de fora: validar um link exige uma checagem de rede
+       ao vivo por anexo, fora do escopo desta fase. #}
+    <section id="playbook-archive" class="playbook-archive" aria-labelledby="playbook-archive-title">
+      <header><span class="playbook-kicker">ACERVO</span><h2 id="playbook-archive-title">Estado do acervo</h2></header>
+      <div id="playbook-archive-stats" class="playbook-archive-stats">
+        <article><strong id="playbook-archive-orphans">—</strong><span>Sem pasta</span></article>
+        <article><strong id="playbook-archive-offline-mb">—</strong><span>Essenciais offline</span></article>
+        <article><strong id="playbook-archive-archived">—</strong><span>Arquivados</span></article>
+      </div>
+      <div id="playbook-archive-attention" class="playbook-archive-attention"></div>
+    </section>
+    {% endif %}
+    {% endif %}
   </main>
 
   <dialog id="playbook-folder-dialog" class="playbook-dialog">

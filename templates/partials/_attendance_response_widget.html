@@ -1,0 +1,99 @@
+<section id="attendance-widget" class="player-widget" aria-live="polite">
+  <span class="eyebrow">SUA PRÓXIMA AÇÃO</span>
+  <h1 id="attendance-question" class="player-question">Carregando seu próximo treino…</h1>
+
+  <p id="attendance-empty" class="muted hidden">Não há treino com chamada aberta para confirmar agora.</p>
+
+  <div id="attendance-error" class="alert alert-error hidden" role="alert"></div>
+
+  <!-- P1 · cartão do treino, resposta ainda não dada -->
+  <article id="attendance-ask" class="panel player-training-card hidden">
+    <div class="player-training-when">
+      <strong id="attendance-datetime">—</strong>
+      <span id="attendance-location" class="muted">—</span>
+    </div>
+    <span id="attendance-countdown" class="player-countdown-pill hidden"></span>
+    <div class="player-training-divider"></div>
+    <div class="player-training-actions">
+      <button id="attendance-confirm-going" class="button button-primary player-action-button" type="button">Confirmar que vou</button>
+      <button id="attendance-confirm-not-going" class="button player-action-button" type="button">Não vou dessa vez</button>
+    </div>
+    <p class="player-training-note">Você pode corrigir sua resposta até o treino começar.</p>
+  </article>
+
+  <!-- P3 · formulário completo (via "Não vou dessa vez" ou "Corrigir minha resposta") -->
+  <form id="attendance-form" class="panel stack-form hidden">
+    <fieldset class="player-radiogroup">
+      <legend>Você vai ao treino?</legend>
+      <label class="player-radio-block">
+        <input type="radio" name="response" value="GOING" required>
+        <span>Vou</span>
+      </label>
+      <label class="player-radio-block">
+        <input type="radio" name="response" value="NOT_GOING">
+        <span>Não vou</span>
+      </label>
+    </fieldset>
+    <fieldset id="attendance-positions" class="hidden">
+      <legend>Posições para este treino</legend>
+      <div id="attendance-position-options" class="player-chip-options"></div>
+      <p class="muted">Se não marcar nenhuma, você ficará disponível em todas as posições do seu cadastro.</p>
+    </fieldset>
+    <label>
+      <span>Quer avisar alguma coisa à CT? (opcional)</span>
+      <textarea id="attendance-justification" rows="4" maxlength="1000" placeholder="Ex.: vou chegar atrasado, consulta médica…"></textarea>
+    </label>
+    <p class="muted">Sem justificativa também está tudo bem.</p>
+    <div class="player-form-actions">
+      <button class="button button-primary player-action-button" type="submit">Salvar minha resposta</button>
+      <button id="attendance-form-cancel" class="button player-action-button" type="button">Cancelar</button>
+    </div>
+  </form>
+
+  <!-- P2 · resposta salva (vou) + preparação -->
+  <div id="attendance-saved-going" class="hidden">
+    <div id="attendance-saved-alert" class="alert alert-success" role="status"></div>
+    <div id="attendance-saved-chips" class="player-chip-options"></div>
+
+    <section id="player-playbook-preparation" class="panel player-playbook-preparation hidden" aria-labelledby="player-playbook-title">
+      <div class="player-playbook-heading">
+        <div><span class="eyebrow">PLAYBOOK</span><h2 id="player-playbook-title">Para se preparar para este treino</h2></div>
+        <a id="player-playbook-link" class="text-button hidden" href="/app/playbook">Abrir no Playbook</a>
+      </div>
+      <p id="player-playbook-status" class="player-playbook-status" role="status" aria-live="polite">Carregando a preparação…</p>
+      <div id="player-playbook-lessons" class="player-playbook-lessons"></div>
+    </section>
+
+    <div class="player-form-actions">
+      <button id="attendance-mark-seen" class="button button-primary player-action-button" type="button">Marcar que já vi</button>
+      <button id="attendance-edit-going" class="button player-action-button" type="button">Corrigir minha resposta</button>
+    </div>
+    <p class="muted">A CT vê que você já viu — não vê por quanto tempo.</p>
+  </div>
+
+  <!-- resposta salva (não vou) -->
+  <div id="attendance-saved-not-going" class="hidden">
+    <div id="attendance-saved-not-going-alert" class="alert alert-warning" role="status"></div>
+    <button id="attendance-edit-not-going" class="button player-action-button" type="button">Corrigir minha resposta</button>
+  </div>
+
+  <!-- P5 · o treino mudou enquanto respondia (409 / base_version) -->
+  <div id="attendance-conflict" class="hidden">
+    <div id="attendance-conflict-message" class="alert alert-warning" role="alert"></div>
+    <div id="attendance-conflict-times" class="player-conflict-times hidden">
+      <span id="attendance-conflict-old" class="player-time-old"></span>
+      <span aria-hidden="true">→</span>
+      <span id="attendance-conflict-new" class="player-time-new"></span>
+    </div>
+    <div class="player-form-actions">
+      <button id="attendance-conflict-keep" class="button button-primary player-action-button" type="button">Continuo indo</button>
+      <button id="attendance-conflict-change" class="button player-action-button" type="button">Mudar minha resposta</button>
+    </div>
+  </div>
+
+  <!-- P4 · offline, sem cofre local: só nova tentativa manual -->
+  <div id="attendance-offline" class="hidden">
+    <div class="alert alert-warning" role="status">Sua resposta está salva neste aparelho e será enviada quando houver conexão. Você não precisa responder de novo.</div>
+    <button id="attendance-retry" class="button" type="button">Tentar enviar agora</button>
+  </div>
+</section>

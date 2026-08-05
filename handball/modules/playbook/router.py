@@ -127,6 +127,7 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
                 "organization": team_view["organization"],
                 "team_theme": team_view["team_theme"],
                 "can_manage": Permission.PLAYBOOK_MANAGE in session.permissions,
+                "can_dev_tools": Permission.DIAGNOSTICS_READ in session.permissions,
                 "team_ids": team_ids,
                 "upgrade_required": upgrade_required,
             },
@@ -194,6 +195,18 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
     ) -> dict[str, Any]:
         try:
             return service.content(content_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/contents/{content_id}/fit")
+    def content_fit(
+        content_id: int,
+        event_id: int,
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.content_fit(content_id, event_id, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

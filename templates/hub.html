@@ -17,8 +17,14 @@
   <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
+  {% if can_attendance %}
+  <script src="/static/coach-report.js" defer></script>
+  <script src="/static/hub-ct.js" defer></script>
+  {% elif can_self_attendance %}
+  <script src="/static/player-attendance.js" defer></script>
+  {% endif %}
 </head>
-<body class="platform-body">
+<body class="platform-body" data-csrf-token="{{ csrf_token }}">
   <header class="platform-appbar">
     <div class="topbar-inner">
       <a class="identity" href="/app" aria-label="Hub Handebol">
@@ -39,98 +45,45 @@
   </header>
 
   <main class="platform-shell module-shell hub-shell">
-    {# Hero fotográfico. A foto é dependência real (ação: salto, defesa,
-       lançamento, celebração) — enquanto não houver arquivo aprovado o bloco
-       fica só no scrim, legível mas vazio. Ver THEME.md §Assets. #}
-    <section class="hm-hero" aria-labelledby="hub-title">
-      <div class="hm-hero-photo" aria-hidden="true"></div>
-      <div class="hm-photo-scrim" aria-hidden="true"></div>
-      <span class="hm-eyebrow">
-        {%- if team_theme.formal_name -%}
-          {{ team_theme.formal_name }}{% if team_theme.athletics_name %} · {{ team_theme.athletics_name }}{% endif %}
-        {%- else -%}
-          {{ organization.display_name }}
-        {%- endif -%}
-      </span>
-      <h1 id="hub-title">Bem-vindo de volta, {{ first_name }}.</h1>
-      {# O lema fica no subtítulo, não como assinatura de toda tela: o report
-         é explícito que repeti-lo em tudo desgasta o impacto. Vem do arquivo
-         de tema para que um segundo time não herde o lema do primeiro. #}
-      {% if team_theme.motto %}<p>{{ team_theme.motto }}</p>{% endif %}
-      {% if team_theme.achievement %}<span class="hm-achievement">{{ team_theme.achievement }}</span>{% endif %}
-    </section>
-
-    <section class="module-grid" aria-label="Módulos da plataforma">
-      {% if can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
-        <span class="module-icon" aria-hidden="true">✓</span>
-        <span class="module-status module-status-available">Disponível</span>
-        <span class="module-card-copy">
-          <strong>Presenças</strong>
-          <span>Confirmações, chamada, histórico, elenco e auditoria.</span>
+    {% if can_attendance %}
+      {# Fase 2 do redesenho: quem tem chamada de time (CT, e DEV+CT
+         combinado — regra 3 do README do handoff) cai na fila "Precisa de
+         você", não numa grade de módulos. O DEV puro (sem chamada) continua
+         na grade — a home "estado do sistema" (D1) fica para outra rodada. #}
+      {% include "hub/_ct_home.html" %}
+    {% elif can_self_attendance %}
+      {# Fase 1 do redesenho: o jogador puro (sem chamada) cai direto na
+         próxima ação, não numa grade de módulos. #}
+      {% set player_nav_active = "home" %}
+      {% include "hub/_player_home.html" %}
+    {% else %}
+      {# Hero fotográfico. A foto é dependência real (ação: salto, defesa,
+         lançamento, celebração) — enquanto não houver arquivo aprovado o bloco
+         fica só no scrim, legível mas vazio. Ver THEME.md §Assets. #}
+      <section class="hm-hero" aria-labelledby="hub-title">
+        <div class="hm-hero-photo" aria-hidden="true"></div>
+        <div class="hm-photo-scrim" aria-hidden="true"></div>
+        <span class="hm-eyebrow">
+          {%- if team_theme.formal_name -%}
+            {{ team_theme.formal_name }}{% if team_theme.athletics_name %} · {{ team_theme.athletics_name }}{% endif %}
+          {%- else -%}
+            {{ organization.display_name }}
+          {%- endif -%}
         </span>
-        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
-      </a>{% endif %}
+        <h1 id="hub-title">Bem-vindo de volta, {{ first_name }}.</h1>
+        {# O lema fica no subtítulo, não como assinatura de toda tela: o report
+           é explícito que repeti-lo em tudo desgasta o impacto. Vem do arquivo
+           de tema para que um segundo time não herde o lema do primeiro. #}
+        {% if team_theme.motto %}<p>{{ team_theme.motto }}</p>{% endif %}
+        {% if team_theme.achievement %}<span class="hm-achievement">{{ team_theme.achievement }}</span>{% endif %}
+      </section>
 
-      {% if can_self_attendance and not can_attendance %}<a class="module-card module-card-available" href="/app/presencas">
-        <span class="module-icon" aria-hidden="true">✓</span>
-        <span class="module-status module-status-available">Disponível</span>
-        <span class="module-card-copy"><strong>Minha presença</strong><span>Confirme o próximo treino, posições e justificativa.</span></span>
-        <span class="module-card-action" aria-hidden="true">Responder <b>→</b></span>
-      </a>{% endif %}
+      {% include "hub/_modules_grid.html" %}
 
-      {% if can_report %}<a class="module-card module-card-available" href="/app/meu-relatorio">
-        <span class="module-icon" aria-hidden="true">◎</span>
-        <span class="module-status module-status-available">Disponível</span>
-        <span class="module-card-copy"><strong>Meu relatório</strong><span>Suas confirmações, presenças e evolução mensal.</span></span>
-        <span class="module-card-action" aria-hidden="true">Abrir relatório <b>→</b></span>
-      </a>{% endif %}
-
-
-
-      {% if can_calendar %}<a class="module-card module-card-available" href="/app/calendario">
-        <span class="module-icon" aria-hidden="true">□</span>
-        <span class="module-status module-status-available">Disponível</span>
-        <span class="module-card-copy">
-          <strong>Calendário</strong>
-          <span>Treinos, jogos, campeonatos, restrições e justificativas individuais.</span>
-        </span>
-        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
-      </a>{% endif %}
-
-      {% if can_playbook %}<a class="module-card module-card-available" href="/app/playbook">
-        <span class="module-icon" aria-hidden="true">▤</span>
-        <span class="module-status module-status-available">Disponível</span>
-        <span class="module-card-copy">
-          <strong>Playbook</strong>
-          <span>Biblioteca tática, conteúdos do treino e roteiro de quadra.</span>
-        </span>
-        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
-      </a>{% endif %}
-
-      {% if can_attendance %}<a class="module-card" href="/app/estatisticas">
-        <span class="module-icon" aria-hidden="true">↗</span>
-        <span class="module-status">Em preparação</span>
-        <span class="module-card-copy">
-          <strong>Estatísticas</strong>
-          <span>Indicadores esportivos e leitura de desempenho da equipe.</span>
-        </span>
-        <span class="module-card-action" aria-hidden="true">Ver módulo <b>→</b></span>
-      </a>{% endif %}
-      {% if can_admin %}<a class="module-card module-card-available" href="/app/admin/usuarios">
-        <span class="module-icon" aria-hidden="true">⚙</span>
-        <span class="module-status module-status-available">DEV</span>
-        <span class="module-card-copy"><strong>Usuários</strong><span>Contas, papéis, credenciais e sessões.</span></span>
-        <span class="module-card-action" aria-hidden="true">Administrar <b>→</b></span>
-      </a>{% endif %}
-      {% if can_sql_explorer %}<a class="module-card module-card-available" href="/app/consultas">
-        <span class="module-icon" aria-hidden="true">⌕</span>
-        <span class="module-status module-status-available">Interno</span>
-        <span class="module-card-copy"><strong>Consultas SQL</strong><span>Catálogo, consultas de leitura, plano e exportação.</span></span>
-        <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
-      </a>{% endif %}
-    </section>
-
-    <p class="platform-note">Servidor particular · uma sessão e um logout para todos os módulos</p>
+      <p class="platform-note">Servidor particular · uma sessão e um logout para todos os módulos</p>
+    {% endif %}
   </main>
+  {% if can_attendance %}{% include "partials/_ct_bottom_nav.html" %}
+  {% elif can_self_attendance %}{% include "partials/_player_bottom_nav.html" %}{% endif %}
 </body>
 </html>

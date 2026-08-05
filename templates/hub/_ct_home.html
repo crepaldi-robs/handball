@@ -1,0 +1,40 @@
+<div class="ct-home">
+  <section class="ct-home-queue" aria-labelledby="ct-queue-title">
+    <h2 id="ct-queue-title" class="player-week-title">Precisa de você</h2>
+    <ul id="ct-queue-list" class="ct-queue-list"><li class="muted">Carregando…</li></ul>
+  </section>
+
+  <article class="panel ct-next-training" aria-labelledby="ct-next-training-title">
+    <div class="ct-next-training-header">
+      <div>
+        <span class="eyebrow" id="ct-next-training-title">PRÓXIMO TREINO</span>
+        <strong id="ct-next-training-date" class="ct-next-training-date">Carregando…</strong>
+      </div>
+      <strong id="ct-next-training-counter" class="ct-next-training-counter">—</strong>
+    </div>
+    <div id="ct-next-training-bar" class="ct-segmented-bar" role="img" aria-label="Distribuição de confirmações"></div>
+    <div class="ct-next-training-actions">
+      <a id="ct-open-call" class="button button-primary player-action-button" href="/app/presencas">Abrir chamada</a>
+      <a id="ct-open-plan" class="button player-action-button" href="/app/playbook">Ver plano do treino</a>
+    </div>
+  </article>
+
+  <section class="panel ct-home-reading only-desktop" aria-labelledby="ct-reading-title">
+    <h2 id="ct-reading-title" class="player-week-title">Leitura dos dados</h2>
+    <div id="ct-home-coach-report"></div>
+  </section>
+
+  <section class="ct-home-week only-desktop" aria-labelledby="ct-week-title">
+    <h2 id="ct-week-title" class="player-week-title">Semana do time</h2>
+    <ul id="ct-week-list" class="player-week-list"><li class="muted">Carregando…</li></ul>
+    <div class="ct-home-week-actions">
+      <a class="text-button" href="/app/calendario">Criar evento</a>
+      <a class="text-button" href="/app/calendario">Repetir treinos</a>
+    </div>
+  </section>
+</div>
+
+<details class="player-modules-toggle">
+  <summary>Todos os módulos</summary>
+  {% include "hub/_modules_grid.html" %}
+</details>

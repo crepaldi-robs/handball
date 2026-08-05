@@ -6,6 +6,7 @@ if (playbookRoot) {
   const csrfToken = playbookRoot.dataset.csrfToken;
   const userId = playbookRoot.dataset.userId;
   const canManage = playbookRoot.dataset.canManage === "true";
+  const canDevTools = playbookRoot.dataset.canDevTools === "true";
   const upgradeRequired = playbookRoot.dataset.upgradeRequired === "true";
   const initialTeamIds = (() => {
     try { return JSON.parse(playbookRoot.dataset.teamIds || "[]"); } catch (_) { return []; }
@@ -33,7 +34,9 @@ if (playbookRoot) {
     plan: null,
     planning: { plans: [], series: [], sessions: [] },
     online: navigator.onLine,
+    fitFilter: false,
   };
+  const fitCache = new Map();
 
   const elements = {
     team: document.querySelector("#playbook-team"),
@@ -329,6 +332,7 @@ if (playbookRoot) {
     article.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openContent(Number(item.id)); }
     });
+    if (state.fitFilter) annotateFit(article, item);
     if (canManage && state.collection === "all") {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
@@ -344,6 +348,34 @@ if (playbookRoot) {
       article.append(checkbox);
     }
     return article;
+  }
+
+  async function annotateFit(article, item) {
+    const eventId = state.data?.next_training?.event?.id;
+    if (!eventId || String(item.content_kind || "").toUpperCase() !== "EXERCISE") return;
+    const badge = document.createElement("span");
+    badge.className = "pbp-fit-chip pbp-fit-loading";
+    badge.textContent = "verificando…";
+    article.append(badge);
+    const cacheKey = `${item.id}:${eventId}`;
+    try {
+      let fit = fitCache.get(cacheKey);
+      if (!fit) {
+        fit = await request(`/api/v1/playbook/contents/${item.id}/fit?event_id=${eventId}`);
+        fitCache.set(cacheKey, fit);
+      }
+      const best = fit.variants.find((variant) => variant.fits) || fit.variants[0];
+      if (!best) { badge.remove(); return; }
+      if (best.fits) {
+        badge.className = "pbp-fit-chip pbp-fit-ok";
+        badge.textContent = `fecha com ${fit.confirmed_count}`;
+      } else {
+        badge.className = "pbp-fit-chip pbp-fit-warning";
+        badge.textContent = best.missing_roles?.length ? `falta ${best.missing_roles[0]}` : "não fecha";
+      }
+    } catch (_) {
+      badge.remove();
+    }
   }
 
   function renderItems() {
@@ -1114,6 +1146,15 @@ if (playbookRoot) {
     let searchTimer;
     elements.search.addEventListener("input", () => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(async () => { state.query = elements.search.value.trim(); try { await loadLibrary(); } catch (error) { showProblem(error); } }, 220); });
     document.querySelector("#playbook-offline").addEventListener("click", cacheOfflineEssentials);
+    document.querySelector("#playbook-fit-toggle")?.addEventListener("click", (event) => {
+      state.fitFilter = !state.fitFilter;
+      event.target.classList.toggle("is-active", state.fitFilter);
+      event.target.setAttribute("aria-pressed", String(state.fitFilter));
+      if (state.fitFilter && !state.data?.next_training?.event?.id) {
+        showMessage("Não há um próximo treino aberto para calcular o que fecha com os confirmados.", "warning");
+      }
+      renderItems();
+    });
     if (canManage) {
       document.querySelector("#playbook-new-folder").addEventListener("click", () => openFolderDialog("create"));
       document.querySelector("#playbook-new-content").addEventListener("click", () => openContentEditor());
@@ -1138,12 +1179,42 @@ if (playbookRoot) {
     });
   }
 
+  async function loadArchiveStats() {
+    if (!canDevTools) return;
+    const attention = document.querySelector("#playbook-archive-attention");
+    try {
+      const [library, offline] = await Promise.all([
+        request("/api/v1/playbook?include_archived=true"),
+        request("/api/v1/playbook/offline"),
+      ]);
+      const contents = library.contents || [];
+      const orphans = contents.filter((item) => !(item.folders || []).length);
+      const archived = contents.filter((item) => item.status === "ARCHIVED");
+      const offlineMb = (offline.items || []).reduce((sum, item) => sum + Number(item.size_bytes || 0), 0) / (1024 * 1024);
+      document.querySelector("#playbook-archive-orphans").textContent = String(orphans.length);
+      document.querySelector("#playbook-archive-offline-mb").textContent = `${offlineMb.toFixed(1)} MB`;
+      document.querySelector("#playbook-archive-archived").textContent = String(archived.length);
+      attention.replaceChildren();
+      if (orphans.length) {
+        attention.append(Object.assign(document.createElement("p"), {
+          textContent: `Sem pasta: ${orphans.slice(0, 8).map((item) => item.title).join(", ")}${orphans.length > 8 ? "…" : ""}`,
+        }));
+      }
+      if (!orphans.length && !archived.length) {
+        attention.append(Object.assign(document.createElement("p"), { className: "muted", textContent: "Nada precisa de atenção agora." }));
+      }
+    } catch (_) {
+      attention.textContent = "Não foi possível carregar o estado do acervo agora.";
+    }
+  }
+
   bindEvents();
   setConnection(state.online);
   restoreMessage();
   if (!upgradeRequired) {
     loadLibrary()
       .then(() => state.planEventId ? openPlan(state.planEventId) : undefined)
+      .then(loadArchiveStats)
       .catch(showProblem);
   }
 }

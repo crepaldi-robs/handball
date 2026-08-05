@@ -1,0 +1,5 @@
+<nav class="bottom-nav player-bottom-nav" aria-label="Navegação móvel">
+  <a href="/app" class="{{ 'active' if player_nav_active == 'home' }}" {% if player_nav_active == 'home' %}aria-current="page"{% endif %}><span aria-hidden="true">⌂</span>Início</a>
+  <a href="/app/calendario" class="{{ 'active' if player_nav_active == 'calendar' }}" {% if player_nav_active == 'calendar' %}aria-current="page"{% endif %}><span aria-hidden="true">□</span>Calendário</a>
+  <a href="/app/meu-relatorio" class="{{ 'active' if player_nav_active == 'report' }}" {% if player_nav_active == 'report' %}aria-current="page"{% endif %}><span aria-hidden="true">◎</span>Meu perfil</a>
+</nav>

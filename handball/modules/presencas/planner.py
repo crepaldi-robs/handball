@@ -403,3 +403,30 @@ def render_coach_report(report: Mapping[str, Any]) -> str:
         lines.extend(["", "🪑 CONFIRMADOS NÃO ALOCADOS NA PRIMEIRA OPÇÃO"])
         lines.append("• " + ", ".join(item["name"] for item in report["unallocated_athletes"]))
     return "\n".join(lines)
+
+
+def confirmed_player_profiles(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Perfis de posição dos registros confirmados, no formato que enumerate_assignments espera.
+
+    Reaproveitado pelo Playbook (filtro "fecha com os confirmados") para não
+    duplicar a leitura de posição efetiva que build_coach_report já faz.
+    """
+    return [_player(record) for record in records if record.get("confirmation_status") in CONFIRMED_CODES]
+
+
+def exercise_fit(players: list[dict[str, Any]], variants: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Para cada variante de um exercício, diz se fecha com os jogadores informados.
+
+    Mesmo cálculo de enumerate_assignments/_maximum_partial já usado em
+    build_coach_report — aqui só reempacotado por variante, sem novo dado.
+    """
+    results: list[dict[str, Any]] = []
+    for variant in variants:
+        roles = variant.get("roles") or ()
+        label = str(variant.get("label") or "Padrão")
+        if enumerate_assignments(players, roles, limit=1):
+            results.append({"variant": label, "fits": True, "fits_with": len(players)})
+        else:
+            partial = _maximum_partial(players, roles)
+            results.append({"variant": label, "fits": False, "missing_roles": partial["missing_roles"]})
+    return results

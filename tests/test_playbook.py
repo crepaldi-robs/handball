@@ -657,3 +657,105 @@ def test_player_next_training_plan_exposes_only_published_preparation(tmp_path: 
     assert [item["content_id"] for item in plan.json()["items"]] == [published_content_id]
     assert plan.json()["items"][0]["planned_minutes"] == 15
     assert plan.json()["items"][0]["notes"] == "Revisar antes de sair."
+
+
+def test_content_fit_reports_whether_exercise_closes_with_confirmed_roster(tmp_path: Path) -> None:
+    """Filtro "Fecha com os confirmados" (B3 do handoff HM-IME) — orquestração
+    pura sobre dado já existente (planner.enumerate_assignments), sem tabela
+    ou coluna nova (AGENTS.md regra 13/19)."""
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, folder_id, _ = _seed_and_content(client, csrf)
+
+    payload = _content_payload(team_id, folder_id, title="2x1 na ponta direita")
+    payload.update({
+        "content_kind": "EXERCISE",
+        "exercise_variants": [{
+            "label": "Lado direito",
+            "roles": [
+                {"group": "ATTACK", "label": "Ponta direita", "count": 1, "attack_positions": ["PD"]},
+                {"group": "ATTACK", "label": "Meia direita", "count": 1, "attack_positions": ["MD"]},
+                {"group": "DEFENSE", "label": "1º marcador", "count": 1, "defensive_positions": ["M1"]},
+            ],
+        }],
+    })
+    created = client.post("/api/v1/playbook/contents", json=payload, headers={"X-CSRF-Token": csrf})
+    assert created.status_code == 201, created.text
+    content_id = int(created.json()["id"])
+    assert client.post(
+        f"/api/v1/playbook/contents/{content_id}/publish", headers={"X-CSRF-Token": csrf}
+    ).status_code == 200
+
+    def add_member(name: str, position: str, attack: list[str]) -> int:
+        response = client.post(
+            "/api/v1/members",
+            json={"name": name, "position": position, "attack_positions": attack, "defensive_positions": ["M1"]},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 200, response.text
+        return int(next(item for item in response.json()["items"] if item["name"] == name)["id"])
+
+    # Os três precisam existir ANTES de abrir a chamada: só assim o registro
+    # de presença de cada um é provisionado automaticamente (get_or_create).
+    ponta_id = add_member("Ponta Teste", "PD", ["PD"])
+    meia_id = add_member("Meia Teste", "MD", ["MD"])
+    marcador_id = add_member("Marcador Teste", "PV", ["PV"])
+
+    _, season_id = _team_and_season(client)
+    training = _create_training(
+        client, csrf, team_id, season_id,
+        starts_at="2099-05-01T19:00:00-03:00", ends_at="2099-05-01T21:00:00-03:00",
+    )
+    event_id = int(training["id"])
+    opened = client.post(
+        f"/api/v1/attendance/trainings/{event_id}/session", headers={"X-CSRF-Token": csrf}
+    )
+    assert opened.status_code == 200, opened.text
+    session_id = int(opened.json()["session"]["id"])
+
+    def confirm(member_id: int) -> None:
+        record = next(
+            item for item in client.get(f"/api/v1/sessions/{session_id}").json()["records"]
+            if int(item["member_id"]) == member_id
+        )
+        result = client.put(
+            f"/api/v1/sessions/{session_id}/records",
+            json={"operations": [{
+                "operation_id": f"fit-test-{member_id}",
+                "member_id": member_id,
+                "base_version": int(record["version"]),
+                "confirmation_status": "CONFIRMED_EARLY",
+                "present": None,
+                "notes": "",
+            }], "offline": False},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert result.status_code == 200, result.text
+
+    confirm(ponta_id)
+    confirm(meia_id)
+
+    not_closing = client.get(f"/api/v1/playbook/contents/{content_id}/fit?event_id={event_id}")
+    assert not_closing.status_code == 200, not_closing.text
+    not_closing_variant = not_closing.json()["variants"][0]
+    assert not_closing_variant["fits"] is False
+    assert "1º marcador" in not_closing_variant["missing_roles"]
+
+    confirm(marcador_id)
+
+    closing = client.get(f"/api/v1/playbook/contents/{content_id}/fit?event_id={event_id}")
+    assert closing.status_code == 200, closing.text
+    assert closing.json()["confirmed_count"] == 3
+    closing_variant = closing.json()["variants"][0]
+    assert closing_variant["fits"] is True
+    assert closing_variant["fits_with"] == 3
+
+    missing_event = client.get(f"/api/v1/playbook/contents/{content_id}/fit?event_id=999999")
+    assert missing_event.status_code == 404
+
+    # O filtro "Fecha com os confirmados" vive só na tela da CT (B3) — não é
+    # exposto ao jogador.
+    logout(client)
+    login(client, "player", data["passwords"]["player"])
+    denied = client.get(f"/api/v1/playbook/contents/{content_id}/fit?event_id={event_id}")
+    assert denied.status_code == 403

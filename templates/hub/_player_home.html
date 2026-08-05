@@ -1,0 +1,13 @@
+<section class="player-home">
+  {% include "partials/_attendance_response_widget.html" %}
+
+  <section class="player-week" aria-labelledby="player-week-title">
+    <h2 id="player-week-title" class="player-week-title">Semana do time</h2>
+    <ul id="player-week-list" class="player-week-list"><li class="muted">Carregando…</li></ul>
+  </section>
+
+  <details class="player-modules-toggle">
+    <summary>Todos os módulos</summary>
+    {% include "hub/_modules_grid.html" %}
+  </details>
+</section>

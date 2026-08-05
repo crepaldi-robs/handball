@@ -75,6 +75,10 @@ function setConnectionBadge() {
     badge.classList.add("online");
   }
   $$(".online-only").forEach((node) => node.classList.toggle("disabled-offline", !state.online));
+  const offlineState = $("#sidebar-offline-state");
+  if (offlineState) {
+    offlineState.textContent = state.vaultKey ? "Proteção offline ativa" : state.vaultExists ? "Proteção offline trancada" : "Proteção offline não configurada";
+  }
   const queueStatus = $("#queue-status");
   if (queueStatus) {
     queueStatus.textContent = queued
@@ -579,6 +583,7 @@ function recordConflict(memberId) {
 function markDirty(memberId, card) {
   state.dirty.add(memberId);
   card.classList.add("dirty");
+  updateSaveButtonLabel();
 }
 
 function renderAthletes() {
@@ -617,20 +622,46 @@ function renderAthletes() {
     });
     statusLabel.append(statusName, select);
 
-    const presentLabel = document.createElement("label");
+    const presentLabel = document.createElement("div");
     presentLabel.className = "presence-toggle";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = record.present === 1 || record.present === true;
-    checkbox.setAttribute("aria-label", `${record.name} presente`);
-    const presentText = document.createElement("span");
-    presentText.textContent = "Presente";
-    checkbox.addEventListener("change", () => {
-      record.present = checkbox.checked ? true : false;
-      markDirty(record.member_id, card);
-      renderMetrics();
+    const segmented = document.createElement("div");
+    segmented.className = "presence-segmented";
+    segmented.setAttribute("role", "group");
+    segmented.setAttribute("aria-label", `Presença de ${record.name}`);
+    const presenceOptions = [
+      { value: true, label: "Presente" },
+      { value: false, label: "Ausente" },
+      { value: null, label: "Não apurado" },
+    ];
+    presenceOptions.forEach(({ value, label }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "presence-segment";
+      button.dataset.value = String(value);
+      const active = value === null ? record.present == null : record.present === value;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+      button.textContent = label;
+      if (value === null) {
+        // Regra 2: desmarcar não vira ausência automaticamente, mas também
+        // não existe hoje uma rota que aceite present=null como transição —
+        // "não apurado" só aparece enquanto o registro nunca foi tocado.
+        button.disabled = true;
+      } else {
+        button.addEventListener("click", () => {
+          record.present = value;
+          markDirty(record.member_id, card);
+          segmented.querySelectorAll(".presence-segment").forEach((node) => {
+            const isActive = node.dataset.value === String(value);
+            node.classList.toggle("active", isActive);
+            node.setAttribute("aria-pressed", String(isActive));
+          });
+          renderMetrics();
+        });
+      }
+      segmented.append(button);
     });
-    presentLabel.append(checkbox, presentText);
+    presentLabel.append(segmented);
 
     const notesLabel = document.createElement("label");
     notesLabel.className = "field-compact notes-field";
@@ -671,10 +702,27 @@ function renderAthletes() {
   }));
 }
 
+function renderCoachReportPanels() {
+  const report = state.payload?.coach_report || null;
+  const desktop = $("#coach-report-panel");
+  const mobile = $("#coach-report-panel-mobile");
+  if (desktop) window.CoachReportPanel?.render(desktop, report);
+  if (mobile) window.CoachReportPanel?.render(mobile, report);
+}
+
+function updateSaveButtonLabel() {
+  const button = $("#save-button");
+  if (!button) return;
+  const count = state.dirty.size;
+  button.textContent = count ? `Salvar ${count} alteraç${count === 1 ? "ão" : "ões"}` : "Salvar alterações";
+}
+
 function renderSession() {
   if (!state.payload) return;
   renderMetrics();
   renderAthletes();
+  renderCoachReportPanels();
+  updateSaveButtonLabel();
   const automaticReport = state.payload.coach_message || buildCoachMessage();
   const freshness = state.payload.coach_report?.generated_at
     ? new Date(state.payload.coach_report.generated_at).toLocaleString("pt-BR")
@@ -691,6 +739,8 @@ function renderSession() {
   $("#finalize-button").classList.toggle("hidden", finalized);
   $("#reopen-button").classList.toggle("hidden", !finalized);
   $("#finalize-button").disabled = state.vaultExists && !state.vaultKey;
+  const planLink = $("#sidebar-plan-link");
+  if (planLink) planLink.href = state.currentEventId ? `/app/playbook?event_id=${state.currentEventId}` : "/app/playbook";
   setConnectionBadge();
 }
 
@@ -929,8 +979,22 @@ async function resolveConflict(conflict, reapply) {
   else renderSession();
 }
 
+function openFinalizeDialog() {
+  if (!state.online || !state.payload) return;
+  const unknown = state.payload.summary.unknown_presence;
+  const trainingLabelText = `${formatDate(state.currentDate)}${state.trainings.find((item) => item.id === state.currentEventId)?.starts_at
+    ? " · " + new Date(state.trainings.find((item) => item.id === state.currentEventId).starts_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : ""}`;
+  $("#finalize-dialog-title").textContent = `Encerrar a chamada do treino de ${trainingLabelText}?`;
+  $("#finalize-impact").textContent = unknown
+    ? `${unknown} atleta${unknown === 1 ? "" : "s"} ainda não apurado${unknown === 1 ? "" : "s"} — ao encerrar, ${unknown === 1 ? "esse atleta passa" : "esses atletas passam"} a constar como ausente${unknown === 1 ? "" : "s"} no histórico e no relatório individual de cada um.`
+    : "Todos os atletas já foram apurados. Encerrar só fecha a chamada para edição.";
+  $("#finalize-confirm").textContent = unknown ? `Encerrar e marcar ${unknown} como ausente${unknown === 1 ? "" : "s"}` : "Encerrar chamada";
+  $("#finalize-dialog").showModal();
+}
+
 async function finalizeSession() {
-  if (!state.online || !window.confirm("Encerrar a chamada e marcar todos os não apurados como ausentes?")) return;
+  $("#finalize-dialog").close();
   try {
     await api(`/api/v1/sessions/${state.payload.session.id}/finalize`, { method: "POST" });
     await loadSession(state.payload.session.id);
@@ -1257,12 +1321,22 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("#open-calendar-training").addEventListener("click", openSelectedCalendarTraining);
   $("#save-button").addEventListener("click", saveChanges);
-  $("#finalize-button").addEventListener("click", finalizeSession);
+  $("#finalize-button").addEventListener("click", openFinalizeDialog);
+  $("#finalize-cancel").addEventListener("click", () => $("#finalize-dialog").close());
+  $("#finalize-confirm").addEventListener("click", finalizeSession);
   $("#reopen-button").addEventListener("click", reopenSession);
   $("#save-session-notes").addEventListener("click", saveSessionNotes);
-  $("#copy-summary").addEventListener("click", async () => {
+  async function copySummary() {
     try { await navigator.clipboard.writeText($("#coach-message").textContent); setAlert("Mensagem copiada."); }
     catch (_) { setAlert("Não foi possível copiar automaticamente.", "warning"); }
+  }
+  $("#copy-summary").addEventListener("click", copySummary);
+  $("#copy-summary-text-view").addEventListener("click", copySummary);
+  $("#copy-summary-sheet").addEventListener("click", copySummary);
+  $("#open-reading-sheet").addEventListener("click", () => $("#reading-sheet").showModal());
+  $("#reading-sheet-close").addEventListener("click", () => $("#reading-sheet").close());
+  $("#reading-sheet-playbook").addEventListener("click", () => {
+    window.location.href = state.currentEventId ? `/app/playbook?event_id=${state.currentEventId}` : "/app/playbook";
   });
   $("#member-form").addEventListener("submit", addMember);
   $("#player-account-team")?.addEventListener("change", loadPlayerAccountOptions);

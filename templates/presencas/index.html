@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
+  <script src="/static/coach-report.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body data-user-id="{{ session.user_id }}" data-team-id="{{ session.team_ids|list|first or 0 }}" data-vault-format="2">
@@ -40,15 +41,18 @@
     <aside class="sidebar" aria-label="Navegação principal">
       <nav class="nav-list">
         <a class="nav-item module-nav-link" href="/app"><span>⌂</span> Hub</a>
+        <span class="nav-group-label">Treino</span>
         <button class="nav-item active" data-view="call" type="button"><span>✓</span> Chamada</button>
-        <button class="nav-item" data-view="summary" type="button"><span>≡</span> Resumo</button>
+        <a id="sidebar-plan-link" class="nav-item" href="/app/playbook"><span>▤</span> Plano do treino</a>
+        <button class="nav-item" data-view="summary" type="button"><span>≡</span> Mensagem do grupo</button>
+        <span class="nav-group-label">Time</span>
         <button class="nav-item online-only" data-view="history" type="button"><span>◷</span> Histórico</button>
         <button class="nav-item online-only" data-view="roster" type="button"><span>♙</span> Elenco</button>
         <button class="nav-item online-only" data-view="audit" type="button"><span>⌕</span> Auditoria</button>
       </nav>
       <div class="sidebar-footer">
         <span>Servidor particular</span>
-        <strong>Fonte oficial dos dados</strong>
+        <strong id="sidebar-offline-state">Fonte oficial dos dados</strong>
       </div>
     </aside>
 
@@ -69,58 +73,74 @@
           </div>
         </div>
 
-        <div id="metrics" class="metrics" aria-label="Resumo da chamada"></div>
+        <div class="call-columns">
+          <div class="call-main">
+            <div id="metrics" class="metrics" aria-label="Resumo da chamada"></div>
 
-        <section
-          id="metric-details"
-          class="metric-details"
-          role="region"
-          aria-labelledby="metric-details-title"
-          aria-live="polite"
-          hidden
-        >
-          <div class="metric-details-heading">
-            <div>
-              <span class="metric-details-kicker">ATLETAS NESTE STATUS</span>
-              <h2 id="metric-details-title"></h2>
+            <section
+              id="metric-details"
+              class="metric-details"
+              role="region"
+              aria-labelledby="metric-details-title"
+              aria-live="polite"
+              hidden
+            >
+              <div class="metric-details-heading">
+                <div>
+                  <span class="metric-details-kicker">ATLETAS NESTE STATUS</span>
+                  <h2 id="metric-details-title"></h2>
+                </div>
+                <span id="metric-details-count" class="metric-details-count"></span>
+              </div>
+              <ul id="metric-details-list" class="metric-name-list"></ul>
+              <p id="metric-details-empty" class="metric-details-empty hidden"></p>
+            </section>
+
+            <div class="section-toolbar">
+              <div>
+                <h2>Atletas</h2>
+                <p id="queue-status" class="muted">Nenhuma alteração pendente.</p>
+              </div>
+              <div class="toolbar-actions">
+                <a id="session-export" class="button online-only" href="#">Baixar CSV</a>
+                <button id="save-button" class="button button-primary" type="button">Salvar alterações</button>
+                <button id="finalize-button" class="button button-danger online-only" type="button">Encerrar chamada</button>
+                <button id="reopen-button" class="button online-only hidden" type="button">Reabrir chamada</button>
+              </div>
             </div>
-            <span id="metric-details-count" class="metric-details-count"></span>
-          </div>
-          <ul id="metric-details-list" class="metric-name-list"></ul>
-          <p id="metric-details-empty" class="metric-details-empty hidden"></p>
-        </section>
 
-        <div class="section-toolbar">
-          <div>
-            <h2>Atletas</h2>
-            <p id="queue-status" class="muted">Nenhuma alteração pendente.</p>
+            <div id="athlete-list" class="athlete-list" aria-live="polite"></div>
+
+            <section class="panel session-notes-panel online-only">
+              <div>
+                <h2>Observações gerais</h2>
+                <p class="muted">Informações que valem para o treino inteiro.</p>
+              </div>
+              <textarea id="session-notes" rows="3" maxlength="4000" placeholder="Ex.: treino reduzido, quadra alterada…"></textarea>
+              <button id="save-session-notes" class="button" type="button">Salvar observações</button>
+            </section>
           </div>
-          <div class="toolbar-actions">
-            <a id="session-export" class="button online-only" href="#">Baixar CSV</a>
-            <button id="save-button" class="button button-primary" type="button">Salvar alterações</button>
-            <button id="finalize-button" class="button button-danger online-only" type="button">Encerrar chamada</button>
-            <button id="reopen-button" class="button online-only hidden" type="button">Reabrir chamada</button>
-          </div>
+
+          <aside class="panel call-reading only-desktop" aria-labelledby="call-reading-title">
+            <div class="page-heading-compact">
+              <h2 id="call-reading-title">Leitura do treino</h2>
+              <button id="copy-summary" class="icon-action-button" type="button" aria-label="Copiar mensagem para o grupo" title="Copiar mensagem para o grupo">⧉</button>
+            </div>
+            <div id="coach-report-panel"></div>
+          </aside>
         </div>
 
-        <div id="athlete-list" class="athlete-list" aria-live="polite"></div>
-
-        <section class="panel session-notes-panel online-only">
-          <div>
-            <h2>Observações gerais</h2>
-            <p class="muted">Informações que valem para o treino inteiro.</p>
-          </div>
-          <textarea id="session-notes" rows="3" maxlength="4000" placeholder="Ex.: treino reduzido, quadra alterada…"></textarea>
-          <button id="save-session-notes" class="button" type="button">Salvar observações</button>
-        </section>
+        <button id="open-reading-sheet" class="button only-mobile ct-reading-fab" type="button">Ver leitura do treino</button>
       </section>
 
       <section id="view-summary" class="view" aria-labelledby="summary-title">
         {# O copiar fica junto do título, não no fim do <pre>: é clique rápido
-           e repetido, e rolar a mensagem inteira para achá-lo custa caro. #}
+           e repetido, e rolar a mensagem inteira para achá-lo custa caro. O
+           mesmo texto (buildCoachMessage/coach_message) alimenta o botão
+           "Copiar" da coluna 3 (#copy-summary) — uma fonte, dois gatilhos. #}
         <div class="page-heading">
-          <div><span class="eyebrow">COMUNICAÇÃO</span><h1 id="summary-title">Resumo para o técnico</h1></div>
-          <button id="copy-summary" class="icon-action-button" type="button" aria-label="Copiar mensagem" title="Copiar mensagem">⧉</button>
+          <div><span class="eyebrow">COMUNICAÇÃO</span><h1 id="summary-title">Mensagem do grupo</h1></div>
+          <button id="copy-summary-text-view" class="icon-action-button" type="button" aria-label="Copiar mensagem" title="Copiar mensagem">⧉</button>
         </div>
         <div class="panel message-panel"><pre id="coach-message">Carregando…</pre></div>
       </section>
@@ -177,11 +197,37 @@
      domínio, não um extra de desktop. O Hub continua alcançável pela app bar. #}
   <nav class="bottom-nav" aria-label="Navegação móvel">
     <button class="active" data-view="call" type="button"><span>✓</span>Chamada</button>
-    <button data-view="summary" type="button"><span>≡</span>Resumo</button>
+    <button data-view="summary" type="button"><span>≡</span>Mensagem</button>
     <button class="online-only" data-view="history" type="button"><span>◷</span>Histórico</button>
     <button class="online-only" data-view="roster" type="button"><span>♙</span>Elenco</button>
     <button class="online-only" data-view="audit" type="button"><span>⌕</span>Auditoria</button>
   </nav>
+
+  <dialog id="reading-sheet" class="modal sheet only-mobile">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="page-heading-compact">
+      <h2 id="reading-sheet-title">Leitura do treino</h2>
+      <button id="reading-sheet-close" class="icon-action-button" type="button" aria-label="Fechar">✕</button>
+    </div>
+    <div id="coach-report-panel-mobile"></div>
+    <div class="modal-actions">
+      <button id="copy-summary-sheet" class="button button-primary" type="button">Copiar mensagem para o grupo</button>
+      <button id="reading-sheet-playbook" class="button" type="button">Ajustar plano no Playbook</button>
+    </div>
+  </dialog>
+
+  <dialog id="finalize-dialog" class="modal">
+    <div>
+      <span class="eyebrow">ENCERRAR CHAMADA</span>
+      <h2 id="finalize-dialog-title">Encerrar a chamada deste treino?</h2>
+    </div>
+    <div id="finalize-impact" class="alert alert-warning" role="alert"></div>
+    <p class="muted">Você pode reabrir a chamada depois; a reabertura fica registrada na auditoria com seu nome.</p>
+    <div class="modal-actions">
+      <button id="finalize-cancel" class="button" type="button">Voltar e apurar</button>
+      <button id="finalize-confirm" class="button button-danger" type="button">Encerrar chamada</button>
+    </div>
+  </dialog>
 
   <dialog id="offline-dialog" class="modal">
     <form id="offline-form" method="dialog" class="stack-form">
