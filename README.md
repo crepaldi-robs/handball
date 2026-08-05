@@ -102,8 +102,7 @@ e retorna imediatamente; por isso, sempre aguarde a porta local e confirme
 $tarefa = Get-ScheduledTask -TaskName "CrepaldiHandball"
 if ($tarefa.State -ne "Running") {
     Start-ScheduledTask -TaskName "CrepaldiHandball"
-}
-else {
+} else {
     Write-Host "A tarefa CrepaldiHandball já está em execução."
 }
 ```
@@ -117,8 +116,7 @@ for ($tentativa = 1; $tentativa -le 60; $tentativa++) {
         break
     }
     Start-Sleep -Seconds 1
-}
-if (-not $portaAberta) {
+} if (-not $portaAberta) {
     throw "O servidor não abriu a porta 127.0.0.1:8765 em 60 segundos. Execute o diagnóstico desta seção."
 }
 ```
