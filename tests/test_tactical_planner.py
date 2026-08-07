@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from handball.modules.presencas.planner import build_coach_report
+from handball.modules.presencas.planner import build_coach_report, render_coach_report
 
 
 def record(
@@ -10,8 +10,9 @@ def record(
     *,
     selected: list[str] | None = None,
     defense: list[str] | None = None,
+    layer_ordinal: int | None = None,
 ) -> dict[str, object]:
-    return {
+    item: dict[str, object] = {
         "member_id": member_id,
         "name": name,
         "position": "/".join(attack),
@@ -21,6 +22,10 @@ def record(
         "confirmation_status": "CONFIRMED_EARLY",
         "present": None,
     }
+    if layer_ordinal is not None:
+        item["layer_ordinal"] = layer_ordinal
+        item["layer_label"] = f"Camada {layer_ordinal + 1}"
+    return item
 
 
 def test_twelve_wings_do_not_create_two_complete_six_player_teams() -> None:
@@ -69,6 +74,75 @@ def test_selected_training_positions_override_profile_fallback() -> None:
     assert restricted["executable_exercises"] == []
     assert restricted["near_feasible_exercises"][0]["missing_roles"] == ["Ponta"]
     assert fallback["executable_exercises"][0]["assignments"][0]["assignments"][0]["name"] == "Coringa"
+
+
+def _two_team_records(*, layered: bool) -> list[dict[str, object]]:
+    """Dois atletas por posição de linha; com camadas, um forte e um fraco."""
+
+    records = []
+    member_id = 1
+    for position in ("PE", "ME", "C", "MD", "PD", "PV"):
+        for level, tag in ((1, "forte"), (0, "fraco")):
+            records.append(
+                record(
+                    member_id,
+                    f"{position}-{tag}",
+                    [position],
+                    layer_ordinal=level if layered else None,
+                )
+            )
+            member_id += 1
+    records.append(record(member_id, "Goleiro", ["GOL"]))
+    return records
+
+
+def test_scrimmages_split_layers_evenly_between_teams() -> None:
+    report = build_coach_report(_two_team_records(layered=True))
+
+    option = report["scrimmages"][0]
+    balance = option["layer_balance"]
+    assert balance["penalty"] == 0
+    assert balance["ranked_athletes"] == 12
+    assert balance["teams"]["A"]["by_layer"] == {"Camada 2": 3, "Camada 1": 3}
+    assert balance["teams"]["B"]["by_layer"] == {"Camada 2": 3, "Camada 1": 3}
+    for team in ("A", "B"):
+        strong = [item for item in option["teams"][team] if item["layer_ordinal"] == 1]
+        assert len(strong) == 3
+
+    rendered = render_coach_report(report)
+    assert "Equilíbrio por camada: Camada 2 3×3 · Camada 1 3×3." in rendered
+    assert "ATLETAS SEM CAMADA" not in rendered
+
+
+def test_report_without_layers_keeps_historical_payload_and_render() -> None:
+    report = build_coach_report(_two_team_records(layered=False))
+
+    option = report["scrimmages"][0]
+    assert option["layer_balance"]["penalty"] == 0
+    assert option["layer_balance"]["ranked_athletes"] == 0
+    assert all(
+        "layer_ordinal" not in item
+        for team in option["teams"].values()
+        for item in team
+    )
+    assert report["ranking_gaps"] == []
+
+    rendered = render_coach_report(report)
+    assert "Equilíbrio por camada" not in rendered
+    assert "ATLETAS SEM CAMADA" not in rendered
+
+
+def test_partially_ranked_squad_lists_ranking_gaps() -> None:
+    records = _two_team_records(layered=True)
+    records[0].pop("layer_ordinal")
+    records[0].pop("layer_label")
+
+    report = build_coach_report(records)
+
+    assert [item["name"] for item in report["ranking_gaps"]] == [records[0]["name"]]
+    rendered = render_coach_report(report)
+    assert "🏷️ ATLETAS SEM CAMADA" in rendered
+    assert str(records[0]["name"]) in rendered.split("ATLETAS SEM CAMADA")[1]
 
 
 def test_generic_defender_only_fills_roles_that_explicitly_allow_it() -> None:

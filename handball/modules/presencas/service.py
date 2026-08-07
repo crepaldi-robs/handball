@@ -39,6 +39,7 @@ class AttendanceService:
                 training_date, actor_user_id=actor_user_id
             )
             records = unit_of_work.attendance.get_session_records(int(training["id"]))
+            records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
         records = self._effective_records(records)
         summary = summarize_records(records)
         coach_report = build_coach_report(records)
@@ -205,6 +206,7 @@ class AttendanceService:
             records = unit_of_work.attendance.get_session_records(
                 int(linked["session"]["id"])
             )
+            records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
             exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
         return self._payload(
             linked["session"],
@@ -228,6 +230,7 @@ class AttendanceService:
             if calendar_event is None:
                 raise KeyError("Chamada sem vínculo com um treino autorizado.")
             records = unit_of_work.attendance.get_session_records(session_id)
+            records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
             exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
         return self._payload(training, records, calendar_event=calendar_event, exercises=exercises)
 
@@ -332,6 +335,41 @@ class AttendanceService:
 
     def create_backup_download(self) -> BackupDownload:
         return self._backup_provider.create_backup_download()
+
+    @staticmethod
+    def _attach_rankings(
+        records: list[dict[str, Any]], rankings: dict[int, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Anota camada e refino de cada atleta para o planejador tático.
+
+        Goleiro puro usa a hierarquia de goleiros; os demais usam a de linha.
+        Sem hierarquia registrada, os registros seguem intactos e o relatório
+        da CT mantém o comportamento histórico.
+        """
+
+        if not rankings:
+            return records
+        for record in records:
+            scopes = rankings.get(int(record["member_id"]), {})
+            if not scopes:
+                continue
+            positions = set(record.get("attack_positions") or ())
+            only_goalkeeper = bool(positions) and positions == {"GOL"}
+            info = (
+                scopes.get("GOALKEEPER")
+                if only_goalkeeper
+                else scopes.get("LINE")
+            ) or scopes.get("LINE") or scopes.get("GOALKEEPER")
+            if info is None:
+                continue
+            ordinal = int(info["layer_ordinal"])
+            record["layer_ordinal"] = ordinal
+            record["layer_label"] = f"Camada {ordinal + 1}"
+            record["layer_refine_bonus"] = {
+                position: max(0, int(data["peers"]) - int(data["refine_ordinal"]))
+                for position, data in (info.get("refinements") or {}).items()
+            }
+        return records
     @staticmethod
     def _effective_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []

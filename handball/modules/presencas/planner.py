@@ -24,6 +24,7 @@ def _player(record: Mapping[str, Any]) -> dict[str, Any]:
     profile = [str(value) for value in record.get("attack_positions") or ()]
     effective = selected or profile
     defensive = [str(value) for value in record.get("defensive_positions") or ()]
+    layer_ordinal = record.get("layer_ordinal")
     return {
         "member_id": int(record["member_id"]),
         "name": str(record["name"]),
@@ -31,6 +32,9 @@ def _player(record: Mapping[str, Any]) -> dict[str, Any]:
         "attack_position_source": "SELECTED" if selected else ("PROFILE_DEFAULT" if profile else "INCOMPLETE"),
         "defensive_positions": defensive,
         "defensive_generic": not defensive,
+        "layer_ordinal": int(layer_ordinal) if layer_ordinal is not None else None,
+        "layer_label": record.get("layer_label"),
+        "layer_refine_bonus": dict(record.get("layer_refine_bonus") or {}),
     }
 
 
@@ -87,6 +91,14 @@ def _assignment_penalty(assignments: Iterable[tuple[Mapping[str, Any], Mapping[s
     return penalty
 
 
+def _refine_bonus(player: Mapping[str, Any], slot: Mapping[str, Any]) -> int:
+    bonuses = player.get("layer_refine_bonus") or {}
+    for position in slot.get("attack_positions") or ():
+        if position in bonuses:
+            return int(bonuses[position])
+    return 0
+
+
 def enumerate_assignments(
     players: list[dict[str, Any]], roles: Iterable[Mapping[str, Any]], *, limit: int = 3
 ) -> list[dict[str, Any]]:
@@ -136,15 +148,7 @@ def enumerate_assignments(
             {
                 "penalty": penalty,
                 "assignments": [
-                    {
-                        "member_id": int(player["member_id"]),
-                        "name": player["name"],
-                        "group": slot["group"],
-                        "role": slot["label"],
-                        "attack_positions": player["effective_attack_positions"],
-                        "defensive_positions": player["defensive_positions"],
-                        "position_source": player["attack_position_source"],
-                    }
+                    _assignment_entry(player, slot)
                     for player, slot in sorted(assignments, key=lambda item: str(item[1]["slot_id"]))
                 ],
             }
@@ -152,6 +156,75 @@ def enumerate_assignments(
         if len(output) >= limit:
             break
     return output
+
+
+def _assignment_entry(player: Mapping[str, Any], slot: Mapping[str, Any]) -> dict[str, Any]:
+    entry = {
+        "member_id": int(player["member_id"]),
+        "name": player["name"],
+        "group": slot["group"],
+        "role": slot["label"],
+        "attack_positions": player["effective_attack_positions"],
+        "defensive_positions": player["defensive_positions"],
+        "position_source": player["attack_position_source"],
+    }
+    # Campos de camada são aditivos: sem hierarquia registrada, o payload
+    # continua idêntico ao histórico.
+    if player.get("layer_ordinal") is not None:
+        ordinal = int(player["layer_ordinal"])
+        entry["layer_ordinal"] = ordinal
+        entry["layer_label"] = str(player.get("layer_label") or f"Camada {ordinal + 1}")
+        entry["layer_refine_bonus"] = _refine_bonus(player, slot)
+    return entry
+
+
+def _layer_balance(teams: Mapping[str, list[Mapping[str, Any]]]) -> dict[str, Any]:
+    """Equilíbrio de camadas entre dois times de um coletivo.
+
+    Peso primário: soma de (ordinal da camada + 1) por time — camada mais forte
+    pesa mais; quem não tem camada pesa zero. Desempate: soma dos bônus de
+    refino posicional das posições efetivamente ocupadas. A penalidade cresce
+    com a diferença entre os times, então 0 é o equilíbrio perfeito.
+    """
+
+    weights: dict[str, int] = {}
+    refine_totals: dict[str, int] = {}
+    breakdown: dict[str, dict[str, Any]] = {}
+    ranked_athletes = 0
+    for team, assignments in teams.items():
+        weight = 0
+        refine_total = 0
+        by_layer: dict[str, int] = {}
+        for item in assignments:
+            ordinal = item.get("layer_ordinal")
+            if ordinal is None:
+                by_layer["sem camada"] = by_layer.get("sem camada", 0) + 1
+                continue
+            ranked_athletes += 1
+            weight += int(ordinal) + 1
+            refine_total += int(item.get("layer_refine_bonus", 0))
+            label = str(item.get("layer_label") or f"Camada {int(ordinal) + 1}")
+            by_layer[label] = by_layer.get(label, 0) + 1
+        weights[team] = weight
+        refine_totals[team] = refine_total
+        breakdown[team] = {
+            "weight": weight,
+            "refine_bonus": refine_total,
+            "by_layer": by_layer,
+        }
+    ordered_teams = sorted(weights)
+    if len(ordered_teams) == 2:
+        first, second = ordered_teams
+        penalty = abs(weights[first] - weights[second]) * 100 + abs(
+            refine_totals[first] - refine_totals[second]
+        )
+    else:
+        penalty = 0
+    return {
+        "penalty": penalty,
+        "teams": breakdown,
+        "ranked_athletes": ranked_athletes,
+    }
 
 
 def _maximum_partial(players: list[dict[str, Any]], roles: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -236,9 +309,19 @@ def _full_scrimmages(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "defense_coverage": defense,
                 "penalty": lineup["penalty"],
                 "defense_score": defense_score,
+                "layer_balance": _layer_balance(teams),
             }
         )
-    return sorted(enriched, key=lambda item: (-item["defense_score"], item["penalty"]))[:3]
+    # Viabilidade posicional continua dominante; o equilíbrio por camada só
+    # reordena entre as escalações posicionais já enumeradas.
+    return sorted(
+        enriched,
+        key=lambda item: (
+            -item["defense_score"],
+            item["penalty"],
+            item["layer_balance"]["penalty"],
+        ),
+    )[:3]
 
 
 def build_coach_report(
@@ -349,6 +432,16 @@ def build_coach_report(
             {"member_id": player["member_id"], "name": player["name"], "kind": "ATTACK_POSITIONS"}
             for player in confirmed if not player["effective_attack_positions"]
         ],
+        # Só aponta lacuna de camada quando a hierarquia já está em uso entre
+        # os confirmados, e só para atletas de linha — o coletivo balanceado
+        # divide a linha; goleiro tem hierarquia própria fora deste aviso.
+        "ranking_gaps": [
+            {"member_id": player["member_id"], "name": player["name"]}
+            for player in confirmed
+            if player["layer_ordinal"] is None
+            and set(player["effective_attack_positions"]) - {"GOL"}
+            and any(item["layer_ordinal"] is not None for item in confirmed)
+        ],
         "unallocated_athletes": [
             {"member_id": player["member_id"], "name": player["name"]}
             for player in confirmed if int(player["member_id"]) not in used
@@ -380,6 +473,9 @@ def render_coach_report(report: Mapping[str, Any]) -> str:
             names = ", ".join(f"{item['role'].split(' · ', 1)[1]}: {item['name']}" for item in assignments)
             systems = ", ".join(system for system, data in option["defense_coverage"][team].items() if data["feasible"]) or "sem sistema defensivo estruturado completo"
             lines.append(f"  - Time {team}: {names}. Defesa: {systems}.")
+        balance = option.get("layer_balance") or {}
+        if balance.get("ranked_athletes"):
+            lines.append("  - Equilíbrio por camada: " + _layer_balance_summary(balance))
     lines.extend(["", "🏋️ POSSIBILIDADES DE EXERCÍCIO"])
     if not report["executable_exercises"]:
         lines.append("• Nenhum exercício publicado do Playbook fecha com o elenco confirmado.")
@@ -399,10 +495,37 @@ def render_coach_report(report: Mapping[str, Any]) -> str:
     if report["data_gaps"]:
         lines.extend(["", "⚠️ CADASTROS INCOMPLETOS"])
         lines.append("• Sem posição ofensiva reconhecida: " + ", ".join(item["name"] for item in report["data_gaps"]))
+    if report.get("ranking_gaps"):
+        lines.extend(["", "🏷️ ATLETAS SEM CAMADA"])
+        lines.append("• Ainda fora da hierarquia: " + ", ".join(item["name"] for item in report["ranking_gaps"]))
     if report["unallocated_athletes"]:
         lines.extend(["", "🪑 CONFIRMADOS NÃO ALOCADOS NA PRIMEIRA OPÇÃO"])
         lines.append("• " + ", ".join(item["name"] for item in report["unallocated_athletes"]))
     return "\n".join(lines)
+
+
+def _layer_balance_summary(balance: Mapping[str, Any]) -> str:
+    teams = balance.get("teams") or {}
+    team_names = sorted(teams)
+    labels: set[str] = set()
+    for team in team_names:
+        labels.update((teams[team].get("by_layer") or {}).keys())
+
+    def label_order(label: str) -> tuple[int, int]:
+        if label.startswith("Camada "):
+            try:
+                return (0, -int(label.split(" ", 1)[1]))
+            except ValueError:
+                return (1, 0)
+        return (2, 0)
+
+    parts = []
+    for label in sorted(labels, key=label_order):
+        counts = "×".join(
+            str((teams[team].get("by_layer") or {}).get(label, 0)) for team in team_names
+        )
+        parts.append(f"{label} {counts}")
+    return " · ".join(parts) + "."
 
 
 def confirmed_player_profiles(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
