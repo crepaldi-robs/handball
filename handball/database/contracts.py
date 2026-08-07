@@ -148,6 +148,97 @@ class AttendanceRepositoryContract(Protocol):
 
 
 @runtime_checkable
+class RosterRepositoryContract(Protocol):
+    """Contrato de persistência consumido pelo módulo de gestão de elenco."""
+
+    def is_available(self) -> bool: ...
+
+    def list_layers(self, scope: str) -> list[dict[str, Any]]: ...
+
+    def pending_members(self, scope: str) -> list[dict[str, Any]]: ...
+
+    def layer_count(self, scope: str) -> int: ...
+
+    def layer_by_ordinal(self, scope: str, ordinal: int) -> dict[str, Any] | None: ...
+
+    def assignment_for_member(self, member_id: int, scope: str) -> dict[str, Any] | None: ...
+
+    def active_session(self, scope: str) -> dict[str, Any] | None: ...
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None: ...
+
+    def create_session(
+        self,
+        *,
+        scope: str,
+        subject_member_id: int,
+        is_rerank: bool,
+        lo_ordinal: int,
+        hi_ordinal: int,
+        pending_reference_member_id: int | None,
+        created_by_user_id: int,
+        status: str = "ACTIVE",
+        result_layer_id: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def save_session_interval(
+        self,
+        session_id: str,
+        *,
+        lo_ordinal: int,
+        hi_ordinal: int,
+        pending_reference_member_id: int | None,
+    ) -> None: ...
+
+    def complete_session(self, session_id: str, *, result_layer_id: int) -> None: ...
+
+    def cancel_session(self, session_id: str) -> None: ...
+
+    def record_comparison(
+        self,
+        *,
+        session_id: str,
+        scope: str,
+        subject_member_id: int,
+        reference_member_id: int,
+        question: str,
+        outcome: str,
+        actor_user_id: int,
+    ) -> None: ...
+
+    def list_comparisons(self, *, subject_member_id: int | None = None) -> list[dict[str, Any]]: ...
+
+    def insert_layer_at(self, scope: str, ordinal: int, *, actor_user_id: int) -> int: ...
+
+    def assign_member(
+        self, member_id: int, scope: str, layer_id: int, *, actor_user_id: int
+    ) -> None: ...
+
+    def remove_assignment_and_compact(
+        self, member_id: int, scope: str, *, actor_user_id: int
+    ) -> dict[str, Any] | None: ...
+
+    def replace_refinements(
+        self,
+        layer_id: int,
+        position: str,
+        member_ids: Iterable[int],
+        *,
+        actor_user_id: int,
+    ) -> None: ...
+
+    def rankings_by_member(self) -> dict[int, dict[str, Any]]: ...
+
+    def finalized_sessions_count(
+        self, start_date_iso: str, end_date_iso: str
+    ) -> int: ...
+
+    def presence_metrics(
+        self, start_date_iso: str, end_date_iso: str
+    ) -> dict[int, dict[str, int]]: ...
+
+
+@runtime_checkable
 class CalendarRepositoryContract(Protocol):
     """Contrato de persistência consumido pelo módulo Calendário."""
 
@@ -800,6 +891,9 @@ class UnitOfWorkContract(Protocol):
 
     @property
     def playbook(self) -> PlaybookRepositoryContract: ...
+
+    @property
+    def roster(self) -> RosterRepositoryContract: ...
 
     @property
     def sql_explorer(self) -> Any: ...
