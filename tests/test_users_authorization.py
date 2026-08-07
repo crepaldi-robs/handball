@@ -163,7 +163,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 12
+    assert DatabaseMigrator(manager.db_path).status().current_version == 13
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -171,7 +171,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 12
+    assert client.get("/ready").json()["schema_version"] == 13
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:

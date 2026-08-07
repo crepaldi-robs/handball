@@ -13,9 +13,9 @@ from handball.core.positions import parse_attack_positions
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 12
+LATEST_SCHEMA_VERSION = 13
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 12
+MAX_SUPPORTED_SCHEMA_VERSION = 13
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -688,6 +688,38 @@ MIGRATION_V12_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[12] = (MIGRATION_V12_NAME, MIGRATION_V12_CHECKSUM)
 
+# Hierarquia subjetiva do elenco em camadas: dentro de um escopo (linha ou
+# goleiros), todo atleta da camada de ordinal N é considerado pior que todo
+# atleta da camada N+1 — não há ordem total entre pessoas da mesma camada.
+# A hierarquia nasce de comparações par a par respondidas pela CT (busca
+# binária sobre as camadas); cada resposta fica registrada de forma imutável.
+SCHEMA_V13_STATEMENTS = (
+    "CREATE TABLE rank_layers (id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL CHECK(scope IN('LINE','GOALKEEPER')), ordinal INTEGER NOT NULL CHECK(ordinal>=0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(scope,ordinal))",
+    "CREATE TABLE member_layer_assignments (member_id INTEGER NOT NULL, scope TEXT NOT NULL CHECK(scope IN('LINE','GOALKEEPER')), layer_id INTEGER NOT NULL, assigned_at TEXT NOT NULL, assigned_by_user_id INTEGER NOT NULL, PRIMARY KEY(member_id,scope), FOREIGN KEY(member_id) REFERENCES team_members(id) ON DELETE CASCADE, FOREIGN KEY(layer_id) REFERENCES rank_layers(id) ON DELETE RESTRICT, FOREIGN KEY(assigned_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE layer_position_refinements (layer_id INTEGER NOT NULL, position TEXT NOT NULL CHECK(position IN('GOL','PE','ME','C','MD','PD','PV')), member_id INTEGER NOT NULL, refine_ordinal INTEGER NOT NULL CHECK(refine_ordinal>=0), updated_at TEXT NOT NULL, updated_by_user_id INTEGER NOT NULL, PRIMARY KEY(layer_id,position,member_id), UNIQUE(layer_id,position,refine_ordinal), FOREIGN KEY(layer_id) REFERENCES rank_layers(id) ON DELETE CASCADE, FOREIGN KEY(member_id) REFERENCES team_members(id) ON DELETE CASCADE, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE rank_sessions (id TEXT PRIMARY KEY, scope TEXT NOT NULL CHECK(scope IN('LINE','GOALKEEPER')), subject_member_id INTEGER NOT NULL, is_rerank INTEGER NOT NULL DEFAULT 0 CHECK(is_rerank IN(0,1)), lo_ordinal INTEGER NOT NULL CHECK(lo_ordinal>=0), hi_ordinal INTEGER NOT NULL, pending_reference_member_id INTEGER, status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN('ACTIVE','COMPLETED','CANCELLED')), result_layer_id INTEGER, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK(hi_ordinal>=lo_ordinal), FOREIGN KEY(subject_member_id) REFERENCES team_members(id) ON DELETE CASCADE, FOREIGN KEY(pending_reference_member_id) REFERENCES team_members(id) ON DELETE SET NULL, FOREIGN KEY(result_layer_id) REFERENCES rank_layers(id) ON DELETE SET NULL, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE rank_comparisons (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, scope TEXT NOT NULL CHECK(scope IN('LINE','GOALKEEPER')), subject_member_id INTEGER NOT NULL, reference_member_id INTEGER NOT NULL, question TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL CHECK(outcome IN('BETTER','WORSE','EQUAL')), answered_at TEXT NOT NULL, actor_user_id INTEGER NOT NULL, CHECK(subject_member_id<>reference_member_id), FOREIGN KEY(session_id) REFERENCES rank_sessions(id) ON DELETE CASCADE, FOREIGN KEY(subject_member_id) REFERENCES team_members(id) ON DELETE RESTRICT, FOREIGN KEY(reference_member_id) REFERENCES team_members(id) ON DELETE RESTRICT, FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE UNIQUE INDEX idx_rank_sessions_active_scope ON rank_sessions(scope) WHERE status='ACTIVE'",
+    "CREATE INDEX idx_member_layer_assignments_layer ON member_layer_assignments(layer_id,member_id)",
+    "CREATE INDEX idx_rank_comparisons_session ON rank_comparisons(session_id,id)",
+    "CREATE INDEX idx_rank_comparisons_subject ON rank_comparisons(subject_member_id,answered_at DESC)",
+)
+MIGRATION_V13_NAME = "roster_layer_hierarchy_and_rank_comparisons"
+MIGRATION_V13_CHECKSUM = _migration_checksum(
+    13,
+    MIGRATION_V13_NAME,
+    SCHEMA_V13_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "hierarchy": "strict-total-order-of-layers-per-scope",
+        "scopes": ["LINE", "GOALKEEPER"],
+        "insertion": "binary-search-with-equal-merges",
+        "refinement": "per-layer-per-attack-position",
+        "audit": "rank_comparisons-plus-security_audit_events",
+    },
+)
+KNOWN_MIGRATIONS[13] = (MIGRATION_V13_NAME, MIGRATION_V13_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -837,6 +869,50 @@ V12_REQUIRED_COLUMNS = {
     "playbook_exercise_specs": {"content_id", "spec_json", "updated_at"},
 }
 
+V13_REQUIRED_COLUMNS = {
+    "rank_layers": {"id", "scope", "ordinal", "created_at", "updated_at"},
+    "member_layer_assignments": {
+        "member_id",
+        "scope",
+        "layer_id",
+        "assigned_at",
+        "assigned_by_user_id",
+    },
+    "layer_position_refinements": {
+        "layer_id",
+        "position",
+        "member_id",
+        "refine_ordinal",
+        "updated_at",
+        "updated_by_user_id",
+    },
+    "rank_sessions": {
+        "id",
+        "scope",
+        "subject_member_id",
+        "is_rerank",
+        "lo_ordinal",
+        "hi_ordinal",
+        "pending_reference_member_id",
+        "status",
+        "result_layer_id",
+        "created_by_user_id",
+        "created_at",
+        "updated_at",
+    },
+    "rank_comparisons": {
+        "id",
+        "session_id",
+        "scope",
+        "subject_member_id",
+        "reference_member_id",
+        "question",
+        "outcome",
+        "answered_at",
+        "actor_user_id",
+    },
+}
+
 
 def _apply_schema_v4(conn: sqlite3.Connection) -> None:
     duplicates = _fetchall(
@@ -936,6 +1012,11 @@ def _apply_schema_v12(conn: sqlite3.Connection) -> None:
             "INSERT INTO member_attack_positions(member_id,position,ordinal) VALUES(?,?,?)",
             [(int(member["id"]), position, ordinal) for ordinal, position in enumerate(positions)],
         )
+
+
+def _apply_schema_v13(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V13_STATEMENTS:
+        conn.execute(statement)
 
 
 def _v10_snapshot(value: dict[str, Any]) -> str:
@@ -1264,6 +1345,14 @@ def _record_schema_v12(conn: sqlite3.Connection, *, app_version: str, origin: st
         (12, MIGRATION_V12_NAME, MIGRATION_V12_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 12").close()
+
+
+def _record_schema_v13(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (13, MIGRATION_V13_NAME, MIGRATION_V13_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 13").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -1927,6 +2016,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 13:
+            required_v13 = set(V13_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela de hierarquia do elenco obrigatória ausente: {table}."
+                for table in sorted(required_v13 - tables)
+            )
+            for table, required_columns in V13_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas de hierarquia do elenco ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -2263,6 +2368,10 @@ class DatabaseMigrator:
                 _apply_schema_v12(conn)
                 _record_schema_v12(conn, app_version=app_version, origin=origin)
                 effective_version = 12
+            if effective_version >= 12 and effective_version < 13:
+                _apply_schema_v13(conn)
+                _record_schema_v13(conn, app_version=app_version, origin=origin)
+                effective_version = 13
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -2353,6 +2462,8 @@ class DatabaseMigrator:
                 _record_schema_v11(conn, app_version=app_version, origin=origin)
                 _apply_schema_v12(conn)
                 _record_schema_v12(conn, app_version=app_version, origin=origin)
+                _apply_schema_v13(conn)
+                _record_schema_v13(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

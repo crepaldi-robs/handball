@@ -44,7 +44,7 @@ def test_v12_backfills_recognized_attack_positions_and_creates_tactical_tables(t
         origin="pytest",
     )
 
-    assert status.current_version == 12
+    assert status.current_version == 13
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         positions = connection.execute(
@@ -52,6 +52,54 @@ def test_v12_backfills_recognized_attack_positions_and_creates_tactical_tables(t
         ).fetchall()
     assert {"member_attack_positions", "member_defensive_positions", "playbook_exercise_specs"} <= tables
     assert positions == [("PD",)]
+
+
+def test_v13_creates_roster_hierarchy_tables(tmp_path) -> None:
+    database_path = tmp_path / "v13.db"
+    repository = AttendanceRepository(database_path)
+    repository.bootstrap()
+
+    status = DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("admin", "test-password-hash"),
+        app_version="pytest-v13",
+        origin="pytest",
+    )
+
+    assert status.current_version == 13
+    assert status.pending_versions == ()
+    with sqlite3.connect(database_path) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        recorded = connection.execute(
+            "SELECT checksum_sha256 FROM schema_migrations WHERE version=13"
+        ).fetchone()
+    assert {
+        "rank_layers",
+        "member_layer_assignments",
+        "layer_position_refinements",
+        "rank_sessions",
+        "rank_comparisons",
+    } <= tables
+    assert {
+        "idx_rank_sessions_active_scope",
+        "idx_member_layer_assignments_layer",
+        "idx_rank_comparisons_session",
+        "idx_rank_comparisons_subject",
+    } <= indexes
+    assert recorded[0] == migrations.MIGRATION_V13_CHECKSUM
+
+    with sqlite3.connect(database_path) as connection:
+        now = "2026-08-07T12:00:00-03:00"
+        connection.execute(
+            "INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('LINE',0,?,?)",
+            (now, now),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('LINE',0,?,?)",
+                (now, now),
+            )
 
 
 def _make_v5_database(database_path) -> None:
@@ -186,7 +234,7 @@ def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.current_version == 12
+    assert result.current_version == 13
     assert result.pending_versions == ()
     assert verify_database(database_path)["ok"] is True
     with sqlite3.connect(database_path) as conn:
