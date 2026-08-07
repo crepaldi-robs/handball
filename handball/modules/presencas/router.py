@@ -239,6 +239,9 @@ def create_router(
     ) -> dict[str, Any]:
         return {"items": service.audit(limit=min(max(limit, 1), 1000))}
 
+    # Compatibilidade: o caminho canônico do elenco passou a ser
+    # /api/v1/elenco/members (módulo Gestão de Elenco). Estas rotas continuam
+    # atendendo consumidores antigos até serem removidas em um passo próprio.
     @router.get("/api/v1/members")
     def members(_: AccessContext = Depends(require_permission(Permission.MEMBERS_READ_TEAM))) -> dict[str, Any]:
         return {"items": service.members()}

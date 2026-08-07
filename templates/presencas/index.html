@@ -47,7 +47,7 @@
         <button class="nav-item" data-view="summary" type="button"><span>≡</span> Mensagem do grupo</button>
         <span class="nav-group-label">Time</span>
         <button class="nav-item online-only" data-view="history" type="button"><span>◷</span> Histórico</button>
-        <button class="nav-item online-only" data-view="roster" type="button"><span>♙</span> Elenco</button>
+        <a class="nav-item online-only" href="/app/elenco"><span>♙</span> Elenco</a>
         <button class="nav-item online-only" data-view="audit" type="button"><span>⌕</span> Auditoria</button>
       </nav>
       <div class="sidebar-footer">
@@ -155,31 +155,8 @@
         <ul id="history-cards" class="record-cards only-mobile" aria-label="Histórico"></ul>
       </section>
 
-      <section id="view-roster" class="view" aria-labelledby="roster-title">
-        <div class="page-heading"><div><span class="eyebrow">EQUIPE</span><h1 id="roster-title">Elenco</h1></div></div>
-        <div class="roster-grid">
-          <div class="panel table-wrap stacked-table"><table><thead><tr><th>Nome</th><th>Ataque</th><th>Defesa</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
-          <form id="member-form" class="panel stack-form compact-form">
-            <h2>Adicionar atleta</h2>
-            <label><span>Nome</span><input id="member-name" required maxlength="120"></label>
-            <fieldset id="member-attack-positions"><legend>Posições de ataque</legend><div class="inline-options">{% for position in ['GOL','PE','ME','C','MD','PD','PV'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ position }}</span></label>{% endfor %}</div></fieldset>
-            <fieldset id="member-defense-positions"><legend>Posições de defesa</legend><div class="inline-options">{% for position in ['M1','M2','M3','AVANCADO'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ 'Avançado' if position == 'AVANCADO' else position }}</span></label>{% endfor %}</div><p class="muted">Sem marcação defensiva: marcador genérico.</p></fieldset>
-            <button class="button button-primary" type="submit">Adicionar</button>
-          </form>
-          {% if 'player_accounts.manage' in session.permissions %}
-          <form id="player-account-form" class="panel stack-form compact-form" data-team-ids="{{ session.team_ids|join(',') }}">
-            <h2>Criar conta de jogador</h2>
-            {% if session.team_ids|length > 1 %}
-            <label><span>Time</span><select id="player-account-team">{% for team_id in session.team_ids %}<option value="{{ team_id }}">Time #{{ team_id }}</option>{% endfor %}</select></label>
-            {% endif %}
-            <label><span>Jogador disponível</span><select id="player-account-member"><option value="">Carregando…</option></select></label>
-            <label><span>Usuário</span><input id="player-account-username" maxlength="80"></label>
-            <label><span>Senha temporária</span><input id="player-account-password" type="password" autocomplete="new-password"></label>
-            <button class="button button-primary" type="submit">Criar conta</button>
-          </form>
-          {% endif %}
-        </div>
-      </section>
+      {# A gestão do elenco (cadastro, posições, camadas e métricas) mudou para
+         o módulo próprio em /app/elenco; a chamada mantém apenas o atalho. #}
 
       <section id="view-audit" class="view" aria-labelledby="audit-title">
         <div class="page-heading">
@@ -199,7 +176,7 @@
     <button class="active" data-view="call" type="button"><span>✓</span>Chamada</button>
     <button data-view="summary" type="button"><span>≡</span>Mensagem</button>
     <button class="online-only" data-view="history" type="button"><span>◷</span>Histórico</button>
-    <button class="online-only" data-view="roster" type="button"><span>♙</span>Elenco</button>
+    <a class="online-only" href="/app/elenco"><span>♙</span>Elenco</a>
     <button class="online-only" data-view="audit" type="button"><span>⌕</span>Auditoria</button>
   </nav>
 

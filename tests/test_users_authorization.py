@@ -995,12 +995,17 @@ def test_admin_usuarios_page_renders_teams_panel_and_team_select(tmp_path: Path)
 def test_ct_roster_page_renders_player_account_panel(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     login(client, "ct", data["passwords"]["ct"])
-    page = client.get("/app/presencas")
+    # O cadastro do elenco (e a criação de conta de jogador) migrou da chamada
+    # para o módulo Gestão de Elenco; a chamada mantém só o atalho.
+    page = client.get("/app/elenco")
     assert page.status_code == 200
     body = page.text
     assert 'id="player-account-form"' in body
     assert "Criar conta de jogador" in body
     assert 'id="player-account-member"' in body
+    attendance_page = client.get("/app/presencas")
+    assert attendance_page.status_code == 200
+    assert 'href="/app/elenco"' in attendance_page.text
 
 
 def test_player_roster_page_has_no_player_account_panel(tmp_path: Path) -> None:
