@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Handball">
+  <title>Gestão de Elenco · Hub Handebol</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+  <script src="/static/elenco.js" defer></script>
+</head>
+<body data-user-id="{{ session.user_id }}" data-team-id="{{ session.team_ids|list|first or 0 }}">
+  <header class="topbar">
+    <div class="topbar-inner">
+      {% set page_subtitle = "Gestão de Elenco · " ~ session.display_name ~ " · " ~ ((session.system_roles | list)|join(' + ')) %}
+      {% include "partials/_brand.html" %}
+      <div class="top-actions">
+        <a class="text-button hub-text-link" href="/app">Hub</a>
+        <form method="post" action="/logout" data-platform-logout>
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <button class="text-button logout-button" type="submit">Sair</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-layout">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <nav class="nav-list">
+        <a class="nav-item module-nav-link" href="/app"><span>⌂</span> Hub</a>
+        <span class="nav-group-label">Elenco</span>
+        <button class="nav-item active" data-view="elenco" type="button"><span>♙</span> Atletas</button>
+        <button class="nav-item" data-view="camadas" type="button"><span>▤</span> Camadas</button>
+        <button class="nav-item" data-view="ranquear" type="button"><span>⇅</span> Ranquear</button>
+        <button class="nav-item" data-view="metricas" type="button"><span>◷</span> Métricas</button>
+        <span class="nav-group-label">Treino</span>
+        <a class="nav-item" href="/app/presencas"><span>✓</span> Chamada</a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Servidor particular</span>
+        <strong>Fonte oficial dos dados</strong>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <div id="global-alert" class="alert hidden" role="status"></div>
+
+      <section id="view-elenco" class="view active" aria-labelledby="roster-title">
+        <div class="page-heading"><div><span class="eyebrow">EQUIPE</span><h1 id="roster-title">Elenco</h1></div></div>
+        <div class="roster-grid">
+          <div class="panel table-wrap stacked-table"><table><thead><tr><th>Nome</th><th>Camada</th><th>Ataque</th><th>Defesa</th><th>Ativo</th><th></th></tr></thead><tbody id="roster-body"></tbody></table></div>
+          <form id="member-form" class="panel stack-form compact-form">
+            <h2>Adicionar atleta</h2>
+            <label><span>Nome</span><input id="member-name" required maxlength="120"></label>
+            <fieldset id="member-attack-positions"><legend>Posições de ataque</legend><div class="inline-options">{% for position in ['GOL','PE','ME','C','MD','PD','PV'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ position }}</span></label>{% endfor %}</div></fieldset>
+            <fieldset id="member-defense-positions"><legend>Posições de defesa</legend><div class="inline-options">{% for position in ['M1','M2','M3','AVANCADO'] %}<label><input type="checkbox" value="{{ position }}"><span>{{ 'Avançado' if position == 'AVANCADO' else position }}</span></label>{% endfor %}</div><p class="muted">Sem marcação defensiva: marcador genérico.</p></fieldset>
+            <button class="button button-primary" type="submit">Adicionar</button>
+          </form>
+          {% if 'player_accounts.manage' in session.permissions %}
+          <form id="player-account-form" class="panel stack-form compact-form" data-team-ids="{{ session.team_ids|join(',') }}">
+            <h2>Criar conta de jogador</h2>
+            {% if session.team_ids|length > 1 %}
+            <label><span>Time</span><select id="player-account-team">{% for team_id in session.team_ids %}<option value="{{ team_id }}">Time #{{ team_id }}</option>{% endfor %}</select></label>
+            {% endif %}
+            <label><span>Jogador disponível</span><select id="player-account-member"><option value="">Carregando…</option></select></label>
+            <label><span>Usuário</span><input id="player-account-username" maxlength="80"></label>
+            <label><span>Senha temporária</span><input id="player-account-password" type="password" autocomplete="new-password"></label>
+            <button class="button button-primary" type="submit">Criar conta</button>
+          </form>
+          {% endif %}
+        </div>
+      </section>
+
+      <section id="view-camadas" class="view" aria-labelledby="layers-title">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">HIERARQUIA</span>
+            <h1 id="layers-title">Camadas de nível</h1>
+            <p class="muted">Camada mais alta = melhor. Todo atleta de uma camada é considerado melhor que todos das camadas abaixo; dentro da mesma camada não há ordem — só o refino por posição desempata.</p>
+          </div>
+        </div>
+        <div id="layers-unavailable" class="alert alert-warning hidden" role="alert">O banco ainda não recebeu a atualização de hierarquia do elenco. As camadas ficam disponíveis após a manutenção de banco (DB_MIGRATION).</div>
+        <div id="layers-board" class="roster-grid"></div>
+      </section>
+
+      <section id="view-ranquear" class="view" aria-labelledby="ranking-title">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">HIERARQUIA</span>
+            <h1 id="ranking-title">Ranquear atletas</h1>
+            <p class="muted">Responda quem é melhor entre dois atletas; o algoritmo posiciona cada um com o mínimo de perguntas.</p>
+          </div>
+        </div>
+        <div id="ranking-wizard" class="panel stack-form hidden" aria-live="polite">
+          <span class="eyebrow" id="ranking-scope-label">RANQUEANDO</span>
+          <h2 id="ranking-question">…</h2>
+          <p id="ranking-progress" class="muted"></p>
+          <div class="modal-actions">
+            <button id="ranking-answer-subject" class="button button-primary" type="button"></button>
+            <button id="ranking-answer-equal" class="button" type="button">Mesmo nível</button>
+            <button id="ranking-answer-reference" class="button button-primary" type="button"></button>
+          </div>
+          <button id="ranking-cancel" class="text-button" type="button">Cancelar este ranqueamento</button>
+        </div>
+        <div id="ranking-result" class="alert alert-success hidden" role="status"></div>
+        <div id="ranking-queues" class="roster-grid"></div>
+      </section>
+
+      <section id="view-metricas" class="view" aria-labelledby="metrics-title">
+        <div class="page-heading">
+          <div><span class="eyebrow">PRESENÇA</span><h1 id="metrics-title">Métricas do semestre</h1></div>
+          <div class="date-control">
+            <label for="metrics-semester"><span>Semestre</span></label>
+            <select id="metrics-semester"></select>
+          </div>
+        </div>
+        <div id="metrics-summary" class="metrics" aria-label="Resumo do semestre"></div>
+        <div id="metrics-groups" class="roster-grid"></div>
+        <div class="panel table-wrap stacked-table"><table><thead><tr><th>Atleta</th><th>Camada</th><th>Presenças</th><th>Chamadas</th><th>Taxa</th></tr></thead><tbody id="metrics-body"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Navegação móvel">
+    <button class="active" data-view="elenco" type="button"><span>♙</span>Atletas</button>
+    <button data-view="camadas" type="button"><span>▤</span>Camadas</button>
+    <button data-view="ranquear" type="button"><span>⇅</span>Ranquear</button>
+    <button data-view="metricas" type="button"><span>◷</span>Métricas</button>
+  </nav>
+</body>
+</html>

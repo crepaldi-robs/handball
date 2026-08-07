@@ -99,6 +99,27 @@ window.CoachReportPanel = (() => {
       teams.append(column);
     });
     wrap.append(teams);
+    const balance = option.layer_balance;
+    if (balance && balance.ranked_athletes) {
+      const row = el("div", "coach-coverage-row");
+      row.append(el("span", "coach-coverage-label", "Camadas"));
+      const labels = new Set();
+      ["A", "B"].forEach((team) => {
+        Object.keys((balance.teams[team] || {}).by_layer || {}).forEach((label) => labels.add(label));
+      });
+      const ordered = Array.from(labels).sort((a, b) => {
+        const numberOf = (label) => (label.startsWith("Camada ") ? Number(label.split(" ")[1]) : -1);
+        return numberOf(b) - numberOf(a);
+      });
+      ordered.forEach((label) => {
+        const counts = ["A", "B"].map((team) => ((balance.teams[team] || {}).by_layer || {})[label] || 0);
+        row.append(coverageChip(label, `${counts[0]}×${counts[1]}`, null));
+      });
+      wrap.append(row);
+      if (report.ranking_gaps && report.ranking_gaps.length) {
+        wrap.append(el("p", "muted coach-report-note", `Fora da hierarquia: ${report.ranking_gaps.map((item) => item.name).join(", ")}.`));
+      }
+    }
     return wrap;
   }
 

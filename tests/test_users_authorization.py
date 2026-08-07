@@ -163,7 +163,7 @@ def test_permission_matrix_is_typed_and_dev_does_not_imply_sport() -> None:
 def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> None:
     client, manager, data = make_v2(tmp_path)
     assert verify_database(manager.db_path)["ok"] is True
-    assert DatabaseMigrator(manager.db_path).status().current_version == 12
+    assert DatabaseMigrator(manager.db_path).status().current_version == 13
     assert [int(item["id"]) for item in manager.attendance_repository().list_members()] == data["before_ids"]
     with manager.read_only_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM player_user_links").fetchone()[0] == len(data["before_ids"])
@@ -171,7 +171,7 @@ def test_v2_migration_preserves_members_and_materializes_bob(tmp_path: Path) -> 
         roles = {row[0] for row in connection.execute("SELECT role_code FROM system_roles WHERE user_id=1")}
     assert bob is not None and PasswordHasher().verify(bob["password_hash"], "senha-bob")
     assert roles == {"DEV", "CT"}
-    assert client.get("/ready").json()["schema_version"] == 12
+    assert client.get("/ready").json()["schema_version"] == 13
 
 
 def test_logins_and_scoped_hub(tmp_path: Path) -> None:
@@ -995,12 +995,17 @@ def test_admin_usuarios_page_renders_teams_panel_and_team_select(tmp_path: Path)
 def test_ct_roster_page_renders_player_account_panel(tmp_path: Path) -> None:
     client, _, data = make_v2(tmp_path)
     login(client, "ct", data["passwords"]["ct"])
-    page = client.get("/app/presencas")
+    # O cadastro do elenco (e a criação de conta de jogador) migrou da chamada
+    # para o módulo Gestão de Elenco; a chamada mantém só o atalho.
+    page = client.get("/app/elenco")
     assert page.status_code == 200
     body = page.text
     assert 'id="player-account-form"' in body
     assert "Criar conta de jogador" in body
     assert 'id="player-account-member"' in body
+    attendance_page = client.get("/app/presencas")
+    assert attendance_page.status_code == 200
+    assert 'href="/app/elenco"' in attendance_page.text
 
 
 def test_player_roster_page_has_no_player_account_panel(tmp_path: Path) -> None:

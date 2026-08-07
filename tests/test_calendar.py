@@ -65,7 +65,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
 
     status = DatabaseMigrator(manager.db_path).status()
     verification = verify_database(manager.db_path)
-    assert status.current_version == 12
+    assert status.current_version == 13
     assert status.pending_versions == ()
     assert status.compatible is True
     assert verification["ok"] is True
@@ -120,7 +120,7 @@ def test_v4_migration_is_versioned_integral_and_keeps_open_season_dates(
         "calendar_event_transitions",
         "calendar_command_receipts",
     } <= tables
-    assert client.get("/ready").json()["schema_version"] == 12
+    assert client.get("/ready").json()["schema_version"] == 13
     assert data["before_ids"]
 
 

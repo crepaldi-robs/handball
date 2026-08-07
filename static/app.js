@@ -8,9 +8,6 @@ const athleteNameCollator = new Intl.Collator("pt-BR", {
   numeric: true,
   sensitivity: "base",
 });
-const ATTACK_POSITIONS = ["GOL", "PE", "ME", "C", "MD", "PD", "PV"];
-const DEFENSIVE_POSITIONS = ["M1", "M2", "M3", "AVANCADO"];
-
 const state = {
   csrf: "",
   username: "",
@@ -1033,7 +1030,6 @@ function setView(name) {
   if (!state.loadedViews.has(name)) {
     state.loadedViews.add(name);
     if (name === "history") loadHistory();
-    if (name === "roster") { loadRoster(); loadPlayerAccountOptions(); }
     if (name === "audit") loadAudit();
   }
 }
@@ -1093,118 +1089,8 @@ async function loadHistory() {
   } catch (error) { setAlert(error.message, "error", 0); }
 }
 
-async function loadRoster() {
-  try {
-    const data = await api("/api/v1/members");
-    const body = $("#roster-body");
-    // O Elenco não ganha uma segunda lista de cartões como Histórico e
-    // Auditoria: aqui cada linha tem campo editável e botão de salvar, e duas
-    // cópias do mesmo input seriam duas fontes de verdade. Em vez disso a
-    // própria tabela empilha no celular (.stacked-table + data-label), então
-    // as quatro colunas continuam existindo — só mudam de forma.
-    body.replaceChildren(...data.items.map((member) => {
-      const row = document.createElement("tr");
-      const name = document.createElement("td"); name.textContent = member.name; name.dataset.label = "Nome";
-      const positionCell = document.createElement("td"); positionCell.dataset.label = "Ataque";
-      const attackChecks = positionChecks(ATTACK_POSITIONS, member.attack_positions || []); positionCell.append(attackChecks);
-      const defenseCell = document.createElement("td"); defenseCell.dataset.label = "Defesa";
-      const defenseChecks = positionChecks(DEFENSIVE_POSITIONS, member.defensive_positions || []); defenseCell.append(defenseChecks);
-      const activeCell = document.createElement("td"); activeCell.dataset.label = "Ativo";
-      const active = document.createElement("input"); active.type = "checkbox"; active.checked = Boolean(member.active); activeCell.append(active);
-      const action = document.createElement("td"); action.dataset.label = "Ação";
-      const save = document.createElement("button"); save.type = "button"; save.className = "button"; save.textContent = "Salvar";
-      save.addEventListener("click", async () => {
-        try {
-          const attackPositions = checkedPositions(attackChecks);
-          const defensivePositions = checkedPositions(defenseChecks);
-          if (!attackPositions.length) throw new Error("Marque ao menos uma posição ofensiva.");
-          await api(`/api/v1/members/${member.id}`, { method: "PUT", body: JSON.stringify({
-            position: attackPositions.join("/"), attack_positions: attackPositions,
-            defensive_positions: defensivePositions, active: active.checked,
-          }) });
-          if (state.payload?.session?.id) await loadSession(state.payload.session.id);
-          setAlert(`${member.name} atualizado.`);
-        } catch (error) { setAlert(error.message, "error", 0); }
-      });
-      action.append(save); row.append(name, positionCell, defenseCell, activeCell, action); return row;
-    }));
-  } catch (error) { setAlert(error.message, "error", 0); }
-}
-
-function positionChecks(choices, selected) {
-  const wrapper = document.createElement("div");
-  wrapper.className = "inline-options roster-position-options";
-  const current = new Set(selected || []);
-  for (const value of choices) {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox"; input.value = value; input.checked = current.has(value);
-    label.append(input, document.createTextNode(` ${value === "AVANCADO" ? "Avançado" : value}`)); wrapper.append(label);
-  }
-  return wrapper;
-}
-
-function checkedPositions(root) {
-  return $$("input:checked", root).map((input) => input.value);
-}
-
-async function addMember(event) {
-  event.preventDefault();
-  try {
-    const attackPositions = $$("#member-attack-positions input:checked").map((input) => input.value);
-    const defensivePositions = $$("#member-defense-positions input:checked").map((input) => input.value);
-    if (!attackPositions.length) throw new Error("Marque ao menos uma posição ofensiva.");
-    await api("/api/v1/members", {
-      method: "POST",
-      body: JSON.stringify({ name: $("#member-name").value, position: attackPositions.join("/"), attack_positions: attackPositions, defensive_positions: defensivePositions }),
-    });
-    event.target.reset();
-    await loadRoster();
-    if (state.payload?.session?.id) await loadSession(state.payload.session.id);
-    setAlert("Atleta adicionado ao elenco.");
-  } catch (error) { setAlert(error.message, "error", 0); }
-}
-
-function playerAccountTeamId() {
-  const select = $("#player-account-team");
-  if (select) return Number(select.value) || null;
-  const ids = ($("#player-account-form")?.dataset.teamIds || "").split(",").map(Number).filter(Boolean);
-  return ids[0] || null;
-}
-
-async function loadPlayerAccountOptions() {
-  const memberSelect = $("#player-account-member");
-  if (!memberSelect) return;
-  const teamId = playerAccountTeamId();
-  if (!teamId) { memberSelect.innerHTML = '<option value="">Nenhum time vinculado</option>'; return; }
-  try {
-    const data = await api(`/api/v1/team/available-players?team_id=${teamId}`);
-    memberSelect.innerHTML = data.items.length
-      ? data.items.map((player) => `<option value="${player.id}">${escapeText(player.name)} · ${escapeText(player.position)}</option>`).join("")
-      : '<option value="">Nenhum jogador disponível neste time</option>';
-  } catch (error) { setAlert(error.message, "error", 0); }
-}
-
-async function createPlayerAccount(event) {
-  event.preventDefault();
-  const teamId = playerAccountTeamId();
-  const teamMemberId = Number($("#player-account-member").value) || null;
-  if (!teamId || !teamMemberId) { setAlert("Selecione um jogador disponível.", "error", 0); return; }
-  try {
-    await api("/api/v1/team/player-accounts", {
-      method: "POST",
-      body: JSON.stringify({
-        team_id: teamId,
-        team_member_id: teamMemberId,
-        username: $("#player-account-username").value,
-        temporary_password: $("#player-account-password").value,
-      }),
-    });
-    event.target.reset();
-    await loadPlayerAccountOptions();
-    setAlert("Conta de jogador criada.");
-  } catch (error) { setAlert(error.message, "error", 0); }
-}
+/* O cadastro do elenco (tabela, formulário e conta de jogador) migrou para o
+ * módulo Gestão de Elenco (/app/elenco, static/elenco.js). */
 
 async function loadAudit() {
   try {
@@ -1338,9 +1224,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#reading-sheet-playbook").addEventListener("click", () => {
     window.location.href = state.currentEventId ? `/app/playbook?event_id=${state.currentEventId}` : "/app/playbook";
   });
-  $("#member-form").addEventListener("submit", addMember);
-  $("#player-account-team")?.addEventListener("change", loadPlayerAccountOptions);
-  $("#player-account-form")?.addEventListener("submit", createPlayerAccount);
   window.addEventListener("online", () => handleConnectivity(true));
   window.addEventListener("offline", () => handleConnectivity(false));
   initialize();

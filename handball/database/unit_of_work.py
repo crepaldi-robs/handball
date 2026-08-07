@@ -19,6 +19,7 @@ class UnitOfWork:
         self._identity: Any | None = None
         self._calendar: Any | None = None
         self._playbook: Any | None = None
+        self._roster: Any | None = None
         self._sql_explorer: Any | None = None
         self._completed = False
 
@@ -90,6 +91,17 @@ class UnitOfWork:
         return self._playbook
 
     @property
+    def roster(self) -> Any:
+        if self._roster is None:
+            from .repositories.roster import RosterRepository
+
+            self._roster = RosterRepository(
+                self.connection,
+                read_only=self._read_only,
+            )
+        return self._roster
+
+    @property
     def sql_explorer(self) -> Any:
         if self._sql_explorer is None:
             from .repositories.sql_explorer import SqlExplorerRepository
@@ -134,6 +146,7 @@ class UnitOfWork:
             self._identity = None
             self._calendar = None
             self._playbook = None
+            self._roster = None
             self._sql_explorer = None
             self._connection.close()
             self._connection = None

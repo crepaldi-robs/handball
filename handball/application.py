@@ -24,6 +24,8 @@ from handball.modules.calendario.router import create_router as create_calendar_
 from handball.modules.calendario.service import CalendarService
 from handball.modules.consultas.router import create_router as create_sql_explorer_router
 from handball.modules.consultas.service import SqlExplorerService
+from handball.modules.elenco.router import create_router as create_roster_router
+from handball.modules.elenco.service import RosterService
 from handball.modules.estatisticas.router import (
     create_router as create_statistics_router,
 )
@@ -62,6 +64,7 @@ def create_app(
         database_manager,
     )
     statistics_service = StatisticsService()
+    roster_service = RosterService(unit_of_work_factory)
     calendar_service = CalendarService(unit_of_work_factory)
     playbook_service = PlaybookService(
         unit_of_work_factory,
@@ -157,6 +160,7 @@ def create_app(
     application.include_router(create_auth_router(settings, templates))
     application.include_router(create_hub_router(identity_service, templates))
     application.include_router(create_attendance_router(attendance_service, identity_service, templates))
+    application.include_router(create_roster_router(roster_service, identity_service, templates))
     application.include_router(create_statistics_router(statistics_service, identity_service, templates))
     application.include_router(create_calendar_router(calendar_service, identity_service, templates))
     application.include_router(create_playbook_router(playbook_service, identity_service, templates))

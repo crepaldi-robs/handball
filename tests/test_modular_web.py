@@ -58,6 +58,7 @@ def login(client: TestClient):
     (
         "/app",
         "/app/presencas",
+        "/app/elenco",
         "/app/estatisticas",
         "/app/calendario",
         "/app/playbook",
@@ -86,6 +87,7 @@ def test_hub_exposes_all_modules_as_keyboard_accessible_links(tmp_path):
     # hrefs abaixo ainda aparecerem sem mudança.
     assert '<h2 id="ct-queue-title"' in response.text
     assert 'href="/app/presencas"' in response.text
+    assert 'href="/app/elenco"' in response.text
     assert 'href="/app/estatisticas"' in response.text
     assert 'href="/app/calendario"' in response.text
     assert 'href="/app/playbook"' in response.text
@@ -126,6 +128,7 @@ def test_authenticated_skeletons_are_read_only_and_share_navigation(
     (
         "/app",
         "/app/presencas",
+        "/app/elenco",
         "/app/estatisticas",
         "/app/calendario",
         "/app/playbook",
@@ -172,7 +175,7 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v14"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v15"' in worker
     # A identidade visual só sobrevive offline se os tokens e as fontes
     # auto-hospedadas estiverem no shell — sem isso a chamada no ginásio sem
     # sinal cai no CSS do navegador.
@@ -182,6 +185,8 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     assert '"/static/fonts/barlow-condensed-700-latin.woff2"' in worker
     assert '["/app", "/app"]' in worker
     assert '["/app/presencas", "/app/presencas"]' in worker
+    assert '["/app/elenco", "/app/elenco"]' in worker
+    assert '"/static/elenco.js"' in worker
     assert '["/app/calendario", "/app/calendario"]' in worker
     assert '["/app/playbook", "/app/playbook"]' in worker
     assert '"/static/calendar.js"' in worker
