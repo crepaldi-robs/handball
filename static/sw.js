@@ -1,9 +1,10 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v14";
+const CACHE_NAME = "handball-shell-v15";
 const SHELL = [
   "/app",
   "/app/presencas",
+  "/app/elenco",
   "/app/playbook",
   "/static/styles.css",
   "/static/css/fonts.css",
@@ -19,6 +20,7 @@ const SHELL = [
   "/static/fonts/barlow-condensed-800-latin-ext.woff2",
   "/static/platform.js",
   "/static/app.js",
+  "/static/elenco.js",
   "/static/coach-report.js",
   "/static/hub-ct.js",
   "/static/player-attendance.js",
@@ -34,6 +36,7 @@ const CACHEABLE_PATHS = new Set(SHELL);
 const OFFLINE_NAVIGATIONS = new Map([
   ["/app", "/app"],
   ["/app/presencas", "/app/presencas"],
+  ["/app/elenco", "/app/elenco"],
   ["/app/calendario", "/app/calendario"],
   ["/app/playbook", "/app/playbook"],
 ]);
