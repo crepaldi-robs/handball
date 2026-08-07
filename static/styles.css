@@ -1305,6 +1305,10 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
   .only-mobile { display: block; }
   ul.only-mobile, .record-cards.only-mobile { display: grid; }
   .desktop-notice { display: block; }
+  /* .only-mobile: display:block sobrescreve o "dialog:not([open]) { display:
+     none }" nativo — sem isso, o sheet fica visível o tempo todo no celular
+     mesmo fechado, e o X não faz nada (dialog.close() é no-op sem [open]). */
+  dialog.only-mobile:not([open]) { display: none; }
 
   /* Variante para tabela com campo editável (Elenco): empilha a própria
      tabela em vez de duplicar a lista, para não existirem dois inputs
