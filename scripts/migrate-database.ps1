@@ -1,7 +1,10 @@
 param(
     [string]$InstallRoot = "C:\ProgramData\CrepaldiHandball",
     [switch]$Apply,
-    [string]$ExpectedPlanSha256 = ""
+    [string]$ExpectedPlanSha256 = "",
+    [switch]$OpenMaintenanceWindow,
+    [switch]$CloseMaintenanceWindow,
+    [string]$MaintenanceWindowToken = ""
 )
 
 Set-StrictMode -Version Latest
@@ -455,6 +458,47 @@ function Remove-OwnedMaintenanceMarker {
     }
 }
 
+function New-MaintenanceWindowMarker {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $token = [guid]::NewGuid().ToString("N")
+    $content = ([ordered]@{
+        format = 1
+        operation = "DB_MIGRATION_WINDOW"
+        token = $token
+        created_at_utc = [DateTime]::UtcNow.ToString("o")
+    } | ConvertTo-Json -Compress) + "`n"
+    try {
+        Write-DurableUtf8File -Path $Path -Content $content
+    }
+    catch {
+        throw "Modo de manutenção já existe ou não pôde ser criado: $Path"
+    }
+    return $token
+}
+
+function Remove-MaintenanceWindowMarker {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Token
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Marcador de manutenção desapareceu antes da liberação."
+    }
+    try {
+        $marker = Get-Content -Raw -LiteralPath $Path -Encoding UTF8 |
+            ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Marcador de manutenção foi alterado ou corrompido."
+    }
+    if ([string]$marker.token -cne $Token) {
+        throw "Marcador de manutenção pertence a outra operação."
+    }
+    Remove-Item -LiteralPath $Path -Force
+}
+
 function Assert-ScheduledTaskAction {
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -593,6 +637,37 @@ $GuardBackupPath = $null
 $CliBackupPath = $null
 $Release = $null
 try {
+    if ($OpenMaintenanceWindow -or $CloseMaintenanceWindow) {
+        if ($OpenMaintenanceWindow -and $CloseMaintenanceWindow) {
+            throw (
+                "-OpenMaintenanceWindow e -CloseMaintenanceWindow são " +
+                "mutuamente exclusivos."
+            )
+        }
+        if ($Apply) {
+            throw (
+                "-OpenMaintenanceWindow/-CloseMaintenanceWindow não podem " +
+                "ser combinados com -Apply."
+            )
+        }
+        $WindowInstallRoot = Resolve-ExactInstallRoot -Path $InstallRoot
+        $WindowMaintenanceFile = Join-Path $WindowInstallRoot "state\maintenance-mode"
+        if ($OpenMaintenanceWindow) {
+            $windowToken = New-MaintenanceWindowMarker -Path $WindowMaintenanceFile
+            [ordered]@{ format = 1; token = $windowToken } | ConvertTo-Json -Compress
+        }
+        else {
+            if ([string]::IsNullOrWhiteSpace($MaintenanceWindowToken)) {
+                throw "-CloseMaintenanceWindow exige -MaintenanceWindowToken."
+            }
+            Remove-MaintenanceWindowMarker `
+                -Path $WindowMaintenanceFile `
+                -Token $MaintenanceWindowToken
+            [ordered]@{ format = 1; closed = $true } | ConvertTo-Json -Compress
+        }
+        return
+    }
+
     # Ponteiro, configuração e paths são relidos somente sob exclusão mútua.
     $ResolvedInstallRoot = Resolve-ExactInstallRoot -Path $InstallRoot
     $Release = Resolve-ActiveRelease -InstallRoot $ResolvedInstallRoot

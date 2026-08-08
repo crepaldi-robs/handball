@@ -142,6 +142,41 @@ function Get-DatabaseMigrationPlan {
     return $plan
 }
 
+function Open-DatabaseMigrationMaintenanceWindow {
+    param(
+        [Parameter(Mandatory)][string]$MigrationScript,
+        [Parameter(Mandatory)][string]$InstallRoot
+    )
+
+    $output = @(& $MigrationScript -InstallRoot $InstallRoot -OpenMaintenanceWindow)
+    if ($output.Count -eq 0) {
+        throw "Abertura do modo de manutenção não retornou JSON."
+    }
+    $text = $output -join [Environment]::NewLine
+    try {
+        $result = $text | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Não foi possível interpretar a resposta do modo de manutenção: $text"
+    }
+    $token = [string]$result.token
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "Abertura do modo de manutenção não retornou token."
+    }
+    return $token
+}
+
+function Close-DatabaseMigrationMaintenanceWindow {
+    param(
+        [Parameter(Mandatory)][string]$MigrationScript,
+        [Parameter(Mandatory)][string]$InstallRoot,
+        [Parameter(Mandatory)][string]$Token
+    )
+
+    & $MigrationScript -InstallRoot $InstallRoot -CloseMaintenanceWindow -MaintenanceWindowToken $Token |
+        Out-Null
+}
+
 Assert-PowerShell7
 Assert-Administrator
 
@@ -190,17 +225,51 @@ try {
     & $UpdateScript -InstallRoot $InstallRoot
 
     if ($Modo -ceq "DB_MIGRATION") {
+        # [2/4] já reabriu o site na release nova. Sem isto, a leitura de
+        # fingerprint do guard estável e a do `database-plan` da release nova
+        # (ambas dentro do passo [3/4]) ficam sem proteção contra escritas
+        # reais concorrentes — foi exatamente essa corrida que derrubou o
+        # Assert-MigrationPlan numa tentativa anterior. Fechamos a janela
+        # aqui, de fora, delegando toda escrita em disco para
+        # migrate-database.ps1 (-OpenMaintenanceWindow/-CloseMaintenanceWindow),
+        # sem mexer na máquina de estados interna do -Apply.
+        $DbMigrationMaintenanceToken = Open-DatabaseMigrationMaintenanceWindow `
+            -MigrationScript $MigrationScript `
+            -InstallRoot $InstallRoot
+
         Write-Step `
             -Number 3 `
             -Total $TotalSteps `
             -Message "Gerando e validando o plano DB_MIGRATION sem escrita"
-        $plan = Get-DatabaseMigrationPlan `
-            -MigrationScript $MigrationScript `
-            -InstallRoot $InstallRoot
+        try {
+            $plan = Get-DatabaseMigrationPlan `
+                -MigrationScript $MigrationScript `
+                -InstallRoot $InstallRoot
+        }
+        catch {
+            $planFailure = $_
+            try {
+                Close-DatabaseMigrationMaintenanceWindow `
+                    -MigrationScript $MigrationScript `
+                    -InstallRoot $InstallRoot `
+                    -Token $DbMigrationMaintenanceToken
+            }
+            catch {
+                Write-Host (
+                    "Aviso: não foi possível liberar o modo de manutenção " +
+                    "após falha no planejamento: $($_.Exception.Message)"
+                ) -ForegroundColor Yellow
+            }
+            throw $planFailure
+        }
         $plan | ConvertTo-Json -Depth 10
 
         $action = [string]$plan.action
         if ($action -ceq "none") {
+            Close-DatabaseMigrationMaintenanceWindow `
+                -MigrationScript $MigrationScript `
+                -InstallRoot $InstallRoot `
+                -Token $DbMigrationMaintenanceToken
             Write-Host ""
             Write-Host (
                 "O banco já está no schema esperado; nenhuma escrita de " +
@@ -210,8 +279,21 @@ try {
         elseif ($action -in @("adopt-baseline", "migrate")) {
             $planSha256 = [string]$plan.plan_sha256
             if ($planSha256 -notmatch '^[0-9a-f]{64}$') {
+                Close-DatabaseMigrationMaintenanceWindow `
+                    -MigrationScript $MigrationScript `
+                    -InstallRoot $InstallRoot `
+                    -Token $DbMigrationMaintenanceToken
                 throw "O plano não contém um plan_sha256 válido."
             }
+
+            # Libera a janela para que migrate-database.ps1 -Apply crie e
+            # assuma o próprio marcador (ele recusa se já existir um). O
+            # site continua protegido: a partir daqui -Apply para o serviço
+            # e revalida o fingerprint antes de qualquer DDL.
+            Close-DatabaseMigrationMaintenanceWindow `
+                -MigrationScript $MigrationScript `
+                -InstallRoot $InstallRoot `
+                -Token $DbMigrationMaintenanceToken
 
             Write-Step `
                 -Number 4 `
@@ -223,6 +305,10 @@ try {
                 -ExpectedPlanSha256 $planSha256
         }
         else {
+            Close-DatabaseMigrationMaintenanceWindow `
+                -MigrationScript $MigrationScript `
+                -InstallRoot $InstallRoot `
+                -Token $DbMigrationMaintenanceToken
             throw (
                 "Migração não aplicável automaticamente: action '$action'. " +
                 "Nenhuma escrita de migração foi iniciada."
