@@ -14,7 +14,8 @@ GUARD_SCRIPT = PROJECT_ROOT / "handball" / "database" / "guard.py"
 BACKUP_SCRIPT = SCRIPTS_ROOT / "backup-server.ps1"
 RESET_SCRIPT = SCRIPTS_ROOT / "reset-password.ps1"
 MIGRATION_SCRIPT = SCRIPTS_ROOT / "migrate-database.ps1"
-POWERSHELL_SCRIPTS = (BACKUP_SCRIPT, RESET_SCRIPT, MIGRATION_SCRIPT)
+ORCHESTRATOR_SCRIPT = PROJECT_ROOT / "atualizar-aplicativo.ps1"
+POWERSHELL_SCRIPTS = (BACKUP_SCRIPT, RESET_SCRIPT, MIGRATION_SCRIPT, ORCHESTRATOR_SCRIPT)
 
 
 def _read(path: Path) -> str:
@@ -158,6 +159,79 @@ def test_migration_is_lock_first_explicit_backup_gated_and_fail_closed():
     assert "modo de manutenção já está ativo" in script
     assert script.count('"--expected-database-path", $DbPath') >= 4
     assert "Restart-ScheduledTask" not in script
+
+
+def test_migration_script_exposes_standalone_maintenance_window():
+    script = _read(MIGRATION_SCRIPT)
+
+    assert "[switch]$OpenMaintenanceWindow" in script
+    assert "[switch]$CloseMaintenanceWindow" in script
+    assert "[string]$MaintenanceWindowToken" in script
+    assert "function New-MaintenanceWindowMarker" in script
+    assert "function Remove-MaintenanceWindowMarker" in script
+    assert 'operation = "DB_MIGRATION_WINDOW"' in script
+    assert '"state\\maintenance-mode"' in script
+
+    # -OpenMaintenanceWindow/-CloseMaintenanceWindow são um modo à parte:
+    # nunca se combinam com -Apply e retornam antes de tocar em $Release.
+    branch = script.index("if ($OpenMaintenanceWindow -or $CloseMaintenanceWindow)")
+    mutual_exclusion = script.index("mutuamente exclusivos", branch)
+    apply_guard = script.index("não podem", mutual_exclusion)
+    early_return = script.index("return", apply_guard)
+    release_resolution = script.index(
+        "$Release = Resolve-ActiveRelease", early_return
+    )
+    assert branch < mutual_exclusion < apply_guard < early_return < release_resolution
+
+
+def test_orchestrator_closes_db_migration_planning_window():
+    script = _read(ORCHESTRATOR_SCRIPT)
+
+    update_step = script.index('& $UpdateScript -InstallRoot $InstallRoot')
+    window_opened = script.index(
+        "$DbMigrationMaintenanceToken = Open-DatabaseMigrationMaintenanceWindow",
+        update_step,
+    )
+    plan_try = script.index("try {", window_opened)
+    plan_step = script.index("$plan = Get-DatabaseMigrationPlan", plan_try)
+    assert update_step < window_opened < plan_try < plan_step
+    assert "-OpenMaintenanceWindow" in script
+    assert "-CloseMaintenanceWindow" in script
+    assert "-MaintenanceWindowToken $Token" in script
+
+    # Falha no planejamento (ex.: mismatch de fingerprint) libera o site em
+    # vez de deixá-lo preso em manutenção sem necessidade.
+    plan_catch = script.index("catch {", plan_step)
+    plan_cleanup = script.index(
+        "Close-DatabaseMigrationMaintenanceWindow", plan_catch
+    )
+    plan_rethrow = script.index("throw $planFailure", plan_cleanup)
+    assert plan_step < plan_catch < plan_cleanup < plan_rethrow
+
+    # As três saídas de [3/4] (none / adopt-baseline|migrate / blocked)
+    # liberam a janela antes de seguir.
+    none_branch = script.index('$action -ceq "none"', plan_rethrow)
+    none_cleanup = script.index(
+        "Close-DatabaseMigrationMaintenanceWindow", none_branch
+    )
+    assert none_branch < none_cleanup
+
+    apply_branch = script.index(
+        '$action -in @("adopt-baseline", "migrate")', none_cleanup
+    )
+    apply_cleanup = script.index(
+        "Close-DatabaseMigrationMaintenanceWindow", apply_branch
+    )
+    apply_invocation = script.index("-Apply `", apply_cleanup)
+    assert apply_branch < apply_cleanup < apply_invocation
+
+    blocked_cleanup = script.index(
+        "Close-DatabaseMigrationMaintenanceWindow", apply_invocation
+    )
+    blocked_throw = script.index(
+        "Migração não aplicável automaticamente", blocked_cleanup
+    )
+    assert apply_invocation < blocked_cleanup < blocked_throw
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 indisponível")
