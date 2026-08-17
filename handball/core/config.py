@@ -57,6 +57,11 @@ class AppSettings:
     # as requisições chegam do loopback: sem isto o limitador de login vira um
     # balde único global em vez de um balde por cliente.
     trusted_proxies: frozenset[str] = DEFAULT_TRUSTED_PROXIES
+    google_integration_enabled: bool = False
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_redirect_uri: str = ""
+    google_token_vault_root: Path | None = None
 
     @classmethod
     def load(cls, root_dir: Path) -> "AppSettings":
@@ -125,6 +130,30 @@ class AppSettings:
                 os.environ.get(
                     "ATTENDANCE_TRUSTED_PROXIES", data.get("trusted_proxies")
                 )
+            ),
+            google_integration_enabled=_as_bool(
+                os.environ.get(
+                    "GOOGLE_INTEGRATION_ENABLED",
+                    data.get("google_integration_enabled"),
+                ),
+                False,
+            ),
+            google_oauth_client_id=os.environ.get(
+                "GOOGLE_OAUTH_CLIENT_ID",
+                str(data.get("google_oauth_client_id") or ""),
+            ).strip(),
+            google_oauth_client_secret=os.environ.get(
+                "GOOGLE_OAUTH_CLIENT_SECRET",
+                str(data.get("google_oauth_client_secret") or ""),
+            ).strip(),
+            google_oauth_redirect_uri=os.environ.get(
+                "GOOGLE_OAUTH_REDIRECT_URI",
+                str(data.get("google_oauth_redirect_uri") or ""),
+            ).strip(),
+            google_token_vault_root=(
+                Path(os.environ["GOOGLE_TOKEN_VAULT_ROOT"])
+                if os.environ.get("GOOGLE_TOKEN_VAULT_ROOT")
+                else config_path.parent / "google-secrets"
             ),
         )
 

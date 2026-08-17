@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v16";
+const CACHE_NAME = "handball-shell-v17";
 const SHELL = [
   "/app",
   "/app/presencas",
@@ -27,6 +27,7 @@ const SHELL = [
   "/static/calendar.js",
   "/static/playbook.js",
   "/static/playbook-player.js",
+  "/static/google-integration.js",
   "/static/hm-ime-logo.jpg",
   "/static/manifest.webmanifest",
   "/static/icon-192.png",

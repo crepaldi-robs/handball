@@ -373,6 +373,10 @@ def test_metrics_aggregate_semester_by_layer_and_starters(tmp_path: Path) -> Non
 def _strip_v13(database_path: Path) -> None:
     with sqlite3.connect(database_path) as conn:
         for table in (
+            "integration_outbox",
+            "google_calendar_event_links",
+            "google_calendar_settings",
+            "google_connections",
             "rank_comparisons",
             "rank_sessions",
             "layer_position_refinements",
@@ -380,7 +384,7 @@ def _strip_v13(database_path: Path) -> None:
             "rank_layers",
         ):
             conn.execute(f"DROP TABLE {table}")
-        conn.execute("DELETE FROM schema_migrations WHERE version=13")
+        conn.execute("DELETE FROM schema_migrations WHERE version>=13")
         conn.execute("PRAGMA user_version = 12")
 
 

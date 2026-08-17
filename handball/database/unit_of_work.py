@@ -21,6 +21,7 @@ class UnitOfWork:
         self._playbook: Any | None = None
         self._roster: Any | None = None
         self._sql_explorer: Any | None = None
+        self._integrations: Any | None = None
         self._completed = False
 
     def __enter__(self) -> UnitOfWork:
@@ -109,6 +110,17 @@ class UnitOfWork:
             self._sql_explorer = SqlExplorerRepository(self.connection)
         return self._sql_explorer
 
+    @property
+    def integrations(self) -> Any:
+        if self._integrations is None:
+            from .repositories.integrations import IntegrationRepository
+
+            self._integrations = IntegrationRepository(
+                self.connection,
+                read_only=self._read_only,
+            )
+        return self._integrations
+
     def commit(self) -> None:
         if self._read_only:
             raise RuntimeError("Unidade de trabalho somente leitura não faz commit.")
@@ -148,6 +160,7 @@ class UnitOfWork:
             self._playbook = None
             self._roster = None
             self._sql_explorer = None
+            self._integrations = None
             self._connection.close()
             self._connection = None
         return False

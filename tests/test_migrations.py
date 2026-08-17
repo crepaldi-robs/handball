@@ -44,7 +44,7 @@ def test_v12_backfills_recognized_attack_positions_and_creates_tactical_tables(t
         origin="pytest",
     )
 
-    assert status.current_version == 13
+    assert status.current_version == 14
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         positions = connection.execute(
@@ -66,7 +66,7 @@ def test_v13_creates_roster_hierarchy_tables(tmp_path) -> None:
         origin="pytest",
     )
 
-    assert status.current_version == 13
+    assert status.current_version == 14
     assert status.pending_versions == ()
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -100,6 +100,53 @@ def test_v13_creates_roster_hierarchy_tables(tmp_path) -> None:
                 "INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('LINE',0,?,?)",
                 (now, now),
             )
+
+
+def test_v14_creates_google_integration_without_storing_tokens(tmp_path) -> None:
+    database_path = tmp_path / "v14.db"
+    repository = AttendanceRepository(database_path)
+    repository.bootstrap()
+
+    status = DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("admin", "test-password-hash"),
+        app_version="pytest-v14",
+        origin="pytest",
+    )
+
+    assert status.current_version == 14
+    assert status.pending_versions == ()
+    with sqlite3.connect(database_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        recorded = connection.execute(
+            "SELECT name,checksum_sha256 FROM schema_migrations WHERE version=14"
+        ).fetchone()
+        connection_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(google_connections)")
+        }
+        outbox_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='integration_outbox'"
+        ).fetchone()[0]
+    assert {
+        "google_connections",
+        "google_calendar_settings",
+        "google_calendar_event_links",
+        "integration_outbox",
+    } <= tables
+    assert tuple(recorded) == (
+        migrations.MIGRATION_V14_NAME,
+        migrations.MIGRATION_V14_CHECKSUM,
+    )
+    assert "credential_ref" in connection_columns
+    assert {"access_token", "refresh_token", "client_secret"}.isdisjoint(
+        connection_columns
+    )
+    assert "DELETE_EVENT" in outbox_sql
 
 
 def _make_v5_database(database_path) -> None:
@@ -234,7 +281,7 @@ def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.current_version == 13
+    assert result.current_version == 14
     assert result.pending_versions == ()
     assert verify_database(database_path)["ok"] is True
     with sqlite3.connect(database_path) as conn:

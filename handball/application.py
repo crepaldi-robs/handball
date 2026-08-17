@@ -20,6 +20,7 @@ from handball.core.auth import AuthManager, create_auth_router, session_from_req
 from handball.core.config import AppSettings
 from handball.core.security import install_security_middleware
 from handball.database import DatabaseManager, UnitOfWorkFactory
+from handball.integrations.google import FileTokenVault
 from handball.modules.calendario.router import create_router as create_calendar_router
 from handball.modules.calendario.service import CalendarService
 from handball.modules.consultas.router import create_router as create_sql_explorer_router
@@ -31,6 +32,8 @@ from handball.modules.estatisticas.router import (
 )
 from handball.modules.estatisticas.service import StatisticsService
 from handball.modules.hub.router import create_router as create_hub_router
+from handball.modules.integracoes.router import create_router as create_google_integration_router
+from handball.modules.integracoes.service import GoogleIntegrationService
 from handball.modules.playbook.router import create_router as create_playbook_router
 from handball.modules.playbook.service import PlaybookService
 from handball.modules.presencas.router import create_router as create_attendance_router
@@ -65,7 +68,18 @@ def create_app(
     )
     statistics_service = StatisticsService()
     roster_service = RosterService(unit_of_work_factory)
-    calendar_service = CalendarService(unit_of_work_factory)
+    google_integration_service = GoogleIntegrationService(
+        unit_of_work_factory,
+        settings,
+        FileTokenVault(
+            settings.google_token_vault_root or settings.config_path.parent / "google-secrets",
+            entropy=settings.secret_key,
+        ),
+    )
+    calendar_service = CalendarService(
+        unit_of_work_factory,
+        integration_sync_request=google_integration_service.request_sync,
+    )
     playbook_service = PlaybookService(
         unit_of_work_factory,
         settings.playbook_media_root or settings.config_path.parent / "playbook-media",
@@ -83,8 +97,10 @@ def create_app(
     application.state.database_manager = database_manager
     application.state.auth = auth_manager
     application.state.attendance_service = attendance_service
+    application.state.calendar_service = calendar_service
     application.state.identity_service = identity_service
     application.state.playbook_service = playbook_service
+    application.state.google_integration_service = google_integration_service
     application.mount(
         "/static",
         StaticFiles(directory=ROOT_DIR / "static"),
@@ -163,6 +179,14 @@ def create_app(
     application.include_router(create_roster_router(roster_service, identity_service, templates))
     application.include_router(create_statistics_router(statistics_service, identity_service, templates))
     application.include_router(create_calendar_router(calendar_service, identity_service, templates))
+    application.include_router(
+        create_google_integration_router(
+            google_integration_service,
+            identity_service,
+            templates,
+            settings,
+        )
+    )
     application.include_router(create_playbook_router(playbook_service, identity_service, templates))
     application.include_router(create_sql_explorer_router(sql_explorer_service, identity_service, templates))
     application.include_router(create_users_router(identity_service, templates))

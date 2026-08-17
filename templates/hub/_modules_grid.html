@@ -55,6 +55,16 @@
     <span class="module-card-action" aria-hidden="true">Abrir módulo <b>→</b></span>
   </a>{% endif %}
 
+  {% if can_google_integration %}<a class="module-card module-card-available" href="/app/integracoes/google">
+    <span class="module-icon" aria-hidden="true">G</span>
+    <span class="module-status module-status-available">CT</span>
+    <span class="module-card-copy">
+      <strong>Integração Google</strong>
+      <span>Conta oficial, agenda compartilhada, sincronização e ajuda guiada.</span>
+    </span>
+    <span class="module-card-action" aria-hidden="true">Configurar <b>→</b></span>
+  </a>{% endif %}
+
   {% if can_attendance %}<a class="module-card" href="/app/estatisticas">
     <span class="module-icon" aria-hidden="true">↗</span>
     <span class="module-status">Em preparação</span>

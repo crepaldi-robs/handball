@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <title>Integração Google · {{ organization.display_name }}</title>
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/platform.js" defer></script>
+  <script src="/static/google-integration.js" defer></script>
+</head>
+<body
+  class="platform-body google-integration"
+  data-google-integration
+  data-csrf-token="{{ session.csrf_token }}"
+  data-team-id="{{ selected_team_id or '' }}"
+>
+  <header class="calendar-appbar">
+    <a class="calendar-team-brand" href="/app" aria-label="Voltar ao Hub Handebol">
+      <span class="calendar-brand-mark{% if team_theme.logo_url %} has-image{% endif %}" aria-hidden="true">{{ team_theme.monogram }}</span>
+      <span><strong>{{ organization.display_name }}</strong><small>Integração Google</small></span>
+    </a>
+    <div class="calendar-appbar-actions">
+      <button class="calendar-soft-button" type="button" data-help="overview">? Ajuda</button>
+      <a class="calendar-icon-button" href="/app" aria-label="Abrir o Hub">⌂</a>
+    </div>
+  </header>
+
+  <main class="google-workspace">
+    <section class="google-hero" aria-labelledby="google-title">
+      <div>
+        <span class="calendar-kicker">CENTRAL DE CONTROLE</span>
+        <h1 id="google-title">Google do time, sem complicação</h1>
+        <p>Conecte o único Gmail oficial do time e escolha exatamente o que vai para a agenda pública.</p>
+      </div>
+      <div class="google-status-card" aria-live="polite">
+        <span id="google-status-dot" class="google-status-dot"></span>
+        <div><small>ESTADO DA CONEXÃO</small><strong id="google-status-label">Carregando…</strong><span id="google-status-detail">Consultando a configuração.</span></div>
+      </div>
+    </section>
+
+    <div id="google-message" class="calendar-toast" role="status" aria-live="polite" hidden></div>
+
+    <section id="google-prerequisite" class="google-warning" hidden>
+      <strong>A integração ainda não foi liberada neste servidor.</strong>
+      <p id="google-prerequisite-copy">A CT não precisa configurar nada técnico. O responsável pela plataforma fará essa preparação uma única vez.</p>
+      <button type="button" data-help="platform">O que isso significa?</button>
+    </section>
+
+    <section class="google-control-grid" aria-label="Controles da integração">
+      <article class="google-panel google-panel-account">
+        <header>
+          <div><span class="google-step-number">1</span><h2>Conta oficial do time</h2></div>
+          <button class="google-help-button" type="button" data-help="account" aria-label="Ajuda sobre a conta Google">?</button>
+        </header>
+        <p>Use somente o Gmail compartilhado pela comissão técnica. Contas pessoais não devem ser conectadas.</p>
+        <dl class="google-facts">
+          <div><dt>Time</dt><dd id="google-team-name">{{ organization.display_name }}</dd></div>
+          <div><dt>Conta conectada</dt><dd id="google-account-email">Nenhuma</dd></div>
+          <div><dt>Última mudança</dt><dd id="google-connected-at">—</dd></div>
+        </dl>
+        <button id="google-connect" class="calendar-primary-action" type="button">Conectar Gmail do time</button>
+      </article>
+
+      <article class="google-panel google-panel-calendar">
+        <header>
+          <div><span class="google-step-number">2</span><h2>Agenda compartilhada</h2></div>
+          <button class="google-help-button" type="button" data-help="calendar" aria-label="Ajuda sobre a agenda compartilhada">?</button>
+        </header>
+        <p>O Handball cria e atualiza uma agenda própria. A agenda pessoal do Gmail não é lida nem alterada.</p>
+        <dl class="google-facts">
+          <div><dt>Agenda</dt><dd id="google-calendar-name">Ainda não criada</dd></div>
+          <div><dt>Visibilidade</dt><dd id="google-calendar-visibility">—</dd></div>
+          <div><dt>Última sincronização</dt><dd id="google-last-sync">—</dd></div>
+        </dl>
+        <div class="google-action-row">
+          <button id="google-setup-calendar" class="calendar-primary-action" type="button" disabled>Criar agenda pública</button>
+          <a id="google-open-calendar" class="calendar-soft-button" href="#" target="_blank" rel="noopener noreferrer" hidden>Abrir agenda</a>
+        </div>
+      </article>
+
+      <article class="google-panel google-panel-rules">
+        <header>
+          <div><span class="google-step-number">3</span><h2>O que será publicado</h2></div>
+          <button class="google-help-button" type="button" data-help="publishing" aria-label="Ajuda sobre os dados publicados">?</button>
+        </header>
+        <p>Marque os tipos de compromisso que devem aparecer na agenda pública.</p>
+        <form id="google-settings-form">
+          <label class="google-toggle"><input id="google-publish-trainings" type="checkbox" checked><span><strong>Treinos</strong><small>Data, horário, local e situação.</small></span><button type="button" data-help="trainings" aria-label="Ajuda sobre treinos">?</button></label>
+          <label class="google-toggle"><input id="google-publish-games" type="checkbox" checked><span><strong>Jogos</strong><small>Inclui adversário quando informado.</small></span><button type="button" data-help="games" aria-label="Ajuda sobre jogos">?</button></label>
+          <label class="google-toggle"><input id="google-publish-championships" type="checkbox" checked><span><strong>Campeonatos</strong><small>Marcos da temporada cadastrados no calendário.</small></span><button type="button" data-help="championships" aria-label="Ajuda sobre campeonatos">?</button></label>
+          <button id="google-save-settings" class="calendar-primary-action" type="submit" disabled>Salvar escolhas</button>
+        </form>
+      </article>
+
+      <article class="google-panel google-panel-sync">
+        <header>
+          <div><span class="google-step-number">4</span><h2>Sincronização</h2></div>
+          <button class="google-help-button" type="button" data-help="sync" aria-label="Ajuda sobre sincronização">?</button>
+        </header>
+        <p>Alterações no Calendário do Handball são enviadas automaticamente. Use o botão abaixo para conferir tudo agora.</p>
+        <div class="google-sync-state"><span id="google-sync-indicator"></span><strong id="google-sync-label">Aguardando conexão</strong></div>
+        <button id="google-sync-now" class="calendar-primary-action" type="button" disabled>Sincronizar agora</button>
+      </article>
+    </section>
+
+    <section class="google-privacy-panel" aria-labelledby="google-privacy-title">
+      <div>
+        <span class="calendar-kicker">PRIVACIDADE SIMPLES</span>
+        <h2 id="google-privacy-title">O que nunca sai do sistema</h2>
+      </div>
+      <ul id="google-never-public"><li>Notas internas</li><li>Nomes, presenças e justificativas dos atletas</li><li>Conteúdo do Playbook</li></ul>
+      <a href="/privacy/google-integration" target="_blank" rel="noopener">Ler a explicação completa</a>
+    </section>
+
+    <section class="google-danger-panel" aria-labelledby="google-control-title">
+      <div><h2 id="google-control-title">Pausar ou desconectar</h2><p>Pausar mantém tudo guardado. Desconectar torna a agenda privada, remove a autorização e preserva os eventos já criados.</p></div>
+      <div class="google-action-row">
+        <button id="google-pause" class="calendar-soft-button" type="button" disabled>Pausar envio</button>
+        <button id="google-resume" class="calendar-soft-button" type="button" hidden>Retomar envio</button>
+        <button id="google-disconnect" class="google-danger-button" type="button" disabled>Desconectar Google</button>
+        <button class="google-help-button" type="button" data-help="disconnect" aria-label="Ajuda para desconectar">?</button>
+      </div>
+    </section>
+
+    <section class="google-future-panel" aria-label="Próximas integrações">
+      <span class="calendar-kicker">PRÓXIMAS ETAPAS</span>
+      <h2>Drive e Planilhas</h2>
+      <p>O centro já está preparado para receber arquivos e planilhas depois. Essas funções permanecem desligadas até terem regras próprias de acesso e privacidade.</p>
+    </section>
+  </main>
+
+  <dialog id="google-help-dialog" class="google-dialog">
+    <form method="dialog"><button class="google-dialog-close" aria-label="Fechar ajuda">×</button></form>
+    <span class="calendar-kicker">AJUDA DESTA ETAPA</span>
+    <h2 id="google-help-title">Ajuda</h2>
+    <div id="google-help-body"></div>
+    <form method="dialog"><button class="calendar-primary-action">Entendi</button></form>
+  </dialog>
+
+  <dialog id="google-wizard-dialog" class="google-dialog google-wizard-dialog">
+    <div class="google-wizard-progress" aria-label="Progresso"><span id="google-wizard-progress"></span></div>
+    <span id="google-wizard-kicker" class="calendar-kicker">PASSO 1 DE 4</span>
+    <h2 id="google-wizard-title">Vamos conectar o Gmail do time</h2>
+    <div id="google-wizard-body"></div>
+    <div class="google-action-row">
+      <button id="google-wizard-back" class="calendar-soft-button" type="button">Voltar</button>
+      <button id="google-wizard-next" class="calendar-primary-action" type="button">Continuar</button>
+    </div>
+  </dialog>
+
+  <dialog id="google-confirm-dialog" class="google-dialog">
+    <span class="calendar-kicker">CONFIRMAÇÃO DE SEGURANÇA</span>
+    <h2>Desconectar o Google?</h2>
+    <p>Primeiro deixaremos a agenda privada. Depois removeremos a autorização do Handball. Os eventos existentes não serão apagados.</p>
+    <label class="google-confirm-check"><input id="google-private-confirm" type="checkbox"> Entendi que a agenda ficará privada.</label>
+    <div class="google-action-row">
+      <form method="dialog"><button class="calendar-soft-button">Cancelar</button></form>
+      <button id="google-confirm-disconnect" class="google-danger-button" type="button" disabled>Sim, desconectar</button>
+    </div>
+  </dialog>
+</body>
+</html>

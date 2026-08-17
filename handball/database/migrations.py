@@ -13,9 +13,9 @@ from handball.core.positions import parse_attack_positions
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 14
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 13
+MAX_SUPPORTED_SCHEMA_VERSION = 14
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -720,6 +720,41 @@ MIGRATION_V13_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[13] = (MIGRATION_V13_NAME, MIGRATION_V13_CHECKSUM)
 
+
+SCHEMA_V14_STATEMENTS = (
+    "CREATE TABLE google_connections (id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER NOT NULL UNIQUE, connection_uuid TEXT NOT NULL UNIQUE, google_subject TEXT NOT NULL, account_email TEXT NOT NULL COLLATE NOCASE, granted_scopes_json TEXT NOT NULL DEFAULT '[]', credential_ref TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'CONNECTED' CHECK(status IN('CONNECTED','PAUSED','REAUTH_REQUIRED','DISCONNECTED')), version INTEGER NOT NULL DEFAULT 1 CHECK(version>=1), connected_by_user_id INTEGER NOT NULL, connected_at TEXT NOT NULL, last_verified_at TEXT, disconnected_at TEXT, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT, FOREIGN KEY(connected_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE google_calendar_settings (connection_id INTEGER PRIMARY KEY, calendar_id TEXT UNIQUE, calendar_name TEXT NOT NULL DEFAULT '', public_url TEXT NOT NULL DEFAULT '', is_public INTEGER NOT NULL DEFAULT 0 CHECK(is_public IN(0,1)), auto_sync INTEGER NOT NULL DEFAULT 1 CHECK(auto_sync IN(0,1)), publish_trainings INTEGER NOT NULL DEFAULT 1 CHECK(publish_trainings IN(0,1)), publish_games INTEGER NOT NULL DEFAULT 1 CHECK(publish_games IN(0,1)), publish_championships INTEGER NOT NULL DEFAULT 1 CHECK(publish_championships IN(0,1)), last_sync_at TEXT, last_sync_status TEXT NOT NULL DEFAULT 'NEVER' CHECK(last_sync_status IN('NEVER','PENDING','RUNNING','OK','ERROR')), last_error_code TEXT, last_error_message TEXT, updated_by_user_id INTEGER NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(connection_id) REFERENCES google_connections(id) ON DELETE CASCADE, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE google_calendar_event_links (calendar_event_id INTEGER PRIMARY KEY, connection_id INTEGER NOT NULL, google_event_id TEXT NOT NULL, google_etag TEXT, last_local_version INTEGER NOT NULL DEFAULT 1 CHECK(last_local_version>=1), last_synced_at TEXT NOT NULL, UNIQUE(connection_id,google_event_id), FOREIGN KEY(calendar_event_id) REFERENCES calendar_events(id) ON DELETE CASCADE, FOREIGN KEY(connection_id) REFERENCES google_connections(id) ON DELETE CASCADE)",
+    "CREATE TABLE integration_outbox (operation_id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK(provider='GOOGLE'), team_id INTEGER NOT NULL, aggregate_type TEXT NOT NULL CHECK(aggregate_type IN('CALENDAR_EVENT','CALENDAR')), aggregate_id INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN('UPSERT_EVENT','DELETE_EVENT','RECONCILE_CALENDAR','MAKE_PRIVATE')), desired_version INTEGER NOT NULL DEFAULT 1 CHECK(desired_version>=1), status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN('PENDING','PROCESSING','SUCCEEDED','FAILED')), attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0), available_at TEXT NOT NULL, last_error_code TEXT, last_error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_google_connections_status ON google_connections(status,team_id)",
+    "CREATE INDEX idx_google_calendar_links_connection ON google_calendar_event_links(connection_id,calendar_event_id)",
+    "CREATE INDEX idx_integration_outbox_ready ON integration_outbox(provider,status,available_at,created_at)",
+    "CREATE INDEX idx_integration_outbox_team ON integration_outbox(team_id,aggregate_type,aggregate_id,created_at)",
+)
+MIGRATION_V14_NAME = "google_calendar_team_integration"
+MIGRATION_V14_CHECKSUM = _migration_checksum(
+    14,
+    MIGRATION_V14_NAME,
+    SCHEMA_V14_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "tenant_boundary": "one-google-connection-per-team",
+        "calendar_authority": "handball-to-google",
+        "public_fields": [
+            "event_type",
+            "title",
+            "starts_at",
+            "ends_at",
+            "location",
+            "opponent",
+            "status",
+        ],
+        "credentials": "opaque-reference-only",
+        "delivery": "transactional-outbox",
+    },
+)
+KNOWN_MIGRATIONS[14] = (MIGRATION_V14_NAME, MIGRATION_V14_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -913,6 +948,30 @@ V13_REQUIRED_COLUMNS = {
     },
 }
 
+V14_REQUIRED_COLUMNS = {
+    "google_connections": {
+        "id", "team_id", "connection_uuid", "google_subject", "account_email",
+        "granted_scopes_json", "credential_ref", "status", "version",
+        "connected_by_user_id", "connected_at", "last_verified_at",
+        "disconnected_at", "updated_at",
+    },
+    "google_calendar_settings": {
+        "connection_id", "calendar_id", "calendar_name", "public_url",
+        "is_public", "auto_sync", "publish_trainings", "publish_games",
+        "publish_championships", "last_sync_at", "last_sync_status",
+        "last_error_code", "last_error_message", "updated_by_user_id", "updated_at",
+    },
+    "google_calendar_event_links": {
+        "calendar_event_id", "connection_id", "google_event_id", "google_etag",
+        "last_local_version", "last_synced_at",
+    },
+    "integration_outbox": {
+        "operation_id", "provider", "team_id", "aggregate_type", "aggregate_id",
+        "action", "desired_version", "status", "attempts", "available_at",
+        "last_error_code", "last_error_message", "created_at", "updated_at",
+    },
+}
+
 
 def _apply_schema_v4(conn: sqlite3.Connection) -> None:
     duplicates = _fetchall(
@@ -1016,6 +1075,11 @@ def _apply_schema_v12(conn: sqlite3.Connection) -> None:
 
 def _apply_schema_v13(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_V13_STATEMENTS:
+        conn.execute(statement)
+
+
+def _apply_schema_v14(conn: sqlite3.Connection) -> None:
+    for statement in SCHEMA_V14_STATEMENTS:
         conn.execute(statement)
 
 
@@ -1353,6 +1417,14 @@ def _record_schema_v13(conn: sqlite3.Connection, *, app_version: str, origin: st
         (13, MIGRATION_V13_NAME, MIGRATION_V13_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 13").close()
+
+
+def _record_schema_v14(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (14, MIGRATION_V14_NAME, MIGRATION_V14_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 14").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -2032,6 +2104,22 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 14:
+            required_v14 = set(V14_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela de integração Google obrigatória ausente: {table}."
+                for table in sorted(required_v14 - tables)
+            )
+            for table, required_columns in V14_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas de integração Google ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -2372,6 +2460,10 @@ class DatabaseMigrator:
                 _apply_schema_v13(conn)
                 _record_schema_v13(conn, app_version=app_version, origin=origin)
                 effective_version = 13
+            if effective_version >= 13 and effective_version < 14:
+                _apply_schema_v14(conn)
+                _record_schema_v14(conn, app_version=app_version, origin=origin)
+                effective_version = 14
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -2464,6 +2556,8 @@ class DatabaseMigrator:
                 _record_schema_v12(conn, app_version=app_version, origin=origin)
                 _apply_schema_v13(conn)
                 _record_schema_v13(conn, app_version=app_version, origin=origin)
+                _apply_schema_v14(conn)
+                _record_schema_v14(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

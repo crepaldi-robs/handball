@@ -53,6 +53,12 @@ Princípios:
    uma migração completa.
 9. [ ] Implementar a Trilha 3 (seção 9): separar elenco, chamada e presença por
    time — `DB_MIGRATION` própria, autorizada e executada à parte.
+10. [-] Implementar IG-0 a IG-8 da Integração Google Calendar-first (seção
+    10.1). A ativação da `DB_MIGRATION`, a configuração do projeto Google de
+    produção e a validação com a conta real são etapas separadas (IG-9).
+11. [ ] Discutir os demais itens da Trilha 4 (seções 10.2 a 10.5): gestão de
+    elenco, design system e experiência do Playbook. A discussão não autoriza
+    implementação nem alteração de esquema.
 
 ## 3. Jornada real do CT já identificada
 
@@ -852,3 +858,110 @@ agente).
 - a ativação em produção é um passo humano explícito, registrado
   separadamente da entrega de código, como já ocorre com a migração v8 do
   Playbook (seção 2, item 5).
+
+## 10. Trilha 4 — Itens para discussão e especificação
+
+Os itens ainda não decididos permanecem como descoberta. A Integração Google
+Calendar-first foi especificada em 17/08/2026 e entrou em implementação, sem
+autorizar por si só configuração externa, migração persistente ou publicação.
+
+### 10.1 Integração Google do time
+
+**Estado:** [-] Em implementação. Cada time possui uma conexão independente com
+um único Gmail institucional. A CT realiza somente o consentimento guiado; o
+cliente OAuth técnico é preparado uma vez pelo mantenedor.
+
+**Decisões fechadas da v1:**
+
+- módulo `Integração Google` restrito à CT e isolado por `team_id`;
+- assistente inicial, ajuda contextual em todos os controles e diagnóstico em
+  linguagem não técnica;
+- Google Calendar público e estável por time, com o Handball como fonte de
+  verdade;
+- sincronização automática `Handball -> Google`, mais `Sincronizar agora`;
+- primeira carga da temporada ativa inteira;
+- publicação somente de treino, jogo e campeonato, com título/tipo, data,
+  horário, local, adversário e status;
+- notas, atletas, presença, justificativas, auditoria e Playbook nunca são
+  públicos;
+- desconectar torna o calendário privado, preserva seus eventos e revoga a
+  credencial;
+- Drive, Sheets, login Google e sincronização bidirecional ficam fora da v1.
+
+**Pipeline de implementação e operação:**
+
+1. [-] **IG-0 — Pipeline e arquitetura.** Registrar decisões, fronteiras,
+   permissões, dados, riscos, critérios de aceite e separação entre código,
+   `DB_MIGRATION`, configuração Google e validação real.
+2. [-] **IG-1 — Prontidão OAuth pública.** Criar apresentação e política de
+   privacidade públicas; documentar projeto de teste/produção, domínio
+   verificado, Calendar API, redirect HTTPS e verificação do consentimento.
+3. [-] **IG-2 — Contratos e persistência.** Versionar a próxima migration com
+   conexão por time, configuração do calendário, vínculos idempotentes e
+   outbox. Não ativar a migration no banco persistente nesta etapa.
+4. [-] **IG-3 — OAuth e cofre.** Implementar Authorization Code server-side,
+   PKCE, `state`, acesso offline, escopos mínimos e token protegido fora do Git,
+   logs, respostas e backup comum.
+5. [-] **IG-4 — Módulo guiado.** Entregar onboarding retomável, pop-ups de
+   ajuda, central de controle, estados vazio/erro/reautorização e interface
+   acessível em computador e celular.
+6. [-] **IG-5 — Calendário público.** Criar um calendário secundário por time,
+   aplicar leitura pública após confirmação explícita, mostrar/copiar o link e
+   permitir pausar, retomar e tornar privado.
+7. [-] **IG-6 — Projeção e sincronização.** Publicar a agenda esportiva mínima,
+   reconciliar a temporada ativa, impedir duplicatas e preservar operações
+   pendentes quando o Google falhar.
+8. [-] **IG-7 — Recuperação e auditoria.** Tratar revogação, rate limit,
+   indisponibilidade, evento remoto removido, troca de Gmail e desconexão segura
+   com histórico sanitizado.
+9. [-] **IG-8 — Validação local.** Cobrir migration, autorização, OAuth falso,
+   adaptador Google falso, outbox, acessibilidade, responsividade, WebKit,
+   suíte, `compileall`, JavaScript e `git diff --check`.
+10. [ ] **IG-9 — Ativação e uso real.** Com autorização própria: configurar o
+    projeto Google, ativar a `DB_MIGRATION` pelo rito oficial, publicar a release
+    e validar com um Gmail de teste antes da conta real do time.
+11. [ ] **IG-10 — Drive.** Selecionar e vincular explicitamente pastas/arquivos
+    com acesso mínimo, sem varrer todo o Drive.
+12. [ ] **IG-11 — Sheets.** Emitir relatórios esportivos idempotentes; planilhas
+    financeiras dependem de um domínio financeiro próprio e permissões
+    separadas.
+13. [ ] **IG-12 — Bidirecionalidade futura.** Somente após definir conflitos,
+    autoria, exclusão e reconciliação; não faz parte do escopo aprovado.
+
+**Critério de pronto da v1:** uma pessoa da CT sem conhecimento técnico conecta
+o Gmail correto seguindo apenas o assistente, recebe o link público e verifica
+que criar, editar, cancelar e reagendar no Handball atualiza exatamente um
+evento Google. Falha externa não pode desfazer nem impedir a gravação local.
+
+### 10.2 Relatórios de jogadores
+
+1. [ ] **Relatórios de jogadores no módulo Gestão de Elenco.** Especificar
+   relatórios coletivos e individuais, seus destinatários (CT e jogador),
+   período de referência, indicadores, fontes dos dados, filtros, privacidade,
+   possibilidade de exportação e linguagem de apresentação. O jogador deve ver
+   apenas seus próprios dados; o CT, somente o escopo do seu time autorizado.
+
+### 10.3 Ordenação subjetiva de ataque e defesa
+
+1. [ ] **Ordenação de elenco com dimensão subjetiva de ataque e defesa.**
+   Definir uma rubrica explícita, escala, responsáveis pela avaliação,
+   periodicidade, evidências e histórico de alterações. Separar métricas
+   observáveis de julgamento técnico, evitar que uma nota única oculte os dois
+   perfis e decidir como empates, ausência de avaliação e contestação serão
+   tratados.
+
+### 10.4 Book de design
+
+1. [ ] **Book de design fiel ao aplicativo.** Desenhar e especificar um book
+   de design que documente identidade visual, tokens, componentes, estados,
+   responsividade, acessibilidade e padrões de interação do aplicativo real.
+   Definir a fonte de verdade entre o book e a implementação, além do processo
+   de revisão para impedir divergência entre a referência visual e a PWA.
+
+### 10.5 Experiência do Playbook
+
+1. [ ] **Experiência do CT e dos jogadores no Playbook.** Mapear jornadas,
+   tarefas frequentes, permissões, navegação e estados vazios para os dois
+   públicos. Priorizar a consulta rápida em quadra pelo jogador e o
+   planejamento, edição, acompanhamento e publicação pelo CT, preservando a
+   autoridade e a biblioteca persistente já definidas para o módulo.

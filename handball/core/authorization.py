@@ -33,6 +33,7 @@ class Permission(StrEnum):
     PLAYBOOK_MANAGE = "playbook.manage"
     SQL_EXPLORE = "sql.explore"
     SQL_ADMIN = "sql.admin"
+    INTEGRATIONS_GOOGLE_MANAGE = "integrations.google.manage"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
@@ -47,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
                      Permission.AUDIT_READ_SPORT, Permission.EXPORT_READ_TEAM,
                      Permission.BACKUP_DOWNLOAD, Permission.CALENDAR_READ_TEAM,
                      Permission.CALENDAR_MANAGE, Permission.CALENDAR_VISIBILITY_MANAGE,
+                     Permission.INTEGRATIONS_GOOGLE_MANAGE,
                      Permission.PLAYBOOK_READ,
                      Permission.PLAYBOOK_MANAGE, Permission.SQL_EXPLORE}),
     "PLAYER": frozenset({Permission.ATTENDANCE_READ_SELF, Permission.ATTENDANCE_WRITE_SELF, Permission.REPORTS_READ_SELF,

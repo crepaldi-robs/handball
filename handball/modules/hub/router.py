@@ -38,6 +38,7 @@ def create_router(identity_service: IdentityService, templates: Jinja2Templates)
                 "can_admin": Permission.USERS_MANAGE in session.permissions,
                 "can_calendar": Permission.CALENDAR_READ_TEAM in session.permissions,
                 "can_playbook": Permission.PLAYBOOK_READ in session.permissions,
+                "can_google_integration": Permission.INTEGRATIONS_GOOGLE_MANAGE in session.permissions,
                 "can_sql_explorer": Permission.SQL_EXPLORE in session.permissions or Permission.SQL_ADMIN in session.permissions,
                 "organization": team_view["organization"],
                 "team_theme": team_view["team_theme"],

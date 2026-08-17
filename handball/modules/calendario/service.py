@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
@@ -29,6 +30,7 @@ from .schemas import (
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 ACTIVE_SEASON_LABEL = "2026.2"
+logger = logging.getLogger(__name__)
 
 
 class CalendarService:
@@ -37,9 +39,51 @@ class CalendarService:
         unit_of_work_factory: UnitOfWorkFactoryContract,
         *,
         now_factory: Callable[[], datetime] | None = None,
+        integration_sync_request: Callable[[int], None] | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._now_factory = now_factory or (lambda: datetime.now(UTC))
+        self._integration_sync_request = integration_sync_request
+
+    @staticmethod
+    def _event_items(value: Any) -> list[Mapping[str, Any]]:
+        """Extrai eventos de retornos simples, remarcações e séries."""
+
+        found: list[Mapping[str, Any]] = []
+        if isinstance(value, Mapping):
+            if {"id", "team_id", "event_type"}.issubset(value):
+                found.append(value)
+            for nested in value.values():
+                found.extend(CalendarService._event_items(nested))
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                found.extend(CalendarService._event_items(nested))
+        return found
+
+    def _enqueue_google(self, unit_of_work: Any, value: Any) -> set[int]:
+        if not unit_of_work.integrations.is_available():
+            return set()
+        team_ids: set[int] = set()
+        event_ids: set[int] = set()
+        for event in self._event_items(value):
+            event_id = int(event["id"])
+            if event_id in event_ids:
+                continue
+            event_ids.add(event_id)
+            if unit_of_work.integrations.enqueue_event(event_id):
+                team_ids.add(int(event["team_id"]))
+        return team_ids
+
+    def _request_google_sync(self, team_ids: Iterable[int]) -> None:
+        if self._integration_sync_request is None:
+            return
+        for team_id in sorted({int(value) for value in team_ids}):
+            try:
+                self._integration_sync_request(team_id)
+            except Exception:
+                # O outbox já foi persistido na mesma transação do calendário;
+                # uma falha ao disparar a thread não pode desfazer a ação da CT.
+                logger.exception("Falha ao solicitar sincronização Google do time %s", team_id)
 
     @staticmethod
     def _require(context: AccessContext, permission: Permission) -> None:
@@ -360,6 +404,7 @@ class CalendarService:
     ) -> dict[str, Any]:
         self._require(context, Permission.CALENDAR_MANAGE)
         payload = self._event_payload(body, context)
+        team_ids: set[int] = set()
         with self._unit_of_work_factory() as unit_of_work:
             request_hash = self._request_hash(payload)
             if operation_id:
@@ -381,7 +426,9 @@ class CalendarService:
                     request_hash=request_hash,
                     response=created,
                 )
-            return created
+            team_ids = self._enqueue_google(unit_of_work, created)
+        self._request_google_sync(team_ids)
+        return created
 
     def update_event(
         self,
@@ -395,11 +442,14 @@ class CalendarService:
         with self._unit_of_work_factory() as unit_of_work:
             if unit_of_work.calendar.get_event(event_id, allowed) is None:
                 raise KeyError("Evento não encontrado na equipe autorizada.")
-            return unit_of_work.calendar.update_event(
+            updated = unit_of_work.calendar.update_event(
                 event_id,
                 payload,
                 actor_user_id=context.user_id,
             )
+            team_ids = self._enqueue_google(unit_of_work, updated)
+        self._request_google_sync(team_ids)
+        return updated
 
     def set_player_visibility(
         self,
@@ -488,7 +538,7 @@ class CalendarService:
                             suggestion="Recarregue o treino e escolha uma das sessões vinculadas.",
                             status_code=409,
                         )
-            return unit_of_work.calendar.transition_event(
+            result = unit_of_work.calendar.transition_event(
                 event_id,
                 action=action,
                 team_ids=allowed,
@@ -496,6 +546,9 @@ class CalendarService:
                 reason=body.reason,
                 base_version=body.base_version,
             )
+            team_ids = self._enqueue_google(unit_of_work, result)
+        self._request_google_sync(team_ids)
+        return result
 
     def reschedule_event(
         self,
@@ -525,7 +578,9 @@ class CalendarService:
                     reason=body.reason,
                 )
             )
-            return result
+            team_ids = self._enqueue_google(unit_of_work, result)
+        self._request_google_sync(team_ids)
+        return result
 
     def event_history(
         self,
@@ -643,11 +698,14 @@ class CalendarService:
             )
         payload = body.model_dump(mode="json")
         with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.calendar.create_series(
+            result = unit_of_work.calendar.create_series(
                 payload,
                 occurrences,
                 actor_user_id=context.user_id,
             )
+            team_ids = self._enqueue_google(unit_of_work, result)
+        self._request_google_sync(team_ids)
+        return result
 
     def update_series(
         self,
@@ -658,7 +716,7 @@ class CalendarService:
         self._require(context, Permission.CALENDAR_MANAGE)
         payload = self._event_payload(body, context)
         with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.calendar.update_series(
+            result = unit_of_work.calendar.update_series(
                 series_id,
                 payload,
                 scope=body.scope,
@@ -666,6 +724,9 @@ class CalendarService:
                 team_ids=self._team_ids(context, body.team_id),
                 actor_user_id=context.user_id,
             )
+            team_ids = self._enqueue_google(unit_of_work, result)
+        self._request_google_sync(team_ids)
+        return result
 
     def save_own_justification(
         self,
