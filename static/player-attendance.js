@@ -295,7 +295,15 @@
       article.className = "player-playbook-lesson";
       const title = document.createElement("h3");
       title.textContent = lesson.title;
-      article.append(title, lessonBody(lesson, false));
+      const path = (lesson.folders?.[0]?.path || []).map((part) => part.name).join(" › ");
+      article.append(title);
+      if (path) {
+        const trail = document.createElement("small");
+        trail.className = "muted";
+        trail.textContent = path;
+        article.append(trail);
+      }
+      article.append(lessonBody(lesson, false));
       return article;
     }
 
@@ -309,7 +317,8 @@
     title.textContent = lesson.title;
     const hint = document.createElement("span");
     hint.className = "player-playbook-summary-hint";
-    hint.textContent = lesson.planned_minutes ? `${lesson.planned_minutes} min · tocar para abrir` : "Tocar para abrir";
+    const path = (lesson.folders?.[0]?.path || []).map((part) => part.name).join(" › ");
+    hint.textContent = [lesson.planned_minutes ? `${lesson.planned_minutes} min` : "", path, "tocar para abrir"].filter(Boolean).join(" · ");
     const text = document.createElement("span");
     text.append(title, hint);
     summary.append(order, text);

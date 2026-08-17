@@ -90,6 +90,72 @@ def _seed_and_content(client: TestClient, csrf: str) -> tuple[int, int, dict[str
     return team_id, int(handball["id"]), created.json()
 
 
+def test_visual_organizer_template_paths_and_exact_placements(tmp_path: Path) -> None:
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, _ = _team_and_season(client)
+
+    page = client.get("/app/playbook")
+    assert page.status_code == 200
+    assert "Organizar Playbook" in page.text
+    assert "Monte o Playbook arrastando os cartões" in page.text
+    assert "Defina variantes e papéis em JSON" not in page.text
+
+    template = client.get(f"/api/v1/playbook/taxonomy/template?team_id={team_id}")
+    assert template.status_code == 200, template.text
+    nodes = [
+        {"key": "tatica", "parent_key": None, "name": "Tática do time", "sort_order": 0},
+        {"key": "ataque", "parent_key": "tatica", "name": "Ataque", "sort_order": 0},
+        {"key": "x", "parent_key": "ataque", "name": "Jogada X", "sort_order": 0},
+    ]
+    applied = client.post(
+        "/api/v1/playbook/taxonomy/apply",
+        json={"team_id": team_id, "nodes": nodes},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert applied.status_code == 200, applied.text
+    by_name = {item["name"]: item for item in applied.json()["items"]}
+    assert [part["name"] for part in by_name["Jogada X"]["path"]] == [
+        "Tática do time",
+        "Ataque",
+        "Jogada X",
+    ]
+    assert by_name["Jogada X"]["depth"] == 2
+
+    created = client.post(
+        "/api/v1/playbook/contents",
+        json=_content_payload(team_id, int(by_name["Jogada X"]["id"])),
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201, created.text
+    content_id = int(created.json()["id"])
+    replaced = client.put(
+        f"/api/v1/playbook/contents/{content_id}/placements",
+        json={
+            "placements": [
+                {"folder_id": int(by_name["Ataque"]["id"]), "placement_kind": "PLACEMENT", "sort_order": 0},
+                {"folder_id": int(by_name["Jogada X"]["id"]), "placement_kind": "SHORTCUT", "sort_order": 1},
+            ]
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert [part["name"] for part in replaced.json()["folders"][1]["path"]] == [
+        "Tática do time",
+        "Ataque",
+        "Jogada X",
+    ]
+
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    assert client.get(f"/api/v1/playbook/taxonomy/template?team_id={team_id}").status_code == 403
+    assert client.put(
+        f"/api/v1/playbook/contents/{content_id}/placements",
+        json={"placements": [{"folder_id": int(by_name["Ataque"]["id"])}]},
+        headers={"X-CSRF-Token": player_csrf},
+    ).status_code == 403
+
+
 def test_v8_migration_registers_playbook_contract(tmp_path: Path) -> None:
     _, manager, _ = make_v2(tmp_path)
 

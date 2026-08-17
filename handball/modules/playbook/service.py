@@ -293,6 +293,22 @@ class PlaybookService:
                 int(team_ids[0]), actor_user_id=context.user_id
             )
 
+    def taxonomy_template(self, context: AccessContext, team_id: int) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        self._team_ids(context, team_id)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            return unit_of_work.playbook.initial_taxonomy_template()
+
+    def apply_taxonomy_template(self, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        team_ids = self._team_ids(context, body.team_id)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.apply_taxonomy_template(
+                int(team_ids[0]),
+                [node.model_dump() for node in body.nodes],
+                actor_user_id=context.user_id,
+            )
+
     def create_folder(self, body: Any, context: AccessContext) -> dict[str, Any]:
         self._require(context, Permission.PLAYBOOK_MANAGE)
         team_ids = self._team_ids(context, body.team_id)
@@ -401,6 +417,16 @@ class PlaybookService:
                 body.content_ids,
                 folder_id=body.folder_id,
                 operation=body.operation,
+                team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
+    def set_content_placements(self, content_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.playbook.set_content_placements(
+                content_id,
+                [placement.model_dump() for placement in body.placements],
                 team_ids=self._team_ids(context),
                 actor_user_id=context.user_id,
             )

@@ -496,6 +496,17 @@ class PlaybookRepositoryContract(Protocol):
         self, team_id: int, *, actor_user_id: int
     ) -> dict[str, Any]: ...
 
+    @staticmethod
+    def initial_taxonomy_template() -> dict[str, Any]: ...
+
+    def apply_taxonomy_template(
+        self,
+        team_id: int,
+        nodes: Iterable[Mapping[str, Any]],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
     def create_folder(
         self,
         team_id: int,
@@ -595,6 +606,15 @@ class PlaybookRepositoryContract(Protocol):
         team_ids: Iterable[int],
         actor_user_id: int,
     ) -> list[dict[str, Any]]: ...
+
+    def set_content_placements(
+        self,
+        content_id: int,
+        placements: Iterable[Mapping[str, Any]],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
 
     def set_content_status(
         self,

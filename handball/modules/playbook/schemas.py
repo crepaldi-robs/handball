@@ -48,6 +48,33 @@ class FolderReorderInput(BaseModel):
     folder_ids: list[int] = Field(min_length=1, max_length=300)
 
 
+class FolderTemplateNodeInput(BaseModel):
+    key: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    parent_key: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=160)
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+    @field_validator("name")
+    @classmethod
+    def strip_template_name(cls, value: str) -> str:
+        return value.strip()
+
+
+class FolderTemplateApplyInput(BaseModel):
+    team_id: int = Field(gt=0)
+    nodes: list[FolderTemplateNodeInput] = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_template_graph(self) -> "FolderTemplateApplyInput":
+        keys = [node.key for node in self.nodes]
+        if len(set(keys)) != len(keys):
+            raise ValueError("A estrutura contém cartões duplicados.")
+        known = set(keys)
+        if any(node.parent_key is not None and node.parent_key not in known for node in self.nodes):
+            raise ValueError("A estrutura contém uma pasta pai que não existe.")
+        return self
+
+
 class PermanentDeleteInput(BaseModel):
     confirmation: str = Field(min_length=1, max_length=120)
 
@@ -61,6 +88,10 @@ class ContentPlacementInput(BaseModel):
     folder_id: int = Field(gt=0)
     placement_kind: Literal["PLACEMENT", "SHORTCUT"] = "PLACEMENT"
     sort_order: int = Field(default=0, ge=0)
+
+
+class ContentPlacementsInput(BaseModel):
+    placements: list[ContentPlacementInput] = Field(min_length=1, max_length=300)
 
 
 class ExerciseRoleInput(BaseModel):

@@ -15,6 +15,7 @@ from handball.modules.usuarios.service import IdentityService
 from .schemas import (
     ContentInput,
     ContentMoveInput,
+    ContentPlacementsInput,
     ContentRelationsInput,
     ContentUpdateInput,
     DriveAttachmentInput,
@@ -23,6 +24,7 @@ from .schemas import (
     FolderMoveInput,
     FolderRenameInput,
     FolderReorderInput,
+    FolderTemplateApplyInput,
     GuidedFinishInput,
     IndependentPlanInput,
     PermanentDeleteInput,
@@ -187,6 +189,28 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 
+    @router.get("/api/v1/playbook/taxonomy/template")
+    def taxonomy_template(
+        request: Request,
+        team_id: int,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.taxonomy_template(context, team_id)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/taxonomy/apply")
+    def apply_taxonomy_template(
+        request: Request,
+        body: FolderTemplateApplyInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.apply_taxonomy_template(body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
     @router.get("/api/v1/playbook/contents/{content_id}")
     def content(
         content_id: int,
@@ -207,6 +231,18 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
     ) -> dict[str, Any]:
         try:
             return service.content_fit(content_id, event_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/contents/{content_id}/placements")
+    def set_content_placements(
+        content_id: int,
+        request: Request,
+        body: ContentPlacementsInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.set_content_placements(content_id, body, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

@@ -29,7 +29,8 @@
     button.className = "pbp-content-card";
     const title = el("strong", null, item.title || item.content_title);
     button.append(title);
-    if (subtitle) button.append(el("span", "muted", subtitle));
+    const folderPath = item.folders?.[0]?.path?.map((part) => part.name).join(" › ") || "";
+    if (subtitle || folderPath) button.append(el("span", "muted", [subtitle, folderPath].filter(Boolean).join(" · ")));
     if (item.recently_viewed || item.viewed) button.append(el("span", "pbp-seen-mark", "visto"));
     button.addEventListener("click", () => openDetail(item.id || item.content_id));
     return button;
@@ -144,9 +145,11 @@
   }
 
   function renderDetail(content) {
-    document.querySelector("#pbp-detail-trail").textContent = [content.perspective, content.content_kind].filter(Boolean).join(" › ");
+    const paths = (content.folders || []).map((folder) => (folder.path || []).map((part) => part.name).join(" › ")).filter(Boolean);
+    document.querySelector("#pbp-detail-trail").textContent = paths[0] || [content.perspective, content.content_kind].filter(Boolean).join(" › ");
     document.querySelector("#pbp-detail-title").textContent = content.title;
     document.querySelector("#pbp-detail-subtitle").textContent = (content.positions || []).join(", ");
+    document.querySelector("#pbp-detail-subtitle").title = paths.length > 1 ? `Também aparece em: ${paths.slice(1).join("; ")}` : "";
 
     const responsibility = document.querySelector("#pbp-responsibility");
     const positions = activeItem?.allowed_positions || content.positions || [];

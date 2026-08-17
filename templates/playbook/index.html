@@ -145,6 +145,7 @@
       </div>
       <button id="playbook-offline" class="playbook-soft-button" type="button">↓ Essenciais offline</button>
       {% if can_manage %}
+      <button id="playbook-open-organizer" class="playbook-soft-button playbook-organize-action" type="button">Organizar Playbook</button>
       <button id="playbook-new-content" class="playbook-primary-action" type="button">＋ Novo conteúdo</button>
       {% endif %}
     </section>
@@ -255,26 +256,102 @@
     </form>
   </dialog>
 
+  <dialog id="playbook-organizer-dialog" class="playbook-organizer-dialog">
+    <section class="playbook-organizer-shell" aria-labelledby="playbook-organizer-title">
+      <header class="playbook-organizer-header">
+        <div>
+          <span class="playbook-kicker">MODO ORGANIZAR</span>
+          <h1 id="playbook-organizer-title">Monte o Playbook arrastando os cartões</h1>
+          <p>Pastas e conteúdos podem mudar de lugar sem quebrar planos, vídeos ou favoritos.</p>
+        </div>
+        <button type="button" data-playbook-close="playbook-organizer-dialog" class="playbook-icon-button light" aria-label="Fechar modo Organizar">×</button>
+      </header>
+      <div id="playbook-organizer-offline" class="playbook-organizer-offline" hidden>Você está sem internet. A estrutura continua visível, mas mudanças ficam bloqueadas até a conexão voltar.</div>
+      <nav class="playbook-organizer-toolbar" aria-label="Ações de organização">
+        <button id="playbook-organizer-new-folder" class="playbook-primary-action" type="button">＋ Criar pasta</button>
+        <button id="playbook-organizer-new-content" class="playbook-soft-button" type="button">＋ Criar conteúdo</button>
+        <button id="playbook-organizer-template" class="playbook-soft-button" type="button">Montar estrutura inicial</button>
+        <label class="playbook-organizer-search"><span class="sr-only">Procurar pasta ou conteúdo</span><input id="playbook-organizer-search" type="search" placeholder="Procurar pelo nome"></label>
+        <button id="playbook-organizer-history-toggle" class="playbook-soft-button" type="button" aria-expanded="false">Mudanças recentes <span id="playbook-organizer-history-count">0</span></button>
+      </nav>
+      <div class="playbook-organizer-workspace">
+        <section class="playbook-organizer-tree-panel" aria-labelledby="playbook-organizer-tree-title">
+          <header><div><h2 id="playbook-organizer-tree-title">Estrutura do time</h2><p>Solte no meio para criar subpasta; solte nas bordas para ordenar.</p></div></header>
+          <div id="playbook-organizer-tree" class="playbook-organizer-tree" aria-live="polite"></div>
+        </section>
+        <section class="playbook-organizer-content-panel" aria-labelledby="playbook-organizer-content-title">
+          <header><div><h2 id="playbook-organizer-content-title">Conteúdos desta pasta</h2><p id="playbook-organizer-content-summary">Escolha uma pasta para organizar seus conteúdos.</p></div></header>
+          <div id="playbook-organizer-contents" class="playbook-organizer-contents"></div>
+        </section>
+        <aside id="playbook-organizer-history" class="playbook-organizer-history" hidden aria-labelledby="playbook-organizer-history-title">
+          <header><h2 id="playbook-organizer-history-title">Mudanças desta sessão</h2><button id="playbook-organizer-history-close" type="button" aria-label="Fechar histórico">×</button></header>
+          <div id="playbook-organizer-history-list"><p class="muted">Nenhuma mudança feita nesta sessão.</p></div>
+        </aside>
+      </div>
+      <footer class="playbook-organizer-help"><span>Também funciona sem arrastar: use o botão <strong>Mover</strong> de cada cartão.</span><span>Os jogadores veem os novos caminhos imediatamente.</span></footer>
+    </section>
+  </dialog>
+
+  <dialog id="playbook-move-dialog" class="playbook-dialog playbook-move-dialog">
+    <form id="playbook-move-form" class="playbook-form">
+      <header><div><span class="playbook-kicker">ESCOLHER DESTINO</span><h2 id="playbook-move-title">Mover para outra pasta</h2></div><button type="button" data-playbook-close="playbook-move-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <p id="playbook-move-description" class="playbook-form-hint"></p>
+      <div id="playbook-move-tree" class="playbook-destination-tree"></div>
+      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-move-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Confirmar destino</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="playbook-drop-dialog" class="playbook-dialog playbook-drop-dialog">
+    <section class="playbook-form">
+      <header><div><span class="playbook-kicker">AO SOLTAR</span><h2>O que você quer fazer?</h2></div><button type="button" data-playbook-close="playbook-drop-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <p id="playbook-drop-description"></p>
+      <div class="playbook-drop-choices">
+        <button id="playbook-drop-move" class="playbook-primary-action" type="button"><strong>Mover para cá</strong><span>Sai da pasta principal atual</span></button>
+        <button id="playbook-drop-shortcut" class="playbook-soft-button" type="button"><strong>Mostrar também aqui</strong><span>Continua aparecendo nos dois lugares</span></button>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="playbook-template-dialog" class="playbook-dialog playbook-template-dialog">
+    <form id="playbook-template-form" class="playbook-form">
+      <header><div><span class="playbook-kicker">ESTRUTURA GUIADA</span><h2>Revise antes de criar</h2></div><button type="button" data-playbook-close="playbook-template-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
+      <p>Este é um ponto de partida. Renomeie ou retire qualquer cartão; depois tudo continua editável.</p>
+      <div id="playbook-template-preview" class="playbook-template-preview"></div>
+      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-template-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Criar esta estrutura</button></div>
+    </form>
+  </dialog>
+
   <dialog id="playbook-content-dialog" class="playbook-dialog playbook-content-dialog">
     <form id="playbook-content-form" class="playbook-form">
       <header><div><span class="playbook-kicker">CONTEÚDO</span><h2 id="playbook-content-dialog-title">Novo conteúdo</h2></div><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-icon-button light" aria-label="Fechar">×</button></header>
       <input id="playbook-content-id" type="hidden">
-      <div class="playbook-form-grid">
-        <label><span>Título</span><input id="playbook-content-title" name="title" maxlength="220" required></label>
-        <label><span>Tipo</span><input id="playbook-content-kind" name="content_kind" maxlength="80" value="CONTENT" list="playbook-content-kinds"><datalist id="playbook-content-kinds"><option value="CONTENT"><option value="JOGADA"><option value="EXERCISE"></datalist></label>
-        <label><span>Perspectiva</span><select id="playbook-content-perspective" name="perspective"><option value="">Não se aplica</option><option value="ATTACK">Ataque</option><option value="DEFENSE">Defesa</option><option value="NEUTRAL">Neutro</option></select></label>
-        <label><span>Posições <small>separe por vírgula</small></span><input id="playbook-content-positions" name="positions" maxlength="1000" placeholder="Armador, Pivô"></label>
-      </div>
-      <label><span>Objetivo</span><textarea id="playbook-content-objective" name="objective" maxlength="4000" rows="2"></textarea></label>
-      <label><span>Quando usar</span><textarea id="playbook-content-when" name="when_to_use" maxlength="4000" rows="2"></textarea></label>
-      <label><span>Pré-requisitos</span><textarea id="playbook-content-prerequisites" name="prerequisites" maxlength="4000" rows="2"></textarea></label>
-      <label><span>Passo a passo</span><textarea id="playbook-content-steps" name="steps" maxlength="24000" rows="7" required></textarea></label>
-      <label><span>Observações</span><textarea id="playbook-content-notes" name="notes" maxlength="8000" rows="3"></textarea></label>
-      <label><span>Apelidos <small>separe por vírgula</small></span><input id="playbook-content-aliases" name="aliases" maxlength="3000"></label>
-      <fieldset id="playbook-exercise-spec" hidden><legend>Participantes do exercício</legend><p class="playbook-form-hint">Defina variantes e papéis em JSON estruturado. Grupos: ATTACK, DEFENSE, GOALKEEPER e NEUTRAL. Posições: GOL, PE, ME, C, MD, PD, PV; defesa: M1, M2, M3, AVANCADO.</p><textarea id="playbook-exercise-variants" rows="12" spellcheck="false" placeholder='[{"label":"Lado direito","roles":[{"group":"ATTACK","label":"Ponta direita","count":1,"attack_positions":["PD"]},{"group":"ATTACK","label":"Meia direita","count":1,"attack_positions":["MD"]},{"group":"DEFENSE","label":"1º marcador","count":1,"defensive_positions":["M1"]}]}]'></textarea><button id="playbook-exercise-example" class="playbook-soft-button" type="button">Inserir exemplo 2x1 na ponta</button></fieldset>
-      <fieldset><legend>Pastas de navegação</legend><div id="playbook-content-folders" class="playbook-folder-picker"></div></fieldset>
-      <label><span>Nota desta versão <small>opcional</small></span><input id="playbook-content-change-note" name="change_note" maxlength="500"></label>
-      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-soft-button">Cancelar</button><button class="playbook-primary-action" type="submit">Salvar rascunho</button></div>
+      <ol class="playbook-content-steps" aria-label="Etapas"><li class="is-active" data-content-step-indicator="1">1. Identificar</li><li data-content-step-indicator="2">2. Ensinar</li><li data-content-step-indicator="3">3. Organizar</li><li data-content-step-indicator="4">4. Revisar</li></ol>
+      <section data-content-step="1">
+        <h3>Que conteúdo é esse?</h3>
+        <label><span>Nome que o time usa</span><input id="playbook-content-title" name="title" maxlength="220" required placeholder="Ex.: Cruzamento curto"></label>
+        <fieldset><legend>Escolha o tipo</legend><div class="playbook-choice-cards" data-choice-target="playbook-content-kind"><button type="button" data-choice-value="JOGADA">Jogada</button><button type="button" data-choice-value="EXERCISE">Exercício</button><button type="button" data-choice-value="CONTENT">Conceito ou fundamento</button></div><input id="playbook-content-kind" name="content_kind" type="hidden" value="CONTENT"></fieldset>
+        <fieldset><legend>Em qual situação?</legend><div class="playbook-choice-cards" data-choice-target="playbook-content-perspective"><button type="button" data-choice-value="ATTACK">Ataque</button><button type="button" data-choice-value="DEFENSE">Defesa</button><button type="button" data-choice-value="NEUTRAL">Serve para os dois</button><button type="button" data-choice-value="">Não se aplica</button></div><input id="playbook-content-perspective" name="perspective" type="hidden"></fieldset>
+        <fieldset><legend>Quem precisa conhecer?</legend><div id="playbook-position-options" class="playbook-position-options"></div><input id="playbook-content-positions" type="hidden"></fieldset>
+      </section>
+      <section data-content-step="2" hidden>
+        <h3>Explique como você explicaria na quadra</h3>
+        <label><span>Qual é o objetivo?</span><textarea id="playbook-content-objective" name="objective" maxlength="4000" rows="2" placeholder="O que o time aprende ou consegue fazer"></textarea></label>
+        <label><span>Quando usamos?</span><textarea id="playbook-content-when" name="when_to_use" maxlength="4000" rows="2"></textarea></label>
+        <label><span>O que precisa saber antes?</span><textarea id="playbook-content-prerequisites" name="prerequisites" maxlength="4000" rows="2"></textarea></label>
+        <label><span>Passo a passo <small>uma ação por linha</small></span><textarea id="playbook-content-steps" name="steps" maxlength="24000" rows="7" required placeholder="1. O central inicia o movimento&#10;2. A meia cruza por trás&#10;3. A ponta abre espaço"></textarea></label>
+        <fieldset id="playbook-exercise-spec" hidden><legend>Participantes do exercício</legend><p class="playbook-form-hint">Adicione os papéis do exercício. O sistema monta a estrutura técnica automaticamente.</p><label><span>Nome da montagem</span><input id="playbook-exercise-variant-label" value="Montagem principal" maxlength="120"></label><div id="playbook-exercise-roles" class="playbook-exercise-roles"></div><button id="playbook-exercise-add-role" class="playbook-soft-button" type="button">＋ Adicionar participante</button><textarea id="playbook-exercise-variants" hidden></textarea></fieldset>
+      </section>
+      <section data-content-step="3" hidden>
+        <h3>Onde as pessoas vão encontrar?</h3>
+        <fieldset><legend>Pastas do Playbook</legend><p class="playbook-form-hint">Você pode marcar mais de uma. O material não será duplicado.</p><div id="playbook-content-folders" class="playbook-folder-picker"></div></fieldset>
+        <label><span>Outros nomes usados pelo time <small>opcional, separados por vírgula</small></span><input id="playbook-content-aliases" name="aliases" maxlength="3000"></label>
+        <label><span>Observações para a CT <small>opcional</small></span><textarea id="playbook-content-notes" name="notes" maxlength="8000" rows="3"></textarea></label>
+      </section>
+      <section data-content-step="4" hidden>
+        <h3>Confira antes de salvar</h3><div id="playbook-content-preview" class="playbook-content-preview"></div>
+        <label><span>O que mudou nesta versão? <small>opcional</small></span><input id="playbook-content-change-note" name="change_note" maxlength="500"></label>
+      </section>
+      <div class="playbook-dialog-actions"><button type="button" data-playbook-close="playbook-content-dialog" class="playbook-soft-button">Cancelar</button><button id="playbook-content-back" class="playbook-soft-button" type="button" hidden>Voltar</button><button id="playbook-content-next" class="playbook-primary-action" type="button">Continuar</button><button id="playbook-content-save" class="playbook-primary-action" type="submit" hidden>Salvar rascunho</button></div>
     </form>
   </dialog>
 

@@ -35,6 +35,17 @@ if (playbookRoot) {
     planning: { plans: [], series: [], sessions: [] },
     online: navigator.onLine,
     fitFilter: false,
+    organizer: {
+      open: false,
+      query: "",
+      history: [],
+      dragged: null,
+      moveContext: null,
+      pendingDrop: null,
+      template: [],
+      expanded: new Set(),
+    },
+    contentStep: 1,
   };
   const fitCache = new Map();
 
@@ -60,6 +71,15 @@ if (playbookRoot) {
     planForm: document.querySelector("#playbook-plan-form"),
     planning: document.querySelector("#playbook-planning-summary"),
     problemDialog: document.querySelector("#playbook-problem-dialog"),
+    organizerDialog: document.querySelector("#playbook-organizer-dialog"),
+    organizerTree: document.querySelector("#playbook-organizer-tree"),
+    organizerContents: document.querySelector("#playbook-organizer-contents"),
+    organizerHistory: document.querySelector("#playbook-organizer-history"),
+    moveDialog: document.querySelector("#playbook-move-dialog"),
+    moveForm: document.querySelector("#playbook-move-form"),
+    dropDialog: document.querySelector("#playbook-drop-dialog"),
+    templateDialog: document.querySelector("#playbook-template-dialog"),
+    templateForm: document.querySelector("#playbook-template-form"),
   };
 
   class PlaybookRequestError extends Error {
@@ -285,7 +305,7 @@ if (playbookRoot) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = Number(folder.id) === Number(state.folderId) ? "is-active" : "";
-    button.style.setProperty("--tree-depth", String(depth));
+    button.dataset.depth = String(Math.min(depth, 8));
     button.innerHTML = `<span aria-hidden="true">▸</span><span>${escapeHtml(folder.name)}</span><small>${Number(folder.content_count || 0)}</small>`;
     button.addEventListener("click", () => selectFolder(Number(folder.id)));
     wrap.append(button);
@@ -303,6 +323,221 @@ if (playbookRoot) {
       return;
     }
     for (const folder of roots) elements.tree.append(makeTreeNode(folder));
+  }
+
+  function folderLabel(folder) {
+    const path = folder?.path || folderPath(folder?.id || 0).map((item) => ({ id: item.id, name: item.name }));
+    return path.map((item) => item.name).join(" › ") || "Biblioteca";
+  }
+
+  function siblingFolders(parentId) {
+    return flattenedFolders()
+      .filter((item) => Number(item.team_id) === Number(state.teamId)
+        && Number(item.parent_id || 0) === Number(parentId || 0)
+        && !item.archived_at)
+      .sort((left, right) => Number(left.sort_order) - Number(right.sort_order) || Number(left.id) - Number(right.id));
+  }
+
+  function pushOrganizerHistory(label, undo) {
+    state.organizer.history.unshift({ label, undo, at: new Date() });
+    if (state.organizer.history.length > 20) state.organizer.history.length = 20;
+    renderOrganizerHistory();
+    showMessage(`${label} `, "success", { undo: true });
+  }
+
+  async function undoOrganizerAction(index = 0) {
+    const entry = state.organizer.history[index];
+    if (!entry || typeof entry.undo !== "function") return;
+    try {
+      await entry.undo();
+      state.organizer.history.splice(index, 1);
+      await loadLibrary();
+      renderOrganizerHistory();
+      showMessage("Mudança desfeita.");
+    } catch (error) { showProblem(error); }
+  }
+
+  function renderOrganizerHistory() {
+    const count = document.querySelector("#playbook-organizer-history-count");
+    const list = document.querySelector("#playbook-organizer-history-list");
+    if (!count || !list) return;
+    count.textContent = String(state.organizer.history.length);
+    if (!state.organizer.history.length) {
+      list.innerHTML = '<p class="muted">Nenhuma mudança feita nesta sessão.</p>';
+      return;
+    }
+    list.innerHTML = state.organizer.history.map((entry, index) => `
+      <article><div><strong>${escapeHtml(entry.label)}</strong><small>${entry.at.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</small></div><button type="button" data-organizer-undo="${index}">Desfazer</button></article>
+    `).join("");
+    list.querySelectorAll("[data-organizer-undo]").forEach((button) => button.addEventListener("click", () => undoOrganizerAction(Number(button.dataset.organizerUndo))));
+  }
+
+  function organizerFolderActions(folder) {
+    const wrap = document.createElement("div");
+    wrap.className = "playbook-organizer-card-actions";
+    const actions = [
+      ["Abrir", () => selectFolder(Number(folder.id))],
+      ["Nova subpasta", () => openFolderDialog("create", folder)],
+      ["Renomear", () => openFolderDialog("rename", folder)],
+      ["Mover", () => openMoveDialog({ type: "folder", ids: [Number(folder.id)], label: folder.name })],
+      ["Duplicar estrutura", async () => {
+        try {
+          const result = await request(`/api/v1/playbook/folders/${folder.id}/copy-structure`, { method: "POST", body: JSON.stringify({ name: `${folder.name} (cópia)`, parent_id: folder.parent_id || null }) });
+          const copiedId = Number(result.folder?.id);
+          pushOrganizerHistory(`Estrutura “${folder.name}” duplicada.`, () => request(`/api/v1/playbook/folders/${copiedId}/archive`, { method: "POST", body: "{}" }));
+          await loadLibrary();
+        } catch (error) { showProblem(error); }
+      }],
+      ["Arquivar", async () => {
+        try {
+          const impact = await request(`/api/v1/playbook/folders/${folder.id}/impact`);
+          if (!window.confirm(`Arquivar “${folder.name}” e ${impact.subfolder_count} subpasta(s)? ${impact.content_count} conteúdo(s) continuam preservados. Você poderá desfazer.`)) return;
+          await request(`/api/v1/playbook/folders/${folder.id}/archive`, { method: "POST", body: "{}" });
+          pushOrganizerHistory(`Pasta “${folder.name}” arquivada.`, () => request(`/api/v1/playbook/folders/${folder.id}/restore`, { method: "POST", body: "{}" }));
+          if (Number(state.folderId) === Number(folder.id)) state.folderId = null;
+          await loadLibrary();
+        } catch (error) { showProblem(error); }
+      }],
+    ];
+    for (const [label, handler] of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", (event) => { event.stopPropagation(); handler(); });
+      wrap.append(button);
+    }
+    return wrap;
+  }
+
+  function makeOrganizerFolder(folder, depth = 0) {
+    const query = state.organizer.query.toLocaleLowerCase("pt-BR");
+    const ownMatch = !query || folder.name.toLocaleLowerCase("pt-BR").includes(query);
+    const hasChildren = Boolean((folder.children || []).length);
+    const isExpanded = Boolean(query) || state.organizer.expanded.has(Number(folder.id));
+    const childNodes = isExpanded
+      ? (folder.children || []).map((child) => makeOrganizerFolder(child, depth + 1)).filter(Boolean)
+      : [];
+    if (!ownMatch && !childNodes.length) return null;
+    const article = document.createElement("article");
+    article.className = `playbook-organizer-folder${Number(folder.id) === Number(state.folderId) ? " is-current" : ""}`;
+    article.dataset.depth = String(Math.min(depth, 8));
+    article.dataset.folderId = String(folder.id);
+    article.draggable = state.online;
+    article.innerHTML = `
+      <div class="playbook-organizer-folder-main">
+        <span class="playbook-drag-handle" aria-hidden="true">⠿</span>
+        <button type="button" class="playbook-organizer-folder-open" aria-label="Abrir ${escapeHtml(folder.name)}"${hasChildren ? ` aria-expanded="${isExpanded}"` : ""}><span aria-hidden="true">${hasChildren ? (isExpanded ? "▾" : "▸") : "📁"}</span><span><strong>${escapeHtml(folder.name)}</strong><small>${Number(folder.content_count || 0)} conteúdo(s) · ${(folder.children || []).length} subpasta(s)</small></span></button>
+      </div>`;
+    article.querySelector(".playbook-organizer-folder-open").addEventListener("click", async () => {
+      if (hasChildren) {
+        if (state.organizer.expanded.has(Number(folder.id))) state.organizer.expanded.delete(Number(folder.id));
+        else state.organizer.expanded.add(Number(folder.id));
+      }
+      await selectFolder(Number(folder.id));
+    });
+    article.append(organizerFolderActions(folder));
+    if (childNodes.length) {
+      const children = document.createElement("div");
+      children.className = "playbook-organizer-children";
+      childNodes.forEach((node) => children.append(node));
+      article.append(children);
+    }
+    article.addEventListener("dragstart", (event) => {
+      state.organizer.dragged = { type: "folder", id: Number(folder.id) };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", `folder:${folder.id}`);
+      article.classList.add("is-dragging");
+    });
+    article.addEventListener("dragend", () => { article.classList.remove("is-dragging"); clearOrganizerDropState(); });
+    article.addEventListener("dragover", (event) => {
+      if (!state.organizer.dragged || (state.organizer.dragged.type === "folder" && Number(state.organizer.dragged.id) === Number(folder.id))) return;
+      event.preventDefault();
+      const bounds = article.getBoundingClientRect();
+      const ratio = (event.clientY - bounds.top) / Math.max(1, bounds.height);
+      const zone = state.organizer.dragged.type === "content" ? "inside" : ratio < .22 ? "before" : ratio > .78 ? "after" : "inside";
+      clearOrganizerDropState();
+      article.classList.add(`is-drop-${zone}`);
+      article.dataset.dropZone = zone;
+    });
+    article.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const dragged = state.organizer.dragged;
+      const zone = article.dataset.dropZone || "inside";
+      clearOrganizerDropState();
+      if (!dragged) return;
+      if (dragged.type === "content") return openDropChoice(dragged.id, Number(folder.id));
+      await moveFolderByDrop(Number(dragged.id), folder, zone);
+    });
+    return article;
+  }
+
+  function clearOrganizerDropState() {
+    document.querySelectorAll(".is-drop-before,.is-drop-after,.is-drop-inside").forEach((node) => node.classList.remove("is-drop-before", "is-drop-after", "is-drop-inside"));
+    state.organizer.dragged = null;
+  }
+
+  async function moveFolderByDrop(folderId, target, zone) {
+    const folder = folderById(folderId);
+    if (!folder || Number(folder.id) === Number(target.id)) return;
+    const oldParent = folder.parent_id || null;
+    const oldOrder = siblingFolders(oldParent).map((item) => Number(item.id));
+    const destinationParent = zone === "inside" ? Number(target.id) : (target.parent_id || null);
+    try {
+      await request(`/api/v1/playbook/folders/${folderId}/move`, { method: "POST", body: JSON.stringify({ parent_id: destinationParent }) });
+      if (zone !== "inside") {
+        const destinationOrder = siblingFolders(destinationParent).map((item) => Number(item.id)).filter((id) => id !== folderId);
+        const targetIndex = Math.max(0, destinationOrder.indexOf(Number(target.id)));
+        destinationOrder.splice(zone === "after" ? targetIndex + 1 : targetIndex, 0, folderId);
+        await request("/api/v1/playbook/folders/reorder", { method: "POST", body: JSON.stringify({ parent_id: destinationParent, folder_ids: destinationOrder }) });
+      }
+      pushOrganizerHistory(`Pasta “${folder.name}” movida.`, async () => {
+        await request(`/api/v1/playbook/folders/${folderId}/move`, { method: "POST", body: JSON.stringify({ parent_id: oldParent }) });
+        await request("/api/v1/playbook/folders/reorder", { method: "POST", body: JSON.stringify({ parent_id: oldParent, folder_ids: oldOrder }) });
+      });
+      await loadLibrary();
+    } catch (error) { showProblem(error); }
+  }
+
+  function organizerContentCard(content) {
+    const card = document.createElement("article");
+    card.className = "playbook-organizer-content-card";
+    card.draggable = state.online;
+    card.innerHTML = `<span class="playbook-drag-handle" aria-hidden="true">⠿</span><div><strong>${escapeHtml(content.title)}</strong><small>${escapeHtml(content.content_kind || "Conteúdo")} · ${escapeHtml(content.status === "PUBLISHED" ? "Publicado" : "Rascunho")}</small></div><button type="button">Mover</button>`;
+    card.addEventListener("dragstart", (event) => {
+      state.organizer.dragged = { type: "content", id: Number(content.id) };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", `content:${content.id}`);
+      card.classList.add("is-dragging");
+    });
+    card.addEventListener("dragend", () => { card.classList.remove("is-dragging"); clearOrganizerDropState(); });
+    card.querySelector("button").addEventListener("click", () => openMoveDialog({ type: "content", ids: [Number(content.id)], label: content.title, operation: "ASK" }));
+    card.addEventListener("dblclick", () => openContent(content.id));
+    return card;
+  }
+
+  function renderOrganizer() {
+    if (!state.organizer.open || !elements.organizerTree) return;
+    const roots = (state.data?.tree?.roots || []).filter((folder) => Number(folder.team_id) === Number(state.teamId) && !folder.archived_at);
+    elements.organizerTree.replaceChildren();
+    if (!roots.length) elements.organizerTree.innerHTML = '<div class="playbook-organizer-empty"><strong>Seu Playbook ainda está vazio.</strong><p>Use “Montar estrutura inicial” para começar com um modelo pronto ou crie a primeira pasta.</p></div>';
+    else roots.map((folder) => makeOrganizerFolder(folder)).filter(Boolean).forEach((node) => elements.organizerTree.append(node));
+    const contents = (state.data?.contents || []).filter((item) => !state.organizer.query || `${item.title} ${(item.aliases || []).join(" ")}`.toLocaleLowerCase("pt-BR").includes(state.organizer.query.toLocaleLowerCase("pt-BR")));
+    elements.organizerContents.replaceChildren();
+    if (!state.folderId) elements.organizerContents.innerHTML = '<div class="playbook-organizer-empty"><strong>Escolha uma pasta na árvore.</strong><p>Os conteúdos dela aparecerão aqui para você arrastar.</p></div>';
+    else if (!contents.length) elements.organizerContents.innerHTML = '<div class="playbook-organizer-empty"><strong>Esta pasta ainda não tem conteúdo.</strong><p>Crie um conteúdo novo ou arraste um cartão de outra pasta.</p></div>';
+    else contents.forEach((content) => elements.organizerContents.append(organizerContentCard(content)));
+    const selected = state.folderId ? folderById(state.folderId) : null;
+    document.querySelector("#playbook-organizer-content-title").textContent = selected ? selected.name : "Conteúdos desta pasta";
+    document.querySelector("#playbook-organizer-content-summary").textContent = selected ? folderLabel(selected) : "Escolha uma pasta para organizar seus conteúdos.";
+    document.querySelector("#playbook-organizer-offline").hidden = state.online;
+    elements.organizerDialog.querySelectorAll("button:not([data-playbook-close])").forEach((button) => { if (button.id !== "playbook-organizer-history-toggle") button.disabled = !state.online && !button.closest(".playbook-organizer-history"); });
+  }
+
+  function openOrganizer() {
+    state.organizer.open = true;
+    elements.organizerDialog.showModal();
+    renderOrganizer();
+    renderOrganizerHistory();
   }
 
   function collectionItems() {
@@ -582,6 +817,7 @@ if (playbookRoot) {
     elements.connection.textContent = online ? "Online" : "Offline · consulta";
     elements.connection.classList.toggle("is-offline", !online);
     playbookRoot.classList.toggle("is-offline", !online);
+    if (state.organizer.open) renderOrganizer();
   }
 
   async function loadLibrary() {
@@ -606,6 +842,7 @@ if (playbookRoot) {
     renderItems();
     renderBulkActions();
     renderNextTraining();
+    renderOrganizer();
     if (canManage) loadPlanning().catch(showProblem);
     state.selectedFolder = state.folderId ? folderById(state.folderId) : null;
     // Pasta que veio da URL mas não existe (ou não é deste time) não deixa a
@@ -657,14 +894,16 @@ if (playbookRoot) {
   }
 
   function openFolderDialog(mode = "create", folder = null) {
+    if (folder && mode !== "create") state.selectedFolder = folder;
     const name = document.querySelector("#playbook-folder-name");
     const parent = document.querySelector("#playbook-folder-parent");
     document.querySelector("#playbook-folder-mode").value = mode;
     document.querySelector("#playbook-folder-dialog-title").textContent = mode === "create" ? "Nova pasta" : mode === "rename" ? "Renomear pasta" : "Mover pasta";
     name.value = mode === "rename" ? folder?.name || "" : "";
     name.disabled = mode === "move";
-    parent.innerHTML = folderOptions(mode === "move" ? null : (folder?.parent_id || state.folderId));
-    parent.value = String(mode === "move" ? "" : (folder?.parent_id || state.folderId || ""));
+    const createParent = mode === "create" && folder ? folder.id : (folder?.parent_id || state.folderId);
+    parent.innerHTML = folderOptions(mode === "move" ? null : createParent);
+    parent.value = String(mode === "move" ? "" : (createParent || ""));
     elements.folderDialog.showModal();
     if (!name.disabled) name.focus();
   }
@@ -678,10 +917,14 @@ if (playbookRoot) {
     const parent_id = rawParent ? Number(rawParent) : null;
     try {
       if (mode === "create") {
-        await request("/api/v1/playbook/folders", { method: "POST", body: JSON.stringify({ team_id: state.teamId, name, parent_id }) });
+        const created = await request("/api/v1/playbook/folders", { method: "POST", body: JSON.stringify({ team_id: state.teamId, name, parent_id }) });
+        pushOrganizerHistory(`Pasta “${name}” criada.`, () => request(`/api/v1/playbook/folders/${created.id}/archive`, { method: "POST", body: "{}" }));
         showMessage("Pasta criada. Você pode reorganizá-la depois sem quebrar os conteúdos.");
       } else if (mode === "rename" && state.selectedFolder) {
+        const oldName = state.selectedFolder.name;
+        const folderId = Number(state.selectedFolder.id);
         await request(`/api/v1/playbook/folders/${state.selectedFolder.id}`, { method: "PUT", body: JSON.stringify({ name }) });
+        pushOrganizerHistory(`Pasta renomeada para “${name}”.`, () => request(`/api/v1/playbook/folders/${folderId}`, { method: "PUT", body: JSON.stringify({ name: oldName }) }));
         showMessage("Pasta renomeada; os links existentes foram preservados.");
       } else if (mode === "move" && state.selectedFolder) {
         await request(`/api/v1/playbook/folders/${state.selectedFolder.id}/move`, { method: "POST", body: JSON.stringify({ parent_id }) });
@@ -692,53 +935,92 @@ if (playbookRoot) {
     } catch (error) { showProblem(error); }
   }
 
+  function destinationRows(excludedIds = []) {
+    const excluded = new Set(excludedIds.map(Number));
+    return flattenedFolders()
+      .filter((folder) => Number(folder.team_id) === Number(state.teamId) && !folder.archived_at && !excluded.has(Number(folder.id)))
+      .map((folder) => `<label><input type="radio" name="playbook-destination" value="${folder.id}" required><span>📁 <strong>${escapeHtml(folder.name)}</strong><small>${escapeHtml(folderLabel(folder))}</small></span></label>`)
+      .join("");
+  }
+
+  function openMoveDialog(context) {
+    state.organizer.moveContext = context;
+    document.querySelector("#playbook-move-title").textContent = context.type === "folder" ? "Mover pasta" : "Escolher pasta do conteúdo";
+    document.querySelector("#playbook-move-description").textContent = context.type === "folder"
+      ? `Escolha para onde “${context.label}” deve ir. Nenhum conteúdo será perdido.`
+      : `Escolha onde “${context.label}” deve aparecer.`;
+    const excluded = context.type === "folder" ? [...new Set(context.ids.flatMap((id) => folderById(id) ? flattenedFolderSubtreeIds(id) : [id]))] : [];
+    document.querySelector("#playbook-move-tree").innerHTML = `${context.type === "folder" ? '<label><input type="radio" name="playbook-destination" value="root" required><span>🏠 <strong>Biblioteca</strong><small>Primeiro nível</small></span></label>' : ""}${destinationRows(excluded)}`;
+    elements.moveDialog.showModal();
+  }
+
+  function flattenedFolderSubtreeIds(folderId) {
+    const result = [];
+    const visit = (folder) => { if (!folder) return; result.push(Number(folder.id)); (folder.children || []).forEach(visit); };
+    visit(folderById(folderId));
+    return result;
+  }
+
+  async function submitMoveDialog(event) {
+    event.preventDefault();
+    const context = state.organizer.moveContext;
+    const selected = new FormData(elements.moveForm).get("playbook-destination");
+    if (!context || !selected) return;
+    const folderId = selected === "root" ? null : Number(selected);
+    closeDialog(elements.moveDialog);
+    if (context.type === "content" && context.operation === "ASK") return openDropChoice(context.ids[0], folderId);
+    try {
+      if (context.type === "folder") {
+        const moving = folderById(context.ids[0]);
+        const oldParent = moving?.parent_id || null;
+        const oldOrder = siblingFolders(oldParent).map((item) => Number(item.id));
+        await request(`/api/v1/playbook/folders/${context.ids[0]}/move`, { method: "POST", body: JSON.stringify({ parent_id: folderId }) });
+        pushOrganizerHistory(`Pasta “${context.label}” movida.`, async () => {
+          await request(`/api/v1/playbook/folders/${context.ids[0]}/move`, { method: "POST", body: JSON.stringify({ parent_id: oldParent }) });
+          await request("/api/v1/playbook/folders/reorder", { method: "POST", body: JSON.stringify({ parent_id: oldParent, folder_ids: oldOrder }) });
+        });
+      } else {
+        await moveContentWithChoice(context.ids, folderId, context.operation || "MOVE");
+      }
+      await loadLibrary();
+    } catch (error) { showProblem(error); }
+  }
+
+  function openDropChoice(contentId, folderId) {
+    if (!folderId) return;
+    const content = (state.data?.contents || []).find((item) => Number(item.id) === Number(contentId)) || state.selectedContent || { id: contentId, title: "Conteúdo" };
+    state.organizer.pendingDrop = { contentIds: [Number(contentId)], folderId: Number(folderId), title: content.title };
+    document.querySelector("#playbook-drop-description").textContent = `“${content.title}” foi solto em “${folderById(folderId)?.name || "outra pasta"}”.`;
+    elements.dropDialog.showModal();
+  }
+
+  async function moveContentWithChoice(contentIds, folderId, operation) {
+    const before = await Promise.all(contentIds.map((id) => request(`/api/v1/playbook/contents/${id}`)));
+    await request("/api/v1/playbook/contents/move", { method: "POST", body: JSON.stringify({ content_ids: contentIds, folder_id: folderId, operation }) });
+    pushOrganizerHistory(operation === "MOVE" ? "Conteúdo movido para outra pasta." : "Conteúdo passou a aparecer em mais uma pasta.", async () => {
+      for (const content of before) {
+        const placements = (content.folders || []).map((folder, index) => ({ folder_id: Number(folder.id), placement_kind: folder.placement_kind || "PLACEMENT", sort_order: Number(folder.sort_order ?? index) }));
+        await request(`/api/v1/playbook/contents/${content.id}/placements`, { method: "PUT", body: JSON.stringify({ placements }) });
+      }
+    });
+    state.selected.clear();
+    await loadLibrary();
+  }
+
+  async function confirmPendingDrop(operation) {
+    const pending = state.organizer.pendingDrop;
+    if (!pending) return;
+    closeDialog(elements.dropDialog);
+    try { await moveContentWithChoice(pending.contentIds, pending.folderId, operation); }
+    catch (error) { showProblem(error); }
+    finally { state.organizer.pendingDrop = null; }
+  }
+
   async function manageSelectedFolder() {
     const folder = state.selectedFolder;
     if (!folder) return;
-    const action = window.prompt("Escolha a ação: renomear, mover, reordenar, copiar, arquivar, restaurar ou excluir", "renomear");
-    if (!action) return;
-    const normalized = action.trim().toLocaleLowerCase("pt-BR");
-    if (normalized === "renomear") return openFolderDialog("rename", folder);
-    if (normalized === "mover") return openFolderDialog("move", folder);
-    try {
-      if (normalized === "copiar") {
-        const name = window.prompt("Nome da nova estrutura:", `${folder.name} (modelo)`);
-        if (!name) return;
-        const destination = window.prompt("ID da pasta pai de destino (deixe vazio para a raiz):", "");
-        await request(`/api/v1/playbook/folders/${folder.id}/copy-structure`, {
-          method: "POST", body: JSON.stringify({ name, parent_id: destination ? Number(destination) : null }),
-        });
-        showMessage("Estrutura copiada como modelo; nenhum conteúdo ou arquivo foi duplicado.");
-      } else if (normalized === "reordenar") {
-        const siblingIds = flattenedFolders()
-          .filter((item) => Number(item.team_id) === Number(folder.team_id) && Number(item.parent_id || 0) === Number(folder.parent_id || 0) && !item.archived_at)
-          .sort((left, right) => Number(left.sort_order) - Number(right.sort_order) || Number(left.id) - Number(right.id))
-          .map((item) => Number(item.id));
-        const raw = window.prompt("Informe os IDs das pastas irmãs na nova ordem, separados por vírgula:", siblingIds.join(", "));
-        if (!raw) return;
-        const folder_ids = raw.split(",").map((value) => Number(value.trim())).filter(Boolean);
-        await request("/api/v1/playbook/folders/reorder", {
-          method: "POST", body: JSON.stringify({ parent_id: folder.parent_id || null, folder_ids }),
-        });
-        showMessage("Ordem das pastas atualizada.");
-      } else if (normalized === "arquivar" || normalized === "restaurar") {
-        const endpoint = normalized === "arquivar" ? "archive" : "restore";
-        if (normalized === "arquivar" && !window.confirm("Arquivar esta pasta e suas subpastas? É reversível.")) return;
-        await request(`/api/v1/playbook/folders/${folder.id}/${endpoint}`, { method: "POST", body: "{}" });
-        showMessage(normalized === "arquivar" ? "Pasta arquivada. Use restaurar se foi por engano." : "Pasta restaurada.", normalized === "arquivar" ? "warning" : "success");
-      } else if (normalized === "excluir") {
-        const impact = await request(`/api/v1/playbook/folders/${folder.id}/impact`);
-        const confirmation = window.prompt(`Esta pasta envolve ${impact.content_count} conteúdo(s) e ${impact.subfolder_count} subpasta(s). Ela precisa estar arquivada. Digite EXCLUIR PASTA ${folder.id} para confirmar:`);
-        if (!confirmation) return;
-        await request(`/api/v1/playbook/folders/${folder.id}`, { method: "DELETE", body: JSON.stringify({ confirmation }) });
-        showMessage("Pasta removida definitivamente. Os conteúdos foram preservados, apenas sem essa localização.", "warning");
-      } else {
-        showMessage("Ação não reconhecida. Use renomear, mover, reordenar, copiar, arquivar, restaurar ou excluir.", "warning");
-        return;
-      }
-      state.folderId = null;
-      await loadLibrary();
-    } catch (error) { showProblem(error); }
+    openOrganizer();
+    renderOrganizer();
   }
 
   function splitComma(value) {
@@ -753,17 +1035,108 @@ if (playbookRoot) {
       .map((folder) => {
         const checked = selectedMap.has(Number(folder.id));
         const shortcut = selectedMap.get(Number(folder.id)) === "SHORTCUT";
-        return `<label><input type="checkbox" value="${folder.id}" ${checked ? "checked" : ""}><span>${escapeHtml(folderPath(folder.id).map((item) => item.name).join(" / "))}</span><small>${shortcut ? "atalho" : ""}</small></label>`;
+        return `<label><input type="checkbox" value="${folder.id}" ${checked ? "checked" : ""}><span>${escapeHtml(folderLabel(folder))}</span><small>${shortcut ? "também aparece aqui" : ""}</small></label>`;
       }).join("");
+  }
+
+  const playbookPositions = [
+    ["GOL", "Goleiro"], ["PE", "Ponta esquerda"], ["ME", "Meia esquerda"],
+    ["C", "Central"], ["MD", "Meia direita"], ["PD", "Ponta direita"], ["PV", "Pivô"],
+  ];
+
+  function setChoice(targetId, value) {
+    const target = document.querySelector(`#${targetId}`);
+    if (target) target.value = value;
+    document.querySelectorAll(`[data-choice-target="${targetId}"] [data-choice-value]`).forEach((button) => {
+      const active = button.dataset.choiceValue === value;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    if (targetId === "playbook-content-kind") toggleExerciseSpec();
+  }
+
+  function renderPositionOptions(selected = []) {
+    const selectedSet = new Set(selected);
+    const container = document.querySelector("#playbook-position-options");
+    container.innerHTML = playbookPositions.map(([code, label]) => `<button type="button" data-position="${code}" aria-pressed="${selectedSet.has(code)}" class="${selectedSet.has(code) ? "is-active" : ""}">${escapeHtml(label)}</button>`).join("");
+    container.querySelectorAll("[data-position]").forEach((button) => button.addEventListener("click", () => {
+      button.classList.toggle("is-active");
+      button.setAttribute("aria-pressed", String(button.classList.contains("is-active")));
+      document.querySelector("#playbook-content-positions").value = [...container.querySelectorAll(".is-active")].map((item) => item.dataset.position).join(",");
+    }));
+    document.querySelector("#playbook-content-positions").value = [...selectedSet].join(",");
+  }
+
+  function addExerciseRole(role = {}) {
+    const row = document.createElement("article");
+    row.className = "playbook-exercise-role";
+    row.innerHTML = `
+      <label><span>Quem participa?</span><select data-role-group><option value="ATTACK">Atacante</option><option value="DEFENSE">Defensor</option><option value="GOALKEEPER">Goleiro</option><option value="NEUTRAL">Apoio ou coringa</option></select></label>
+      <label><span>Nome do papel</span><input data-role-label maxlength="120" required placeholder="Ex.: ponta direita"></label>
+      <label><span>Quantidade</span><input data-role-count type="number" min="1" max="20" value="${Number(role.count || 1)}"></label>
+      <label><span>Posição <small>opcional</small></span><select data-role-position><option value="">Qualquer</option>${playbookPositions.map(([code, label]) => `<option value="${code}">${escapeHtml(label)}</option>`).join("")}<option value="M1">1º marcador</option><option value="M2">2º marcador</option><option value="M3">3º marcador</option><option value="AVANCADO">Avançado</option></select></label>
+      <button type="button" data-remove-role aria-label="Retirar participante">Retirar</button>`;
+    row.querySelector("[data-role-group]").value = role.group || "ATTACK";
+    row.querySelector("[data-role-label]").value = role.label || "";
+    row.querySelector("[data-role-position]").value = (role.attack_positions || role.defensive_positions || [])[0] || "";
+    row.querySelector("[data-remove-role]").addEventListener("click", () => row.remove());
+    document.querySelector("#playbook-exercise-roles").append(row);
+  }
+
+  function renderExerciseRoles(variants = []) {
+    const container = document.querySelector("#playbook-exercise-roles");
+    container.replaceChildren();
+    const variant = variants[0] || { label: "Montagem principal", roles: [] };
+    document.querySelector("#playbook-exercise-variant-label").value = variant.label || "Montagem principal";
+    (variant.roles || []).forEach(addExerciseRole);
+    if (!(variant.roles || []).length) addExerciseRole();
+  }
+
+  function collectExerciseVariants() {
+    if (document.querySelector("#playbook-content-kind").value !== "EXERCISE") return [];
+    const roles = [...document.querySelectorAll(".playbook-exercise-role")].map((row) => {
+      const group = row.querySelector("[data-role-group]").value;
+      const position = row.querySelector("[data-role-position]").value;
+      return {
+        group,
+        label: row.querySelector("[data-role-label]").value.trim(),
+        count: Number(row.querySelector("[data-role-count]").value) || 1,
+        attack_positions: position && ["GOL", "PE", "ME", "C", "MD", "PD", "PV"].includes(position) ? [position] : [],
+        defensive_positions: position && ["M1", "M2", "M3", "AVANCADO"].includes(position) ? [position] : [],
+        allow_generic_defender: group === "DEFENSE" && !position,
+      };
+    }).filter((role) => role.label);
+    return roles.length ? [{ label: document.querySelector("#playbook-exercise-variant-label").value.trim() || "Montagem principal", roles }] : [];
+  }
+
+  function setContentStep(step) {
+    state.contentStep = Math.max(1, Math.min(4, step));
+    document.querySelectorAll("[data-content-step]").forEach((section) => { section.hidden = Number(section.dataset.contentStep) !== state.contentStep; });
+    document.querySelectorAll("[data-content-step-indicator]").forEach((item) => item.classList.toggle("is-active", Number(item.dataset.contentStepIndicator) <= state.contentStep));
+    document.querySelector("#playbook-content-back").hidden = state.contentStep === 1;
+    document.querySelector("#playbook-content-next").hidden = state.contentStep === 4;
+    document.querySelector("#playbook-content-save").hidden = state.contentStep !== 4;
+    if (state.contentStep === 4) renderContentPreview();
+  }
+
+  function renderContentPreview() {
+    const folders = [...document.querySelectorAll("#playbook-content-folders input:checked")].map((input) => folderLabel(folderById(Number(input.value))));
+    const positions = splitComma(document.querySelector("#playbook-content-positions").value).map((code) => playbookPositions.find(([value]) => value === code)?.[1] || code);
+    document.querySelector("#playbook-content-preview").innerHTML = `
+      <span class="playbook-content-kind">${escapeHtml(document.querySelector("#playbook-content-kind").value === "JOGADA" ? "Jogada" : document.querySelector("#playbook-content-kind").value === "EXERCISE" ? "Exercício" : "Conceito ou fundamento")}</span>
+      <h4>${escapeHtml(document.querySelector("#playbook-content-title").value || "Sem nome")}</h4>
+      <p><strong>Objetivo:</strong> ${escapeHtml(document.querySelector("#playbook-content-objective").value || "Não informado")}</p>
+      <p><strong>Posições:</strong> ${escapeHtml(positions.join(", ") || "Todas")}</p>
+      <p><strong>Onde aparece:</strong> ${escapeHtml(folders.join(" · ") || "Escolha uma pasta")}</p>`;
   }
 
   function openContentEditor(content = null) {
     document.querySelector("#playbook-content-dialog-title").textContent = content ? "Editar conteúdo" : "Novo conteúdo";
     document.querySelector("#playbook-content-id").value = content?.id || "";
     document.querySelector("#playbook-content-title").value = content?.title || "";
-    document.querySelector("#playbook-content-kind").value = content?.content_kind || "CONTENT";
-    document.querySelector("#playbook-content-perspective").value = content?.perspective || "";
-    document.querySelector("#playbook-content-positions").value = (content?.positions || []).join(", ");
+    setChoice("playbook-content-kind", content?.content_kind || "CONTENT");
+    setChoice("playbook-content-perspective", content?.perspective || "");
+    renderPositionOptions(content?.positions || []);
     document.querySelector("#playbook-content-objective").value = content?.objective || "";
     document.querySelector("#playbook-content-when").value = content?.when_to_use || "";
     document.querySelector("#playbook-content-prerequisites").value = content?.prerequisites || "";
@@ -771,9 +1144,10 @@ if (playbookRoot) {
     document.querySelector("#playbook-content-notes").value = content?.notes || "";
     document.querySelector("#playbook-content-aliases").value = (content?.aliases || []).join(", ");
     document.querySelector("#playbook-content-change-note").value = "";
-    document.querySelector("#playbook-exercise-variants").value = content?.exercise_variants?.length ? JSON.stringify(content.exercise_variants, null, 2) : "";
+    renderExerciseRoles(content?.exercise_variants || []);
     toggleExerciseSpec();
     renderContentFolderPicker(content?.folders || (state.folderId ? [{ id: state.folderId }] : []));
+    setContentStep(1);
     elements.contentDialog.showModal();
     document.querySelector("#playbook-content-title").focus();
   }
@@ -787,19 +1161,7 @@ if (playbookRoot) {
       showProblem(new PlaybookRequestError({ title: "Escolha uma pasta", message: "Cada conteúdo precisa estar em ao menos uma pasta de navegação.", suggestion: "Marque uma pasta antes de salvar." }, 422));
       return;
     }
-    let exerciseVariants = [];
-    const exerciseText = document.querySelector("#playbook-exercise-variants").value.trim();
-    if (exerciseText) {
-      try { exerciseVariants = JSON.parse(exerciseText); }
-      catch (_) {
-        showProblem(new PlaybookRequestError({ title: "JSON do exercício inválido", message: "A estrutura de variantes não pôde ser lida.", suggestion: "Revise vírgulas, aspas e colchetes antes de salvar." }, 422));
-        return;
-      }
-      if (!Array.isArray(exerciseVariants)) {
-        showProblem(new PlaybookRequestError({ title: "Estrutura inválida", message: "As variantes precisam formar uma lista JSON.", suggestion: "Use o botão de exemplo como ponto de partida." }, 422));
-        return;
-      }
-    }
+    const exerciseVariants = collectExerciseVariants();
     const payload = {
       team_id: state.teamId,
       title: document.querySelector("#playbook-content-title").value,
@@ -829,19 +1191,6 @@ if (playbookRoot) {
     document.querySelector("#playbook-exercise-spec").hidden = !isExercise;
   }
 
-  document.querySelector("#playbook-content-kind").addEventListener("input", toggleExerciseSpec);
-  document.querySelector("#playbook-exercise-example").addEventListener("click", () => {
-    document.querySelector("#playbook-content-kind").value = "EXERCISE";
-    document.querySelector("#playbook-exercise-variants").value = JSON.stringify([
-      { label: "Lado direito", roles: [
-        { group: "ATTACK", label: "Ponta direita", count: 1, attack_positions: ["PD"], defensive_positions: [], allow_generic_defender: false },
-        { group: "ATTACK", label: "Meia direita", count: 1, attack_positions: ["MD"], defensive_positions: [], allow_generic_defender: false },
-        { group: "DEFENSE", label: "1º marcador", count: 1, attack_positions: [], defensive_positions: ["M1"], allow_generic_defender: false },
-      ] },
-    ], null, 2);
-    toggleExerciseSpec();
-  });
-
   async function refreshAfterMutation(contentId = null) {
     await loadLibrary();
     if (contentId) await openContent(contentId);
@@ -849,24 +1198,65 @@ if (playbookRoot) {
 
   async function bulkMove(operation) {
     if (!state.selected.size) return;
-    const folderId = window.prompt("Informe o ID da pasta de destino. A árvore lateral mostra as pastas disponíveis:");
-    if (!folderId) return;
-    try {
-      await request("/api/v1/playbook/contents/move", {
-        method: "POST", body: JSON.stringify({ content_ids: [...state.selected], folder_id: Number(folderId), operation }),
-      });
-      state.selected.clear();
-      showMessage(operation === "MOVE" ? "Conteúdos movidos sem alterar versões, favoritos ou planos." : "Atalhos criados sem duplicar materiais.");
-      await loadLibrary();
-    } catch (error) { showProblem(error); }
+    openMoveDialog({ type: "content", ids: [...state.selected], label: `${state.selected.size} conteúdo(s)`, operation });
   }
 
   async function seedTaxonomy() {
-    if (!window.confirm("Criar a estrutura inicial dinâmica para esta equipe? Ela não substitui uma árvore que já exista.")) return;
     try {
-      await request("/api/v1/playbook/taxonomy/seed", { method: "POST", body: JSON.stringify({ team_id: state.teamId }) });
-      showMessage("Estrutura inicial criada. Ela continua totalmente editável pelo CT.");
+      const template = await request(`/api/v1/playbook/taxonomy/template?team_id=${state.teamId}`);
+      state.organizer.template = (template.nodes || []).map((node) => ({ ...node }));
+      renderTemplatePreview();
+      elements.templateDialog.showModal();
+    } catch (error) { showProblem(error); }
+  }
+
+  function renderTemplatePreview() {
+    const container = document.querySelector("#playbook-template-preview");
+    const byKey = new Map(state.organizer.template.map((node) => [node.key, node]));
+    const depthOf = (node) => {
+      let depth = 0;
+      let cursor = node;
+      const seen = new Set();
+      while (cursor?.parent_key && byKey.has(cursor.parent_key) && !seen.has(cursor.parent_key)) {
+        seen.add(cursor.parent_key);
+        depth += 1;
+        cursor = byKey.get(cursor.parent_key);
+      }
+      return depth;
+    };
+    container.innerHTML = state.organizer.template.map((node) => `
+      <div class="playbook-template-row" data-depth="${Math.min(depthOf(node), 8)}" data-template-key="${escapeHtml(node.key)}">
+        <span aria-hidden="true">📁</span><input value="${escapeHtml(node.name)}" maxlength="160" aria-label="Nome da pasta"><button type="button" aria-label="Retirar ${escapeHtml(node.name)}">Retirar</button>
+      </div>`).join("");
+    container.querySelectorAll(".playbook-template-row").forEach((row) => {
+      const key = row.dataset.templateKey;
+      row.querySelector("input").addEventListener("input", (event) => { const node = state.organizer.template.find((item) => item.key === key); if (node) node.name = event.target.value; });
+      row.querySelector("button").addEventListener("click", () => {
+        const removed = new Set([key]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          state.organizer.template.forEach((node) => { if (node.parent_key && removed.has(node.parent_key) && !removed.has(node.key)) { removed.add(node.key); changed = true; } });
+        }
+        state.organizer.template = state.organizer.template.filter((node) => !removed.has(node.key));
+        renderTemplatePreview();
+      });
+    });
+  }
+
+  async function applyTemplate(event) {
+    event.preventDefault();
+    const nodes = state.organizer.template.map((node) => ({ ...node, name: String(node.name || "").trim() })).filter((node) => node.name);
+    if (!nodes.length) return showMessage("Mantenha ao menos uma pasta na estrutura.", "warning");
+    try {
+      const result = await request("/api/v1/playbook/taxonomy/apply", { method: "POST", body: JSON.stringify({ team_id: state.teamId, nodes }) });
+      closeDialog(elements.templateDialog);
+      const roots = result.roots || [];
+      pushOrganizerHistory("Estrutura inicial criada.", async () => {
+        for (const root of roots) await request(`/api/v1/playbook/folders/${root.id}/archive`, { method: "POST", body: "{}" });
+      });
       await loadLibrary();
+      showMessage("Estrutura criada. Agora você pode ajustar os cartões livremente.");
     } catch (error) { showProblem(error); }
   }
 
@@ -1124,7 +1514,8 @@ if (playbookRoot) {
 
   function bindEvents() {
     document.querySelectorAll("[data-playbook-close]").forEach((button) => button.addEventListener("click", () => closeDialog(document.querySelector(`#${button.dataset.playbookClose}`))));
-    [elements.folderDialog, elements.contentDialog, elements.planDialog, elements.problemDialog].forEach((dialog) => dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(dialog); }));
+    [elements.folderDialog, elements.contentDialog, elements.planDialog, elements.problemDialog, elements.organizerDialog, elements.moveDialog, elements.dropDialog, elements.templateDialog].forEach((dialog) => dialog?.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(dialog); }));
+    elements.organizerDialog?.addEventListener("close", () => { state.organizer.open = false; });
     document.querySelector("#playbook-problem-close").addEventListener("click", () => closeDialog(elements.problemDialog));
     elements.team.addEventListener("change", async () => { state.teamId = Number(elements.team.value); state.folderId = null; state.selected.clear(); syncFolderInUrl(null); try { await loadLibrary(); } catch (error) { showProblem(error); } });
     document.querySelectorAll("[data-playbook-view]").forEach((button) => button.addEventListener("click", () => {
@@ -1156,6 +1547,30 @@ if (playbookRoot) {
       renderItems();
     });
     if (canManage) {
+      document.querySelector("#playbook-open-organizer")?.addEventListener("click", openOrganizer);
+      document.querySelector("#playbook-organizer-new-folder")?.addEventListener("click", () => openFolderDialog("create"));
+      document.querySelector("#playbook-organizer-new-content")?.addEventListener("click", () => openContentEditor());
+      document.querySelector("#playbook-organizer-template")?.addEventListener("click", seedTaxonomy);
+      document.querySelector("#playbook-organizer-search")?.addEventListener("input", (event) => { state.organizer.query = event.target.value.trim(); renderOrganizer(); });
+      document.querySelector("#playbook-organizer-history-toggle")?.addEventListener("click", (event) => {
+        const hidden = !elements.organizerHistory.hidden;
+        elements.organizerHistory.hidden = hidden;
+        event.currentTarget.setAttribute("aria-expanded", String(!hidden));
+      });
+      document.querySelector("#playbook-organizer-history-close")?.addEventListener("click", () => { elements.organizerHistory.hidden = true; document.querySelector("#playbook-organizer-history-toggle").setAttribute("aria-expanded", "false"); });
+      elements.moveForm?.addEventListener("submit", submitMoveDialog);
+      document.querySelector("#playbook-drop-move")?.addEventListener("click", () => confirmPendingDrop("MOVE"));
+      document.querySelector("#playbook-drop-shortcut")?.addEventListener("click", () => confirmPendingDrop("SHORTCUT"));
+      elements.templateForm?.addEventListener("submit", applyTemplate);
+      document.querySelectorAll("[data-choice-target] [data-choice-value]").forEach((button) => button.addEventListener("click", () => setChoice(button.closest("[data-choice-target]").dataset.choiceTarget, button.dataset.choiceValue)));
+      document.querySelector("#playbook-exercise-add-role")?.addEventListener("click", () => addExerciseRole());
+      document.querySelector("#playbook-content-back")?.addEventListener("click", () => setContentStep(state.contentStep - 1));
+      document.querySelector("#playbook-content-next")?.addEventListener("click", () => {
+        if (state.contentStep === 1 && !document.querySelector("#playbook-content-title").value.trim()) return document.querySelector("#playbook-content-title").reportValidity();
+        if (state.contentStep === 2 && !document.querySelector("#playbook-content-steps").value.trim()) return document.querySelector("#playbook-content-steps").reportValidity();
+        if (state.contentStep === 3 && !document.querySelector("#playbook-content-folders input:checked")) return showMessage("Escolha ao menos uma pasta para continuar.", "warning");
+        setContentStep(state.contentStep + 1);
+      });
       document.querySelector("#playbook-new-folder").addEventListener("click", () => openFolderDialog("create"));
       document.querySelector("#playbook-new-content").addEventListener("click", () => openContentEditor());
       document.querySelector("#playbook-seed-taxonomy").addEventListener("click", seedTaxonomy);

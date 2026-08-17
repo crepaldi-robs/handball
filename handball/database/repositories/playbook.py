@@ -154,6 +154,17 @@ class PlaybookRepository:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def _folder_path(self, folder_id: int) -> list[dict[str, Any]]:
+        path: list[dict[str, Any]] = []
+        cursor = self._folder(folder_id)
+        seen: set[int] = set()
+        while cursor is not None and int(cursor["id"]) not in seen:
+            seen.add(int(cursor["id"]))
+            path.append({"id": int(cursor["id"]), "name": str(cursor["name"])})
+            cursor = self._folder(int(cursor["parent_id"])) if cursor["parent_id"] is not None else None
+        path.reverse()
+        return path
+
     def _content(self, content_id: int) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM playbook_contents WHERE id=?", (int(content_id),)
@@ -380,95 +391,102 @@ class PlaybookRepository:
     # ------------------------------------------------------------------
     # Pastas e taxonomia inicial
     # ------------------------------------------------------------------
-    def seed_initial_taxonomy(self, team_id: int, *, actor_user_id: int) -> dict[str, Any]:
+    @staticmethod
+    def initial_taxonomy_template() -> dict[str, Any]:
+        nodes: list[dict[str, Any]] = []
+
+        def add(key: str, name: str, parent_key: str | None = None) -> None:
+            siblings = [node for node in nodes if node["parent_key"] == parent_key]
+            nodes.append({"key": key, "parent_key": parent_key, "name": name, "sort_order": len(siblings)})
+
+        add("tecnica", "Técnica")
+        add("tatica", "Tática")
+        add("handball", "Handball", "tecnica")
+        add("academia", "Academia", "tecnica")
+        for index, name in enumerate(("Passe e recepção", "Drible", "Arremesso", "Finta", "1x1", "Pivô", "Defesa individual", "Goleiro")):
+            add(f"handball-{index}", name, "handball")
+        for index, name in enumerate(("Ombros", "Peito", "Costas", "Core", "Quadríceps", "Posterior de coxa", "Glúteos", "Panturrilhas", "Braços")):
+            add(f"academia-{index}", name, "academia")
+        for key, name in (("ataque", "Ataque"), ("defesa", "Defesa"), ("transicao", "Transição"), ("especiais", "Situações especiais")):
+            add(key, name, "tatica")
+        jogadas = ("X", "Desdobre", "Corrida", "Circulação", "Roda", "Islândia", "Portugal", "Espanha", "Cruzamento", "Amplitude")
+        add("ataque-principais", "Jogadas principais", "ataque")
+        for index, name in enumerate(jogadas):
+            add(f"ataque-principal-{index}", name, "ataque-principais")
+        add("ataque-contra", "Contra esquemas defensivos", "ataque")
+        for scheme in ("6x0", "5x1"):
+            scheme_key = f"ataque-{scheme.replace('x', '-')}"
+            add(scheme_key, scheme, "ataque-contra")
+            for index, name in enumerate(jogadas):
+                add(f"{scheme_key}-{index}", name, scheme_key)
+        reduzidas = ("1x1", "2x2", "Subida", "Triângulo", "Troca de pivô", "Ímpar", "Dissuasão")
+        add("ataque-reduzidas", "Situações reduzidas e propostas da defesa", "ataque")
+        for index, name in enumerate(reduzidas):
+            add(f"ataque-reduzida-{index}", name, "ataque-reduzidas")
+        for scheme in ("6x0", "5x1"):
+            scheme_key = f"defesa-{scheme.replace('x', '-')}"
+            add(scheme_key, scheme, "defesa")
+            for index, name in enumerate(jogadas):
+                add(f"{scheme_key}-{index}", name, scheme_key)
+        add("defesa-reduzidas", "Situações reduzidas e respostas defensivas", "defesa")
+        for index, name in enumerate(reduzidas):
+            add(f"defesa-reduzida-{index}", name, "defesa-reduzidas")
+        for index, name in enumerate(("Contra-ataque", "Retorno defensivo", "Segunda onda", "Troca ataque-defesa")):
+            add(f"transicao-{index}", name, "transicao")
+        for index, name in enumerate(("Tiro de 7 m", "Tiro livre", "Superioridade numérica", "Inferioridade numérica", "Fim de jogo")):
+            add(f"especial-{index}", name, "especiais")
+        return {"name": "Estrutura inicial HM-IME", "nodes": nodes}
+
+    def apply_taxonomy_template(
+        self,
+        team_id: int,
+        nodes: Iterable[Mapping[str, Any]],
+        *,
+        actor_user_id: int,
+    ) -> dict[str, Any]:
         self._require_available()
         self._assert_team_exists(team_id)
         existing = self.connection.execute(
             "SELECT COUNT(*) FROM playbook_folders WHERE team_id=?", (int(team_id),)
         ).fetchone()
         if int(existing[0]):
-            raise ValueError(
-                "A equipe já possui uma árvore de Playbook; a estrutura inicial "
-                "não substitui pastas existentes."
-            )
-
-        def add(name: str, parent_id: int | None) -> int:
-            return int(
-                self.create_folder(
+            raise ValueError("A equipe já possui uma estrutura. Edite os cartões existentes em vez de substituí-los.")
+        pending = [dict(node) for node in nodes]
+        created_by_key: dict[str, int] = {}
+        created_ids: list[int] = []
+        while pending:
+            ready = [node for node in pending if node.get("parent_key") is None or str(node["parent_key"]) in created_by_key]
+            if not ready:
+                raise ValueError("A estrutura possui uma ligação circular entre pastas.")
+            ready.sort(key=lambda node: (int(node.get("sort_order", 0)), str(node.get("name", "")).casefold()))
+            for node in ready:
+                key = str(node["key"])
+                if key in created_by_key:
+                    raise ValueError("A estrutura contém cartões duplicados.")
+                parent_key = node.get("parent_key")
+                folder = self.create_folder(
                     team_id,
-                    name=name,
-                    parent_id=parent_id,
+                    name=str(node["name"]),
+                    parent_id=created_by_key.get(str(parent_key)) if parent_key is not None else None,
+                    sort_order=int(node.get("sort_order", 0)),
                     actor_user_id=actor_user_id,
                     audit=False,
-                )["id"]
-            )
-
-        tecnica = add("Técnica", None)
-        tatica = add("Tática", None)
-        handball = add("Handball", tecnica)
-        academia = add("Academia", tecnica)
-        for name in (
-            "Passe e recepção",
-            "Drible",
-            "Arremesso",
-            "Finta",
-            "1x1",
-            "Pivô",
-            "Defesa individual",
-            "Goleiro",
-        ):
-            add(name, handball)
-        for name in (
-            "Ombros",
-            "Peito",
-            "Costas",
-            "Core",
-            "Quadríceps",
-            "Posterior de coxa",
-            "Glúteos",
-            "Panturrilhas",
-            "Braços",
-        ):
-            add(name, academia)
-
-        ataque = add("Ataque", tatica)
-        defesa = add("Defesa", tatica)
-        transicao = add("Transição", tatica)
-        especiais = add("Situações especiais", tatica)
-        jogadas = (
-            "X",
-            "Desdobre",
-            "Corrida",
-            "Circulação",
-            "Roda",
-            "Islândia",
-            "Portugal",
-            "Espanha",
-            "Cruzamento",
-            "Amplitude",
+                )
+                created_by_key[key] = int(folder["id"])
+                created_ids.append(int(folder["id"]))
+                pending.remove(node)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.taxonomy.apply_template",
+            entity="playbook_team",
+            target_id=team_id,
+            after={"folder_ids": created_ids},
         )
-        principais = add("Jogadas principais", ataque)
-        for name in jogadas:
-            add(name, principais)
-        contra = add("Contra esquemas defensivos", ataque)
-        for scheme in ("6x0", "5x1"):
-            scheme_id = add(scheme, contra)
-            for name in jogadas:
-                add(name, scheme_id)
-        reduzidas_ataque = add("Situações reduzidas e propostas da defesa", ataque)
-        for name in ("1x1", "2x2", "Subida", "Triângulo", "Troca de pivô", "Ímpar", "Dissuasão"):
-            add(name, reduzidas_ataque)
-        for scheme in ("6x0", "5x1"):
-            scheme_id = add(scheme, defesa)
-            for name in jogadas:
-                add(name, scheme_id)
-        reduzidas_defesa = add("Situações reduzidas e respostas defensivas", defesa)
-        for name in ("1x1", "2x2", "Subida", "Triângulo", "Troca de pivô", "Ímpar", "Dissuasão"):
-            add(name, reduzidas_defesa)
-        for name in ("Contra-ataque", "Retorno defensivo", "Segunda onda", "Troca ataque-defesa"):
-            add(name, transicao)
-        for name in ("Tiro de 7 m", "Tiro livre", "Superioridade numérica", "Inferioridade numérica", "Fim de jogo"):
-            add(name, especiais)
+        return self.tree([team_id])
+
+    def seed_initial_taxonomy(self, team_id: int, *, actor_user_id: int) -> dict[str, Any]:
+        template = self.initial_taxonomy_template()
+        result = self.apply_taxonomy_template(team_id, template["nodes"], actor_user_id=actor_user_id)
         self._audit(
             actor_user_id=actor_user_id,
             action="playbook.taxonomy.seed",
@@ -476,7 +494,7 @@ class PlaybookRepository:
             target_id=team_id,
             after={"roots": ["Técnica", "Tática"]},
         )
-        return self.tree([team_id])
+        return result
 
     def tree(
         self,
@@ -504,6 +522,8 @@ class PlaybookRepository:
         by_id: dict[int, dict[str, Any]] = {}
         roots: list[dict[str, Any]] = []
         for row in items:
+            row["path"] = self._folder_path(int(row["id"]))
+            row["depth"] = max(0, len(row["path"]) - 1)
             row["children"] = []
             by_id[int(row["id"])] = row
         for row in items:
@@ -973,6 +993,8 @@ class PlaybookRepository:
                     (content_id,),
                 ).fetchall()
             ]
+            for folder in item["folders"]:
+                folder["path"] = self._folder_path(int(folder["id"]))
         return items
 
     def content_detail(
@@ -1014,6 +1036,8 @@ class PlaybookRepository:
                 (int(content_id),),
             ).fetchall()
         ]
+        for folder in result["folders"]:
+            folder["path"] = self._folder_path(int(folder["id"]))
         result["relations"] = [
             dict(row)
             for row in self.connection.execute(
@@ -1302,6 +1326,32 @@ class PlaybookRepository:
             )
             results.append(after)
         return results
+
+    def set_content_placements(
+        self,
+        content_id: int,
+        placements: Iterable[Mapping[str, Any]],
+        *,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        """Substitui localizações de forma exata para o organizador e o Desfazer."""
+
+        self._require_available()
+        allowed = _ids(team_ids)
+        content = self._allowed_content(content_id, allowed)
+        before = self.content_detail(content_id, team_ids=allowed)
+        self._replace_placements(content_id, int(content["team_id"]), placements)
+        after = self.content_detail(content_id, team_ids=allowed)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.content.placements.replace",
+            entity="playbook_content",
+            target_id=content_id,
+            before={"folders": before["folders"]},
+            after={"folders": after["folders"]},
+        )
+        return after
 
     def set_content_status(
         self,
