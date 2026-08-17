@@ -3,6 +3,7 @@
   if (!root) return;
 
   const csrf = document.body.dataset.csrfToken;
+  const initialContentId = Number(new URLSearchParams(window.location.search).get("content_id")) || null;
   let activeItem = null;
 
   async function request(url, options = {}) {
@@ -133,6 +134,9 @@
       renderDetail(content);
       document.querySelector("#playbook-player-view").classList.add("hidden");
       document.querySelector("#playbook-player-detail").classList.remove("hidden");
+      const url = new URL(window.location.href);
+      url.searchParams.set("content_id", String(contentId));
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
       request(`/api/v1/playbook/contents/${contentId}/view`, { method: "POST" }).catch(() => {});
     } catch (error) {
       window.alert(error.message);
@@ -157,6 +161,50 @@
       responsibility.classList.add("hidden");
     }
 
+    const attachmentUrl = (attachment) =>
+      `/api/v1/playbook/attachments/${encodeURIComponent(String(attachment.id))}/${attachment.storage_kind === "DRIVE_LINK" ? "open" : "download"}`;
+    const attachments = Array.isArray(content.attachments) ? content.attachments : [];
+    const mediaSection = document.querySelector("#pbp-media");
+    const media = attachments.filter((attachment) =>
+      attachment.storage_kind === "LOCAL_FILE"
+      && (String(attachment.mime_type || "").startsWith("video/") || String(attachment.mime_type || "").startsWith("image/")),
+    );
+    mediaSection.replaceChildren(...media.map((attachment) => {
+      const figure = el("figure", "pbp-media");
+      const mimeType = String(attachment.mime_type || "");
+      if (mimeType.startsWith("video/")) {
+        const video = document.createElement("video");
+        video.src = attachmentUrl(attachment);
+        video.controls = true;
+        video.loop = true;
+        video.muted = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-label", attachment.label || `Vídeo de ${content.title}`);
+        figure.append(video);
+      } else {
+        const image = document.createElement("img");
+        image.src = attachmentUrl(attachment);
+        image.alt = attachment.label || `Imagem de ${content.title}`;
+        figure.append(image);
+      }
+      if (attachment.label) figure.append(el("figcaption", null, attachment.label));
+      return figure;
+    }));
+    mediaSection.classList.toggle("hidden", !media.length);
+
+    const setTextSection = (sectionId, textId, value) => {
+      const section = document.querySelector(sectionId);
+      if (value) {
+        document.querySelector(textId).textContent = value;
+        section.classList.remove("hidden");
+      } else {
+        section.classList.add("hidden");
+      }
+    };
+    setTextSection("#pbp-objective", "#pbp-objective-text", content.objective);
+
     const when = document.querySelector("#pbp-when");
     if (content.when_to_use) { document.querySelector("#pbp-when-text").textContent = content.when_to_use; when.classList.remove("hidden"); }
     else when.classList.add("hidden");
@@ -164,6 +212,20 @@
     const steps = document.querySelector("#pbp-steps");
     if (content.steps) { document.querySelector("#pbp-steps-text").textContent = content.steps; steps.classList.remove("hidden"); }
     else steps.classList.add("hidden");
+    setTextSection("#pbp-notes", "#pbp-notes-text", content.notes);
+
+    const materialsSection = document.querySelector("#pbp-materials");
+    const materials = document.querySelector("#pbp-materials-list");
+    materials.replaceChildren(...attachments.map((attachment) => {
+      const link = document.createElement("a");
+      link.className = "button";
+      link.href = attachmentUrl(attachment);
+      link.target = attachment.storage_kind === "DRIVE_LINK" ? "_blank" : "_self";
+      link.rel = "noopener";
+      link.textContent = attachment.label || (attachment.storage_kind === "DRIVE_LINK" ? "Abrir material associado" : "Abrir anexo");
+      return link;
+    }));
+    materialsSection.classList.toggle("hidden", !attachments.length);
 
     const relationsSection = document.querySelector("#pbp-relations");
     const relations = content.relations || [];
@@ -201,8 +263,12 @@
   }
 
   document.querySelector("#pbp-detail-back").addEventListener("click", () => {
+    document.querySelectorAll("#playbook-player-detail video").forEach((video) => video.pause());
     document.querySelector("#playbook-player-detail").classList.add("hidden");
     document.querySelector("#playbook-player-view").classList.remove("hidden");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("content_id");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
   });
 
   document.querySelector("#pbp-mark-seen").addEventListener("click", async (event) => {
@@ -217,6 +283,8 @@
     }
   });
 
-  loadForTraining().then(loadForPosition);
+  loadForTraining()
+    .then(loadForPosition)
+    .then(() => initialContentId ? openDetail(initialContentId) : undefined);
   loadOffline();
 })();

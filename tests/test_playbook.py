@@ -604,6 +604,25 @@ def test_player_next_training_plan_exposes_only_published_preparation(tmp_path: 
     csrf = login(client, "ct", data["passwords"]["ct"])
     team_id, handball_id, published_content = _seed_and_content(client, csrf)
     published_content_id = int(published_content["id"])
+    video_upload = client.post(
+        f"/api/v1/playbook/contents/{published_content_id}/attachments/upload",
+        files={"file": ("defesa-6x0.mp4", b"\x00\x00\x00\x18ftypisompreview", "video/mp4")},
+        data={"label": "Vídeo da defesa 6x0", "offline_essential": "false"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert video_upload.status_code == 201, video_upload.text
+    video_attachment_id = int(video_upload.json()["id"])
+    drive_attachment = client.post(
+        f"/api/v1/playbook/contents/{published_content_id}/attachments/drive",
+        json={
+            "url": "https://drive.google.com/file/d/playbook-preview/view",
+            "label": "Explicação complementar",
+            "offline_essential": False,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert drive_attachment.status_code == 201, drive_attachment.text
+    drive_attachment_id = int(drive_attachment.json()["id"])
     assert client.post(
         f"/api/v1/playbook/contents/{published_content_id}/publish",
         headers={"X-CSRF-Token": csrf},
@@ -657,6 +676,28 @@ def test_player_next_training_plan_exposes_only_published_preparation(tmp_path: 
     assert [item["content_id"] for item in plan.json()["items"]] == [published_content_id]
     assert plan.json()["items"][0]["planned_minutes"] == 15
     assert plan.json()["items"][0]["notes"] == "Revisar antes de sair."
+    detail = client.get(f"/api/v1/playbook/contents/{published_content_id}")
+    assert detail.status_code == 200, detail.text
+    attachments = {item["id"]: item for item in detail.json()["attachments"]}
+    assert attachments[video_attachment_id]["mime_type"] == "video/mp4"
+    assert attachments[video_attachment_id]["storage_kind"] == "LOCAL_FILE"
+    assert attachments[drive_attachment_id]["storage_kind"] == "DRIVE_LINK"
+    video = client.get(f"/api/v1/playbook/attachments/{video_attachment_id}/download")
+    assert video.status_code == 200
+    assert video.headers["content-type"].startswith("video/mp4")
+    drive = client.get(
+        f"/api/v1/playbook/attachments/{drive_attachment_id}/open",
+        follow_redirects=False,
+    )
+    assert drive.status_code == 307
+    assert drive.headers["location"] == "https://drive.google.com/file/d/playbook-preview/view"
+
+    player_page = client.get(
+        f"/app/playbook?event_id={event_id}&content_id={published_content_id}"
+    )
+    assert player_page.status_code == 200
+    assert "/static/playbook-player.js" in player_page.text
+    assert 'id="pbp-media"' in player_page.text
 
 
 def test_content_fit_reports_whether_exercise_closes_with_confirmed_roster(tmp_path: Path) -> None:

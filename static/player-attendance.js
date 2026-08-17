@@ -65,6 +65,9 @@
     Object.entries(states).forEach(([key, el]) => {
       if (el) el.classList.toggle("hidden", key !== name);
     });
+    if (name !== "savedGoing") {
+      preparation?.querySelectorAll("video").forEach((video) => video.pause());
+    }
   }
 
   function weekdayDate(iso) {
@@ -211,6 +214,125 @@
     return wrapper;
   }
 
+  function playbookAttachmentUrl(attachment) {
+    const action = attachment.storage_kind === "DRIVE_LINK" ? "open" : "download";
+    return `/api/v1/playbook/attachments/${encodeURIComponent(String(attachment.id))}/${action}`;
+  }
+
+  function lessonMedia(lesson, compact) {
+    const attachments = Array.isArray(lesson.attachments) ? lesson.attachments : [];
+    const media = attachments.filter((attachment) =>
+      attachment.storage_kind === "LOCAL_FILE"
+      && (String(attachment.mime_type || "").startsWith("video/") || String(attachment.mime_type || "").startsWith("image/")),
+    );
+    const materials = attachments.filter((attachment) => !media.includes(attachment));
+    const fragment = document.createDocumentFragment();
+
+    media.forEach((attachment) => {
+      const figure = document.createElement("figure");
+      figure.className = "player-playbook-media";
+      const mimeType = String(attachment.mime_type || "");
+      if (mimeType.startsWith("video/")) {
+        const video = document.createElement("video");
+        video.src = playbookAttachmentUrl(attachment);
+        video.controls = true;
+        video.loop = true;
+        video.muted = true;
+        video.autoplay = !compact;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-label", attachment.label || `Vídeo de ${lesson.title}`);
+        figure.append(video);
+      } else {
+        const image = document.createElement("img");
+        image.src = playbookAttachmentUrl(attachment);
+        image.alt = attachment.label || `Imagem de ${lesson.title}`;
+        image.loading = compact ? "lazy" : "eager";
+        figure.append(image);
+      }
+      if (attachment.label) figure.append(Object.assign(document.createElement("figcaption"), { textContent: attachment.label }));
+      fragment.append(figure);
+    });
+
+    if (materials.length) {
+      const list = document.createElement("div");
+      list.className = "player-playbook-materials";
+      materials.forEach((attachment) => {
+        const link = document.createElement("a");
+        link.className = "button player-playbook-material-link";
+        link.href = playbookAttachmentUrl(attachment);
+        link.target = attachment.storage_kind === "DRIVE_LINK" ? "_blank" : "_self";
+        link.rel = "noopener";
+        link.textContent = attachment.label || (attachment.storage_kind === "DRIVE_LINK" ? "Abrir material associado" : "Abrir anexo");
+        list.append(link);
+      });
+      fragment.append(list);
+    }
+    return fragment;
+  }
+
+  function lessonBody(lesson, compact) {
+    const body = document.createElement("div");
+    body.className = "player-playbook-lesson-body";
+    body.append(lessonMedia(lesson, compact));
+    if (lesson.objective) body.append(lessonDetail("Objetivo", lesson.objective));
+    if (lesson.when_to_use) body.append(lessonDetail("Quando usar", lesson.when_to_use));
+    if (lesson.steps) body.append(lessonDetail("Passo a passo", lesson.steps, "player-playbook-steps"));
+    if (lesson.planned_minutes) body.append(lessonDetail("Tempo previsto", `${lesson.planned_minutes} min`));
+    if (lesson.notes) body.append(lessonDetail("Recado da CT", lesson.notes));
+
+    const link = document.createElement("a");
+    link.className = "button button-primary player-playbook-detail-link";
+    link.href = `/app/playbook?event_id=${encodeURIComponent(String(item.event.id))}&content_id=${encodeURIComponent(String(lesson.content_id))}`;
+    link.textContent = "Ver esta jogada completa no Playbook";
+    body.append(link);
+    return body;
+  }
+
+  function lessonCard(lesson, index, compact) {
+    if (!compact) {
+      const article = document.createElement("article");
+      article.className = "player-playbook-lesson";
+      const title = document.createElement("h3");
+      title.textContent = lesson.title;
+      article.append(title, lessonBody(lesson, false));
+      return article;
+    }
+
+    const details = document.createElement("details");
+    details.className = "player-playbook-lesson player-playbook-lesson-compact";
+    const summary = document.createElement("summary");
+    const order = document.createElement("span");
+    order.className = "player-playbook-order";
+    order.textContent = String(index + 1).padStart(2, "0");
+    const title = document.createElement("strong");
+    title.textContent = lesson.title;
+    const hint = document.createElement("span");
+    hint.className = "player-playbook-summary-hint";
+    hint.textContent = lesson.planned_minutes ? `${lesson.planned_minutes} min · tocar para abrir` : "Tocar para abrir";
+    const text = document.createElement("span");
+    text.append(title, hint);
+    summary.append(order, text);
+    details.append(summary, lessonBody(lesson, true));
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        preparationLessons.querySelectorAll("details[open]").forEach((other) => {
+          if (other !== details) other.open = false;
+        });
+        details.querySelectorAll("video").forEach((video) => {
+          video.autoplay = true;
+          video.play().catch(() => {});
+        });
+      } else {
+        details.querySelectorAll("video").forEach((video) => {
+          video.autoplay = false;
+          video.pause();
+        });
+      }
+    });
+    return details;
+  }
+
   function renderPreparation(plan) {
     const lessons = Array.isArray(plan?.items) ? plan.items.filter((lesson) => lesson?.title) : [];
     preparation.classList.remove("hidden");
@@ -225,28 +347,39 @@
     }
 
     document.querySelector("#attendance-mark-seen").classList.remove("hidden");
-    setPreparationStatus("Revise estas lições antes do treino.", "ready");
+    const compact = lessons.length > 3;
+    setPreparationStatus(
+      compact
+        ? `${lessons.length} jogadas para este treino. Toque em uma delas para abrir vídeo, orientação e recado da CT.`
+        : `${lessons.length === 1 ? "1 jogada" : `${lessons.length} jogadas`} para revisar antes do treino.`,
+      "ready",
+    );
     preparationLink.href = `/app/playbook?event_id=${encodeURIComponent(String(item.event.id))}`;
     preparationLink.classList.remove("hidden");
-    preparationLessons.replaceChildren(
-      ...lessons.map((lesson) => {
-        const article = document.createElement("article");
-        article.className = "player-playbook-lesson";
-        const title = document.createElement("h3");
-        title.textContent = lesson.title;
-        article.append(title);
-        if (lesson.objective) article.append(lessonDetail("Objetivo", lesson.objective));
-        if (lesson.steps) article.append(lessonDetail("Passos", lesson.steps, "player-playbook-steps"));
-        if (lesson.planned_minutes) article.append(lessonDetail("Duração prevista", `${lesson.planned_minutes} min`));
-        if (lesson.notes) article.append(lessonDetail("Nota da CT", lesson.notes));
-        return article;
-      }),
-    );
+    preparationLessons.classList.toggle("is-compact", compact);
+    preparationLessons.replaceChildren(...lessons.map((lesson, index) => lessonCard(lesson, index, compact)));
   }
 
   async function loadPreparation() {
     try {
       const plan = await request(`/api/v1/playbook/events/${item.event.id}/plan`);
+      const baseLessons = Array.isArray(plan?.items) ? plan.items : [];
+      // Cada requisição autenticada atualiza last_seen_at. No SQLite, disparar
+      // vários detalhes em paralelo pode criar contenção entre essas escritas.
+      // A lista do treino é curta; a leitura sequencial mantém o preview
+      // previsível e deixa uma falha isolada degradar somente aquela jogada.
+      const detailResults = [];
+      for (const lesson of baseLessons) {
+        try {
+          detailResults.push({ status: "fulfilled", value: await request(`/api/v1/playbook/contents/${lesson.content_id}`) });
+        } catch (reason) {
+          detailResults.push({ status: "rejected", reason });
+        }
+      }
+      plan.items = baseLessons.map((lesson, index) => {
+        const result = detailResults[index];
+        return result?.status === "fulfilled" ? { ...result.value, ...lesson } : lesson;
+      });
       renderPreparation(plan);
     } catch (error) {
       preparation.classList.remove("hidden");

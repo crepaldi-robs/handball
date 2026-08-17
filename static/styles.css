@@ -1127,19 +1127,60 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .player-attendance-shell legend { font-weight: 700; padding: 0 6px; }
 .inline-options { display: flex; flex-wrap: wrap; gap: 12px; }
 .player-playbook-preparation { margin: 20px 0; padding: clamp(18px, 4vw, 26px); }
-.player-playbook-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.player-playbook-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; }
 .player-playbook-heading .eyebrow { margin-bottom: 6px; }
 .player-playbook-heading h2 { margin: 0; font-size: clamp(1.2rem, 3vw, 1.45rem); }
-.player-playbook-heading .text-button { flex: 0 0 auto; }
+.player-playbook-heading .text-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-brand-primary, #173f35);
+  border-radius: 10px;
+  color: var(--color-brand-primary, #173f35);
+  background: var(--color-surface, #fff);
+  text-decoration: none;
+}
 .player-playbook-status { margin: 12px 0 0; color: var(--muted); font-size: .9rem; }
 .player-playbook-status[data-state="notice"] { color: var(--warning, #8a5700); }
 .player-playbook-status[data-state="unavailable"] { color: var(--muted); }
 .player-playbook-lessons { display: grid; gap: 12px; margin-top: 18px; }
-.player-playbook-lesson { padding: 16px; border: 1px solid var(--line, #d6d0c5); border-radius: 12px; background: var(--surface, #fff); }
+.player-playbook-lesson { overflow: hidden; padding: 16px; border: 1px solid var(--line, #d6d0c5); border-radius: 14px; background: var(--surface, #fff); }
 .player-playbook-lesson h3 { margin: 0 0 10px; font-size: 1rem; }
 .player-playbook-lesson > div { margin-top: 8px; color: var(--muted); font-size: .9rem; line-height: 1.5; }
 .player-playbook-lesson > div strong { color: var(--ink, #0b1f33); }
 .player-playbook-steps span { white-space: pre-line; }
+.player-playbook-lesson-body { display: grid; gap: 10px; }
+.player-playbook-lesson-body > div { color: var(--muted); font-size: .9rem; line-height: 1.5; }
+.player-playbook-lesson-body > div strong { color: var(--ink, #0b1f33); }
+.player-playbook-media { margin: 0; overflow: hidden; border: 1px solid var(--line, #d6d0c5); border-radius: 12px; background: #101820; }
+.player-playbook-media video,
+.player-playbook-media img { display: block; width: 100%; max-height: min(58vh, 380px); object-fit: contain; background: #101820; }
+.player-playbook-media figcaption { padding: 7px 10px; color: #fff; background: #101820; font-size: .76rem; }
+.player-playbook-materials { display: flex; flex-wrap: wrap; gap: 8px; }
+.player-playbook-material-link { min-height: 40px; padding: 9px 12px; font-size: .84rem; }
+.player-playbook-detail-link { justify-self: start; margin-top: 2px; text-decoration: none; }
+.player-playbook-lesson-compact { padding: 0; }
+.player-playbook-lesson-compact summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.player-playbook-lesson-compact summary::-webkit-details-marker { display: none; }
+.player-playbook-lesson-compact summary::after { content: "+"; color: var(--ink, #0b1f33); font-size: 1.35rem; line-height: 1; }
+.player-playbook-lesson-compact[open] summary::after { content: "−"; }
+.player-playbook-lesson-compact summary > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
+.player-playbook-lesson-compact summary strong { overflow: hidden; color: var(--ink, #0b1f33); font-size: .94rem; text-overflow: ellipsis; white-space: nowrap; }
+.player-playbook-order { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--color-brand-on-primary, #fff); background: var(--color-brand-primary, #173f35); font-size: .72rem; font-weight: 800; }
+.player-playbook-summary-hint { color: var(--muted); font-size: .76rem; }
+.player-playbook-lesson-compact .player-playbook-lesson-body { padding: 0 14px 16px; border-top: 1px solid var(--line, #d6d0c5); }
+.player-playbook-lesson-compact .player-playbook-media:first-child { margin-top: 14px; }
+.player-playbook-lesson-compact[open] { box-shadow: 0 8px 24px rgba(15, 31, 45, .08); }
+.player-playbook-lesson-compact summary:focus-visible { outline: 3px solid var(--color-focus, #f6c344); outline-offset: -3px; }
 .security-note { margin: 24px 0 0; color: var(--muted); font-size: .75rem; text-align: center; }
 
 .bottom-nav { display: none; }
@@ -2901,6 +2942,12 @@ td input[type="checkbox"] { min-width: auto; width: 20px; height: 20px; }
 .pbp-detail-section { margin-bottom: var(--space-4); }
 .pbp-detail-section h2 { margin: 0 0 6px; font-size: .92rem; }
 .pbp-detail-section p { white-space: pre-line; color: var(--color-text); line-height: 1.55; }
+.pbp-media { margin: 0 0 var(--space-3); overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: #101820; }
+.pbp-media video,
+.pbp-media img { display: block; width: 100%; max-height: min(62vh, 480px); object-fit: contain; }
+.pbp-media figcaption { padding: 8px 12px; color: #fff; font-size: .78rem; }
+.pbp-material-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pbp-material-list .button { min-height: 42px; text-decoration: none; }
 .pbp-relation-list { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
 
 /* -------------------------------------------------------------------------
