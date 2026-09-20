@@ -14,16 +14,10 @@ exports/
 .DS_Store
 Thumbs.db
 
-# Artefatos de execucao de agente (progresso/resultado efemeros)
-.codex-finalize-*
-.agente-*
-
-# Segredos e estado local do gateway de modelos
-.agent-runtime/
+# Segredos e variaveis de ambiente locais
 .env
 .env.*
 !.env.example
-storage.sqlite
 
 # /design-sync (docs/design-system/DESIGN-SYNC.md) — scripts do conversor,
 # node_modules e saida gerada. O conjunto duravel (.design-sync/config.json,
