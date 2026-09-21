@@ -120,8 +120,18 @@
       const data = await api("/api/v1/attendance/trainings");
       const trainings = data.items || [];
       const now = new Date();
-      const open = trainings.find((item) => item.attendance_session_id && !item.is_finalized);
-      const next = open || trainings.find((item) => new Date(item.ends_at) >= now && ["PLANNED", "CONFIRMED"].includes(item.status)) || trainings[0] || null;
+      const activeStatuses = ["PLANNED", "CONFIRMED"];
+      const open = trainings.find((item) => (
+        activeStatuses.includes(item.status)
+        && item.attendance_session_id
+        && !item.is_finalized
+      ));
+      const next = (
+        open
+        || trainings.find((item) => new Date(item.ends_at) >= now && activeStatuses.includes(item.status))
+        || trainings.find((item) => activeStatuses.includes(item.status))
+        || null
+      );
 
       const queue = [];
       const dateLabel = document.querySelector("#ct-next-training-date");

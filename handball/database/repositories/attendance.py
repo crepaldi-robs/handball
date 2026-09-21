@@ -1209,8 +1209,13 @@ class AttendanceRepository:
 
     def get_history(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
+            calendar_projection = ", ce.id AS calendar_event_id, ce.status AS calendar_status"
+            calendar_join = "LEFT JOIN calendar_events ce ON ce.attendance_session_id = ts.id"
+            if not self._table_exists(conn, "calendar_events"):
+                calendar_projection = ", NULL AS calendar_event_id, NULL AS calendar_status"
+                calendar_join = ""
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     ts.training_date,
                     ts.is_finalized,
@@ -1221,9 +1226,11 @@ class AttendanceRepository:
                     ar.notes,
                     ar.version,
                     ar.updated_at
+                    {calendar_projection}
                 FROM attendance_records ar
                 JOIN training_sessions ts ON ts.id = ar.session_id
                 JOIN team_members tm ON tm.id = ar.member_id
+                {calendar_join}
                 ORDER BY ts.training_date DESC, tm.name COLLATE NOCASE
                 """
             ).fetchall()

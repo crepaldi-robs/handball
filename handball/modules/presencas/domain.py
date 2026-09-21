@@ -347,6 +347,11 @@ def history_to_dataframe(history: list[dict[str, Any]]) -> pd.DataFrame:
 
     rows = []
     for item in history:
+        calendar_status = str(item.get("calendar_status") or "")
+        training_status = {
+            "CANCELLED": "Cancelado",
+            "RESCHEDULED": "Remarcado",
+        }.get(calendar_status, "Regular")
         present_value = item["present"]
         if present_value == 1:
             presence_label = "Presente"
@@ -357,6 +362,7 @@ def history_to_dataframe(history: list[dict[str, Any]]) -> pd.DataFrame:
         rows.append(
             {
                 "Data do treino": item["training_date"],
+                "Situação do treino": training_status,
                 "Nome": item["name"],
                 "Posição": item["position"],
                 "Confirmação": CONFIRMATION_LABELS[item["confirmation_status"]],
