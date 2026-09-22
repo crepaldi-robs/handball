@@ -14,6 +14,12 @@ exports/
 .DS_Store
 Thumbs.db
 
+# Artefatos locais antigos continuam privados após remover a orquestração.
+.codex-finalize-*
+.agente-*
+.agent-runtime/
+storage.sqlite
+
 # Segredos e variaveis de ambiente locais
 .env
 .env.*

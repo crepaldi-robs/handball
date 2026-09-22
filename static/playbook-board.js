@@ -63,11 +63,13 @@
     manualIncludeIds: new Set(),
     excludedIds: new Set(),
     positions: new Map(), // slot_id -> {x, y}, visual only — não enviado ao servidor
+    movedSlots: new Set(),
     lastPreview: null,
     selectedSlotId: null,
     roster: null,
     syncing: false,
     lastRequestFailed: false,
+    previewRequestId: 0,
   };
 
   class BoardRequestError extends Error {
@@ -148,6 +150,9 @@
       })
       .join("");
     if (!state.sessions.length) {
+      state.sessionId = null;
+      state.previewRequestId += 1;
+      state.lastPreview = null;
       els.empty.hidden = false;
       els.workspace.hidden = true;
       return;
@@ -190,6 +195,7 @@
     state.manualIncludeIds = new Set();
     state.excludedIds = new Set();
     state.positions = new Map();
+    state.movedSlots = new Set();
     state.lastPreview = null;
     state.selectedSlotId = null;
     els.modeButtons.forEach((button) => {
@@ -219,6 +225,7 @@
   }
 
   async function refreshPreview() {
+    const requestId = ++state.previewRequestId;
     if (!state.sessionId || !state.blocks.length) return;
     state.syncing = true;
     setStatus("Recalculando diagnóstico…");
@@ -227,6 +234,7 @@
         method: "POST",
         body: JSON.stringify(buildRequestBody()),
       });
+      if (requestId !== state.previewRequestId) return;
       state.lastPreview = payload;
       state.lastRequestFailed = false;
       pruneUnresolvedManualIncludes(payload.unresolved_participant_ids || []);
@@ -234,11 +242,12 @@
       setStatus(`Diagnóstico atualizado às ${new Date().toLocaleTimeString("pt-BR")}.`);
       setDirty(false);
     } catch (error) {
+      if (requestId !== state.previewRequestId) return;
       state.lastRequestFailed = true;
       setStatus(error.message || "Não foi possível recalcular. Seu rascunho continua aqui — tente novamente.", "danger");
       setDirty(true);
     } finally {
-      state.syncing = false;
+      if (requestId === state.previewRequestId) state.syncing = false;
     }
   }
 
@@ -264,7 +273,7 @@
 
   function positionFor(slot, blockIndex, totalBlocks, groupSlots) {
     const cached = state.positions.get(slot.slot_id);
-    if (cached) return cached;
+    if (cached && state.movedSlots.has(slot.slot_id)) return cached;
     const rowSlots = groupSlots.filter((item) => (item.group === "GOALKEEPER") === (slot.group === "GOALKEEPER"));
     const indexInRow = rowSlots.findIndex((item) => item.slot_id === slot.slot_id);
     const computed = defaultPosition(blockIndex, totalBlocks, slot.group, Math.max(0, indexInRow), rowSlots.length);
@@ -490,6 +499,7 @@
       target.classList.add("is-dragging");
       const local = toLocal(moveEvent.clientX, moveEvent.clientY);
       state.positions.set(slotId, local);
+      state.movedSlots.add(slotId);
       target.setAttribute("transform", `translate(${local.x} ${local.y})`);
     }
 
@@ -526,6 +536,7 @@
       const current = state.positions.get(slotId) || { x: 100, y: 100 };
       const next = { x: clamp(current.x + dx, COURT_BOUNDS.minX, COURT_BOUNDS.maxX), y: clamp(current.y + dy, COURT_BOUNDS.minY, COURT_BOUNDS.maxY) };
       state.positions.set(slotId, next);
+      state.movedSlots.add(slotId);
       event.currentTarget.setAttribute("transform", `translate(${next.x} ${next.y})`);
     }
   }
@@ -561,8 +572,8 @@
         const payload = await request("/api/v1/elenco/members");
         state.roster = payload.items || payload || [];
       } catch (error) {
-        state.roster = [];
         setStatus(error.message || "Não foi possível carregar o elenco.", "danger");
+        return;
       }
     }
     const includedIds = new Set((state.lastPreview?.participants || []).map((item) => Number(item.member_id)));
@@ -581,6 +592,7 @@
     const button = event.target.closest("[data-include-member]");
     if (!button || button.disabled) return;
     state.manualIncludeIds.add(Number(button.dataset.includeMember));
+    state.excludedIds.delete(Number(button.dataset.includeMember));
     setDirty(true);
     refreshPreview();
     els.includeDialog.close();
@@ -593,11 +605,8 @@
     const button = event.target.closest("[data-remove-participant]");
     if (!button) return;
     const memberId = Number(button.dataset.removeParticipant);
-    if (state.manualIncludeIds.has(memberId)) {
-      state.manualIncludeIds.delete(memberId);
-    } else {
-      state.excludedIds.add(memberId);
-    }
+    state.manualIncludeIds.delete(memberId);
+    state.excludedIds.add(memberId);
     setDirty(true);
     refreshPreview();
   });
@@ -611,8 +620,8 @@
       if (slotId.startsWith(`${blockId}:`)) state.assignments.delete(slotId);
     });
     setDirty(true);
-    if (state.blocks.length) refreshPreview();
-    else { state.lastPreview = null; render(); }
+    refreshPreview();
+    if (!state.blocks.length) { state.lastPreview = null; render(); }
   });
 
   els.addTeamBlock.addEventListener("click", () => {
