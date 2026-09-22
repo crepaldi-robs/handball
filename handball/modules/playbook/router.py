@@ -13,6 +13,7 @@ from handball.core.errors import PlaybookProblem
 from handball.modules.usuarios.service import IdentityService
 
 from .schemas import (
+    CompositionPreviewRequest,
     ContentInput,
     ContentMoveInput,
     ContentPlacementsInput,
@@ -758,6 +759,18 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
     ) -> dict[str, Any]:
         try:
             return service.restore_session_revision(session_id, revision_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.post("/api/v1/playbook/sessions/{session_id}/composition/preview")
+    def preview_session_composition(
+        session_id: int,
+        request: Request,
+        body: CompositionPreviewRequest,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.preview_composition(session_id, body, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

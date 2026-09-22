@@ -1,0 +1,279 @@
+/* Prancheta manual (fatia 1) — só consome os tokens de handball/docs/design-system;
+   nenhuma cor/tamanho novo é inventado aqui (docs/design-system/ARCHITECTURE.md). */
+
+.playbook-board-panel {
+  display: grid;
+  gap: 14px;
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.playbook-board-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.playbook-board-session-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.playbook-board-session-picker label {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.playbook-board-session-picker select {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.playbook-board-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.playbook-board-workspace {
+  display: grid;
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(230px, 300px);
+  gap: 16px;
+  align-items: start;
+}
+
+.playbook-board-side h3,
+.playbook-board-diagnostics h3 {
+  margin: 14px 0 6px;
+  font-size: 0.86rem;
+  letter-spacing: -0.01em;
+}
+.playbook-board-side h3:first-of-type,
+.playbook-board-diagnostics h3:first-of-type { margin-top: 0; }
+
+.playbook-board-mode {
+  display: flex;
+  gap: 6px;
+}
+
+.playbook-board-mode button {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.playbook-board-mode button.is-active {
+  border-color: var(--color-brand-primary);
+  background: var(--color-brand-primary);
+  color: var(--color-brand-on-primary);
+}
+
+.playbook-board-mode-hint {
+  margin: 6px 0 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.playbook-board-legacy-tag {
+  font-weight: 400;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.playbook-board-participants,
+.playbook-board-blocks-list {
+  display: grid;
+  gap: 6px;
+}
+
+.playbook-board-participant,
+.playbook-board-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-canvas);
+  font-size: 0.82rem;
+}
+
+.playbook-board-participant .playbook-board-layer-chip {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.playbook-board-participant button,
+.playbook-board-block button {
+  min-height: 32px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-danger);
+  cursor: pointer;
+}
+
+.playbook-board-court-wrap {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.playbook-board-status {
+  min-height: 20px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+.playbook-board-status[data-kind="warning"] { color: var(--color-warning); }
+.playbook-board-status[data-kind="danger"] { color: var(--color-danger); }
+
+.playbook-board-court {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 200 / 220;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-canvas);
+}
+.playbook-board-court:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.playbook-board-geometry-note {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.playbook-board-court-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.playbook-board-dirty {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.playbook-board-diagnostics {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  font-size: 0.82rem;
+}
+
+.playbook-board-coverage-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.playbook-board-conflict-item,
+.playbook-board-vacant-item {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-control);
+  font-size: 0.78rem;
+}
+.playbook-board-conflict-item { background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface)); color: var(--color-danger); }
+.playbook-board-vacant-item { background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface)); color: var(--color-text); }
+
+.playbook-board-layer-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+/* Tokens da quadra (slots), desenhados em SVG — alvo mínimo de toque de
+   44px CSS traduzido para o raio do círculo em unidades lógicas da quadra. */
+.playbook-board-slot {
+  cursor: pointer;
+}
+.playbook-board-slot circle {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 1.4;
+}
+.playbook-board-slot[data-group="GOALKEEPER"] circle { stroke: var(--color-info); }
+.playbook-board-slot[data-filled="true"] circle { fill: var(--color-brand-primary); stroke: var(--color-brand-primary-hover); }
+.playbook-board-slot[data-locked="true"] circle { stroke-width: 3; stroke-dasharray: 3 2; }
+.playbook-board-slot[data-conflict="true"] circle { stroke: var(--color-danger); stroke-width: 3; }
+.playbook-board-slot:focus-visible circle,
+.playbook-board-slot.is-selected circle { outline: none; stroke: var(--color-focus); stroke-width: 3; }
+.playbook-board-slot text {
+  font-size: 6px;
+  font-weight: 700;
+  fill: var(--color-text);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.playbook-board-slot[data-filled="true"] text { fill: var(--color-brand-on-primary); }
+.playbook-board-slot.is-dragging circle { filter: drop-shadow(0 2px 4px rgb(0 0 0 / .25)); }
+
+.playbook-board-substitute-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.playbook-board-substitute-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+.playbook-board-substitute-option:hover,
+.playbook-board-substitute-option:focus-visible {
+  border-color: var(--color-brand-primary);
+}
+.playbook-board-substitute-option[aria-disabled="true"] {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playbook-board-slot { transition: none; }
+}
+
+@media (max-width: 960px) {
+  .playbook-board-workspace {
+    grid-template-columns: 1fr;
+  }
+}

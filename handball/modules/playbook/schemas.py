@@ -363,6 +363,57 @@ class SessionEvaluationInput(BaseModel):
         return self
 
 
+class CompositionBlockInput(BaseModel):
+    """Um bloco da prancheta (ex.: um exercício ou um monte do coletivo)."""
+
+    block_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=120)
+    roles: list[ExerciseRoleInput] = Field(min_length=1, max_length=40)
+
+    @field_validator("label")
+    @classmethod
+    def strip_block_label(cls, value: str) -> str:
+        return value.strip()
+
+
+class CompositionAssignmentInput(BaseModel):
+    """Ocupação manual de um slot, decidida pela CT — nunca sugerida aqui."""
+
+    slot_id: str = Field(min_length=1, max_length=160)
+    member_id: int | None = Field(default=None, gt=0)
+    occupant_locked: bool = False
+
+
+class CompositionPreviewRequest(BaseModel):
+    """Preview de composição manual: participantes previstos + prancheta.
+
+    `manual_include_member_ids`/`excluded_member_ids` ajustam a lista de
+    confirmados do treino vinculado (DECISOES.md: "Começar com confirmados e
+    permitir inclusão/exclusão planejada explícita"). Nada aqui é persistido;
+    o preview é recalculado a cada chamada.
+    """
+
+    manual_include_member_ids: list[int] = Field(default_factory=list, max_length=40)
+    excluded_member_ids: list[int] = Field(default_factory=list, max_length=40)
+    blocks: list[CompositionBlockInput] = Field(min_length=1, max_length=12)
+    assignments: list[CompositionAssignmentInput] = Field(default_factory=list, max_length=800)
+    mode: Literal["EQUILIBRADO", "DIRECIONADO"] = "EQUILIBRADO"
+
+    @field_validator("manual_include_member_ids", "excluded_member_ids")
+    @classmethod
+    def positive_member_ids(cls, value: list[int]) -> list[int]:
+        if any(item <= 0 for item in value):
+            raise ValueError("Os IDs de atleta devem ser positivos.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_unique_block_ids(self) -> "CompositionPreviewRequest":
+        block_ids = [block.block_id for block in self.blocks]
+        if len(set(block_ids)) != len(block_ids):
+            raise ValueError("Os blocos precisam ter block_id únicos.")
+        return self
+
+
 class GuidedFinishInput(BaseModel):
     playbook_session_id: int | None = Field(default=None, gt=0)
     session_notes: str = Field(default="", max_length=4000)

@@ -13,10 +13,14 @@
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
+  {% if can_manage %}
+  <link rel="stylesheet" href="/static/css/playbook-board.css">
+  {% endif %}
   <script src="/static/platform.js" defer></script>
   {% if can_manage %}
   <script src="/static/coach-report.js" defer></script>
   <script src="/static/playbook.js" defer></script>
+  <script src="/static/playbook-board.js" defer></script>
   {% else %}
   <script src="/static/playbook-player.js" defer></script>
   {% endif %}
@@ -166,6 +170,84 @@
         </div>
       </header>
       <div id="playbook-planning-summary" class="playbook-planning-summary" aria-live="polite">Carregando planejamento…</div>
+    </section>
+
+    <section id="playbook-board-panel" class="playbook-board-panel" aria-labelledby="playbook-board-title">
+      <header class="playbook-board-header">
+        <div>
+          <span class="playbook-kicker">PRÉVIA MANUAL · NADA É SALVO AINDA</span>
+          <h2 id="playbook-board-title">Preparar treino · prancheta manual</h2>
+          <p>Monte a composição manualmente; o diagnóstico é recalculado a cada ajuste. Ataque e defesa independentes e a sugestão automática ainda dependem de decisões em aberto.</p>
+        </div>
+        <div class="playbook-board-session-picker">
+          <label for="playbook-board-session">Sessão do Playbook</label>
+          <select id="playbook-board-session" aria-label="Sessão do Playbook para preparar"></select>
+          <button id="playbook-board-refresh" class="playbook-soft-button" type="button">Atualizar</button>
+        </div>
+      </header>
+
+      <p id="playbook-board-empty" class="playbook-board-empty">Crie uma sessão em "Planos, séries e sessões" acima para preparar um treino aqui.</p>
+
+      <div id="playbook-board-workspace" class="playbook-board-workspace" hidden>
+        <aside class="playbook-board-side" aria-label="Modo, participantes e blocos">
+          <div class="playbook-board-mode" role="group" aria-label="Modo de composição">
+            <button type="button" data-board-mode="EQUILIBRADO" class="is-active" aria-pressed="true">Equilibrado</button>
+            <button type="button" data-board-mode="DIRECIONADO" aria-pressed="false">Direcionado</button>
+          </div>
+          <p class="playbook-board-mode-hint">Equilibrado é o padrão. Os dois modos têm o mesmo acesso e destaque — nenhum é avançado ou secundário.</p>
+
+          <h3>Participantes previstos</h3>
+          <div id="playbook-board-participants" class="playbook-board-participants" aria-live="polite"></div>
+          <button id="playbook-board-add-participant" class="playbook-text-button" type="button">＋ Incluir atleta manualmente</button>
+
+          <h3>Blocos</h3>
+          <div id="playbook-board-blocks-list" class="playbook-board-blocks-list"></div>
+          <button id="playbook-board-add-team-block" class="playbook-soft-button" type="button">＋ Bloco Time A / Time B</button>
+        </aside>
+
+        <div class="playbook-board-court-wrap">
+          <div id="playbook-board-status" class="playbook-board-status" role="status" aria-live="polite"></div>
+          <svg id="playbook-board-court" class="playbook-board-court" viewBox="0 0 200 220" role="group" aria-label="Meia quadra com os papéis do treino" tabindex="0"></svg>
+          <p class="playbook-board-geometry-note">Geometria conceitual, a conferir contra a fonte oficial IHF antes de uso em treino real.</p>
+          <div class="playbook-board-court-actions">
+            <button id="playbook-board-recalculate" class="playbook-primary-action" type="button">Recalcular</button>
+            <span id="playbook-board-dirty" class="playbook-board-dirty" hidden>Rascunho não salvo</span>
+          </div>
+        </div>
+
+        <aside class="playbook-board-diagnostics" aria-label="Diagnóstico" aria-live="polite">
+          <h3>Cobertura</h3>
+          <div id="playbook-board-coverage"></div>
+          <h3>Conflitos e vagas</h3>
+          <div id="playbook-board-conflicts"></div>
+          <h3>Camada por bloco <span class="playbook-board-legacy-tag">legado, informativo</span></h3>
+          <div id="playbook-board-layers"></div>
+        </aside>
+      </div>
+
+      <dialog id="playbook-board-substitute-dialog" class="playbook-dialog">
+        <form id="playbook-board-substitute-form" method="dialog" class="playbook-form">
+          <h2>Substituir ocupante</h2>
+          <p id="playbook-board-substitute-slot-label"></p>
+          <div id="playbook-board-substitute-list" class="playbook-board-substitute-list" role="listbox" aria-label="Atletas elegíveis"></div>
+          <div class="playbook-dialog-actions">
+            <button type="button" id="playbook-board-clear-occupant" class="playbook-text-button">Deixar vaga</button>
+            <button type="button" id="playbook-board-lock-occupant" class="playbook-text-button">Fixar/soltar ocupante</button>
+            <button type="button" id="playbook-board-cancel-substitute" class="playbook-soft-button">Fechar</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="playbook-board-include-dialog" class="playbook-dialog">
+        <form id="playbook-board-include-form" method="dialog" class="playbook-form">
+          <h2>Incluir atleta manualmente</h2>
+          <p>Vem do cadastro do elenco, não da chamada — a previsão não altera confirmação nem presença real.</p>
+          <div id="playbook-board-include-list" class="playbook-board-substitute-list" role="listbox" aria-label="Atletas do elenco"></div>
+          <div class="playbook-dialog-actions">
+            <button type="button" id="playbook-board-cancel-include" class="playbook-soft-button">Fechar</button>
+          </div>
+        </form>
+      </dialog>
     </section>
     {% endif %}
 

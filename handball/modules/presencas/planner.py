@@ -553,3 +553,45 @@ def exercise_fit(players: list[dict[str, Any]], variants: Iterable[Mapping[str, 
             partial = _maximum_partial(players, roles)
             results.append({"variant": label, "fits": False, "missing_roles": partial["missing_roles"]})
     return results
+
+
+def attach_layer_info(
+    records: list[dict[str, Any]], rankings: Mapping[int, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Anota camada e refino de cada atleta a partir de roster.rankings_by_member().
+
+    Goleiro puro usa a hierarquia de goleiros; os demais usam a de linha. Sem
+    hierarquia registrada, os registros seguem intactos — comportamento
+    histórico preservado. Reaproveitado pela chamada da CT
+    (presencas/service.py::_attach_rankings) e pelo preview de composição do
+    Playbook (playbook/service.py::preview_composition).
+    """
+    if not rankings:
+        return records
+    for record in records:
+        scopes = rankings.get(int(record["member_id"]), {})
+        if not scopes:
+            continue
+        positions = set(record.get("attack_positions") or ())
+        only_goalkeeper = bool(positions) and positions == {"GOL"}
+        info = (
+            scopes.get("GOALKEEPER") if only_goalkeeper else scopes.get("LINE")
+        ) or scopes.get("LINE") or scopes.get("GOALKEEPER")
+        if info is None:
+            continue
+        ordinal = int(info["layer_ordinal"])
+        record["layer_ordinal"] = ordinal
+        record["layer_label"] = f"Camada {ordinal + 1}"
+        record["layer_refine_bonus"] = {
+            position: max(0, int(data["peers"]) - int(data["refine_ordinal"]))
+            for position, data in (info.get("refinements") or {}).items()
+        }
+    return records
+
+
+# Aliases públicos para reuso por handball.modules.playbook.composition, sem
+# duplicar elegibilidade/expansão de papéis nem a normalização de participante.
+normalize_player = _player
+expand_roles = _expand_roles
+is_eligible = _eligible
+build_assignment_entry = _assignment_entry
