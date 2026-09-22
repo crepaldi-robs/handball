@@ -325,6 +325,12 @@ function presenceText(value) {
   return "Não apurado";
 }
 
+function trainingStatusText(item) {
+  if (item.calendar_status === "CANCELLED") return "Cancelado";
+  if (item.calendar_status === "RESCHEDULED") return "Remarcado";
+  return "Regular";
+}
+
 const metricDefinitions = [
   {
     key: "confirmed",
@@ -776,7 +782,7 @@ async function loadCalendarTrainings(preferredEventId = null) {
   const openTrainings = state.trainings.filter((item) => item.status === "CONFIRMED" || item.status === "PLANNED");
   const now = new Date();
   const upcoming = openTrainings.find((item) => new Date(item.ends_at) >= now) || openTrainings[0] || null;
-  const selected = state.trainings.find((item) => item.id === preferred) || upcoming || state.trainings[0] || null;
+  const selected = state.trainings.find((item) => item.id === preferred) || upcoming || null;
   state.currentEventId = selected?.id || null;
   renderTrainingPicker();
   if (selected?.attendance_session_id) await loadSession(selected.attendance_session_id);
@@ -1070,7 +1076,7 @@ async function loadHistory() {
     const cards = $("#history-cards");
     body.replaceChildren(...data.items.map((item) => {
       const row = document.createElement("tr");
-      [formatDate(item.training_date), item.name, item.position, labels[item.confirmation_status], presenceText(item.present), item.notes || "—"].forEach((value) => {
+      [formatDate(item.training_date), trainingStatusText(item), item.name, item.position, labels[item.confirmation_status], presenceText(item.present), item.notes || "—"].forEach((value) => {
         const cell = document.createElement("td"); cell.textContent = escapeText(value); row.append(cell);
       });
       return row;
@@ -1080,6 +1086,7 @@ async function loadHistory() {
         `${item.name} · ${item.position}`,
         formatDate(item.training_date),
         [
+          ["Situação do treino", trainingStatusText(item)],
           ["Confirmação", labels[item.confirmation_status] || "—"],
           ["Presença", presenceText(item.present)],
           ["Observação", item.notes || "—"],

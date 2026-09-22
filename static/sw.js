@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "handball-shell-v17";
+const CACHE_NAME = "handball-shell-v18";
 const SHELL = [
   "/app",
   "/app/presencas",

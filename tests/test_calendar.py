@@ -446,6 +446,79 @@ def test_attendance_is_opened_only_from_calendar_training_and_is_idempotent(
         assert connection.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0] == 2
 
 
+def test_cancelled_training_with_open_call_is_not_next_and_is_not_counted(
+    tmp_path: Path,
+) -> None:
+    client, manager, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, season_id = _options(client)
+    cancelled_event = client.post(
+        "/api/v1/calendar/events",
+        json=_event(
+            team_id,
+            season_id,
+            starts_at="2020-01-10T19:00:00-03:00",
+            ends_at="2020-01-10T21:00:00-03:00",
+        ),
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    future_event = client.post(
+        "/api/v1/calendar/events",
+        json=_event(
+            team_id,
+            season_id,
+            starts_at="2100-01-10T19:00:00-03:00",
+            ends_at="2100-01-10T21:00:00-03:00",
+        ),
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+
+    opened = client.post(
+        f"/api/v1/attendance/trainings/{cancelled_event['id']}/session",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert opened.status_code == 200, opened.text
+    session_id = int(opened.json()["session"]["id"])
+
+    # Mesmo que uma chamada antiga já tenha sido encerrada, o cancelamento
+    # continua sendo semanticamente neutro para presença/falta.
+    assert client.post(
+        f"/api/v1/sessions/{session_id}/finalize",
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    cancelled = client.post(
+        f"/api/v1/calendar/events/{cancelled_event['id']}/cancel",
+        json={"reason": "Treino cancelado por chuva", "base_version": cancelled_event["version"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "CANCELLED"
+
+    with manager.unit_of_work(read_only=True) as unit_of_work:
+        active = unit_of_work.calendar.active_training_event((team_id,))
+        assert active is not None
+        assert int(active["id"]) == int(future_event["id"])
+        assert unit_of_work.roster.finalized_sessions_count("2020-01-01", "2020-12-31") == 0
+        assert unit_of_work.roster.presence_metrics("2020-01-01", "2020-12-31") == {}
+
+    history = client.get("/api/v1/history")
+    assert history.status_code == 200
+    assert history.json()["items"]
+    assert {item["calendar_status"] for item in history.json()["items"]} == {"CANCELLED"}
+
+
+def test_ct_and_attendance_clients_do_not_fallback_to_cancelled_training() -> None:
+    project_root = Path(__file__).parents[1]
+    hub_source = (project_root / "static" / "hub-ct.js").read_text(encoding="utf-8")
+    attendance_source = (project_root / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "activeStatuses.includes(item.status)" in hub_source
+    assert "|| trainings.find((item) => activeStatuses.includes(item.status))" in hub_source
+    assert "|| trainings[0] || null" not in hub_source
+    assert "|| upcoming || null" in attendance_source
+    assert "|| upcoming || state.trainings[0] || null" not in attendance_source
+
+
 def test_player_sees_team_events_and_only_writes_own_justification(
     tmp_path: Path,
 ) -> None:

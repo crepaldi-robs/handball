@@ -596,21 +596,40 @@ class RosterRepository:
         return result
 
     def finalized_sessions_count(self, start_date_iso: str, end_date_iso: str) -> int:
+        calendar_exclusion = ""
+        if self._table_exists("calendar_events"):
+            calendar_exclusion = """
+              AND NOT EXISTS(
+                  SELECT 1 FROM calendar_events ce
+                  WHERE ce.attendance_session_id=training_sessions.id
+                    AND ce.status IN ('CANCELLED','RESCHEDULED')
+              )"""
         row = self.connection.execute(
-            "SELECT COUNT(*) FROM training_sessions WHERE is_finalized=1 AND training_date BETWEEN ? AND ?",
+            f"""SELECT COUNT(*) FROM training_sessions
+                WHERE is_finalized=1 AND training_date BETWEEN ? AND ?
+                {calendar_exclusion}""",
             (start_date_iso, end_date_iso),
         ).fetchone()
         return int(row[0])
 
     def presence_metrics(self, start_date_iso: str, end_date_iso: str) -> dict[int, dict[str, int]]:
         metrics: dict[int, dict[str, int]] = {}
+        calendar_exclusion = ""
+        if self._table_exists("calendar_events"):
+            calendar_exclusion = """
+                 AND NOT EXISTS(
+                     SELECT 1 FROM calendar_events ce
+                     WHERE ce.attendance_session_id=s.id
+                       AND ce.status IN ('CANCELLED','RESCHEDULED')
+                 )"""
         for row in self.connection.execute(
-            """SELECT r.member_id,
+            f"""SELECT r.member_id,
                       SUM(CASE WHEN r.present=1 THEN 1 ELSE 0 END) AS presents,
                       COUNT(*) AS records
                FROM attendance_records r
                JOIN training_sessions s ON s.id=r.session_id
                WHERE s.is_finalized=1 AND s.training_date BETWEEN ? AND ?
+               {calendar_exclusion}
                GROUP BY r.member_id""",
             (start_date_iso, end_date_iso),
         ).fetchall():
