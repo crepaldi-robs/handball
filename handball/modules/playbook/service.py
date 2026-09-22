@@ -11,7 +11,10 @@ from uuid import uuid4
 from handball.core.authorization import AccessContext, Permission
 from handball.core.errors import PlaybookProblem
 from handball.database.contracts import UnitOfWorkFactoryContract
-from handball.modules.presencas.planner import confirmed_player_profiles, exercise_fit
+from handball.modules.presencas.domain import CONFIRMED_CODES
+from handball.modules.presencas.planner import attach_layer_info, confirmed_player_profiles, exercise_fit
+
+from .composition import build_preview
 
 
 MEDIA_LIMITS: dict[str, int] = {
@@ -881,6 +884,99 @@ class PlaybookService:
                 team_ids=self._team_ids(context),
                 actor_user_id=context.user_id,
             )
+
+    def preview_composition(
+        self,
+        session_id: int,
+        body: Any,
+        context: AccessContext,
+    ) -> dict[str, Any]:
+        """Preview de composição manual da prancheta — nunca persiste nada.
+
+        Participantes previstos partem dos confirmados do treino vinculado à
+        sessão (se houver), ajustados por inclusão/exclusão explícita da CT;
+        nunca da presença real. Sem tabela nova: a fatia 1 de
+        docs/planejamento-treinos/ é deliberadamente APP_ONLY (ver
+        ARQUITETURA.md e DECISOES.md).
+        """
+
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        team_ids = self._team_ids(context)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            detail = unit_of_work.playbook.session_detail(session_id, team_ids=team_ids)
+            team_id = int(detail["session"]["team_id"])
+            active_link = next(
+                (link for link in detail["event_links"] if link.get("link_state") == "ACTIVE"),
+                None,
+            )
+            records: list[dict[str, Any]] = []
+            if active_link is not None:
+                calendar_event_id = int(active_link["calendar_event_id"])
+                event = next(
+                    (
+                        item
+                        for item in unit_of_work.calendar.list_training_events((team_id,))
+                        if int(item["id"]) == calendar_event_id
+                    ),
+                    None,
+                )
+                attendance_session_id = event.get("attendance_session_id") if event else None
+                if attendance_session_id:
+                    records = unit_of_work.attendance.get_session_records(int(attendance_session_id))
+
+            rankings = unit_of_work.roster.rankings_by_member()
+            attach_layer_info(records, rankings)
+            by_member = {int(record["member_id"]): record for record in records}
+
+            confirmed_ids = {
+                member_id
+                for member_id, record in by_member.items()
+                if record.get("confirmation_status") in CONFIRMED_CODES
+            }
+            excluded_ids = {int(value) for value in body.excluded_member_ids}
+            manual_include_ids = {int(value) for value in body.manual_include_member_ids}
+            selected_ids = sorted((confirmed_ids | manual_include_ids) - excluded_ids)
+
+            # Inclusão manual de alguém fora dos registros do treino vinculado
+            # (ou sem treino vinculado nenhum) recorre ao cadastro do elenco;
+            # sem isso, "sem calendário" nunca conseguiria compor ninguém.
+            missing_ids = [member_id for member_id in manual_include_ids if member_id not in by_member]
+            members_by_id: dict[int, dict[str, Any]] = {}
+            if missing_ids:
+                members_by_id = {
+                    int(member["id"]): member
+                    for member in unit_of_work.attendance.list_members(include_inactive=True)
+                }
+
+            unresolved_participant_ids: list[int] = []
+            participant_records: list[dict[str, Any]] = []
+            for member_id in selected_ids:
+                record = by_member.get(member_id)
+                if record is None:
+                    member = members_by_id.get(member_id)
+                    if member is None:
+                        unresolved_participant_ids.append(member_id)
+                        continue
+                    record = {
+                        "member_id": member_id,
+                        "name": member["name"],
+                        "attack_positions": member.get("attack_positions") or [],
+                        "defensive_positions": member.get("defensive_positions") or [],
+                        "training_positions": [],
+                        "confirmation_status": "MANUAL_INCLUDE",
+                    }
+                    attach_layer_info([record], rankings)
+                participant_records.append(record)
+
+        preview = build_preview(
+            participant_records=participant_records,
+            blocks=[block.model_dump() for block in body.blocks],
+            assignments=[item.model_dump() for item in body.assignments],
+            mode=body.mode,
+        )
+        preview["session_id"] = int(session_id)
+        preview["unresolved_participant_ids"] = unresolved_participant_ids
+        return preview
 
     def plan(self, event_id: int, context: AccessContext) -> dict[str, Any]:
         self._require(context, Permission.PLAYBOOK_READ)

@@ -866,3 +866,198 @@ def test_content_fit_reports_whether_exercise_closes_with_confirmed_roster(tmp_p
     login(client, "player", data["passwords"]["player"])
     denied = client.get(f"/api/v1/playbook/contents/{content_id}/fit?event_id={event_id}")
     assert denied.status_code == 403
+
+
+def test_composition_preview_is_manual_stateless_and_never_persists(tmp_path: Path) -> None:
+    """Fatia 1 de docs/planejamento-treinos/: preview de composição manual.
+
+    Nenhuma tabela nova, nenhuma escrita — participantes previstos partem
+    dos confirmados do treino vinculado; a CT ajusta manualmente e recebe
+    diagnóstico (cobertura, conflitos, vagas), nunca uma sugestão automática.
+    """
+
+    client, _, data = make_v2(tmp_path)
+    csrf = login(client, "ct", data["passwords"]["ct"])
+    team_id, folder_id, _ = _seed_and_content(client, csrf)
+
+    def add_member(name: str, position: str, attack: list[str]) -> int:
+        response = client.post(
+            "/api/v1/members",
+            json={"name": name, "position": position, "attack_positions": attack, "defensive_positions": []},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 200, response.text
+        return int(next(item for item in response.json()["items"] if item["name"] == name)["id"])
+
+    ponta_id = add_member("Ponta Composição", "PE", ["PE"])
+    pivo_id = add_member("Pivô Composição", "PV", ["PV"])
+
+    _, season_id = _team_and_season(client)
+    training = _create_training(
+        client, csrf, team_id, season_id,
+        starts_at="2099-06-01T19:00:00-03:00", ends_at="2099-06-01T21:00:00-03:00",
+    )
+    event_id = int(training["id"])
+    opened = client.post(
+        f"/api/v1/attendance/trainings/{event_id}/session", headers={"X-CSRF-Token": csrf}
+    )
+    assert opened.status_code == 200, opened.text
+    attendance_session_id = int(opened.json()["session"]["id"])
+
+    def confirm(member_id: int) -> None:
+        record = next(
+            item for item in client.get(f"/api/v1/sessions/{attendance_session_id}").json()["records"]
+            if int(item["member_id"]) == member_id
+        )
+        result = client.put(
+            f"/api/v1/sessions/{attendance_session_id}/records",
+            json={"operations": [{
+                "operation_id": f"composition-test-{member_id}",
+                "member_id": member_id,
+                "base_version": int(record["version"]),
+                "confirmation_status": "CONFIRMED_EARLY",
+                "present": None,
+                "notes": "",
+            }], "offline": False},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert result.status_code == 200, result.text
+
+    confirm(ponta_id)
+    # pivo_id fica só confirmável, para testar exclusão explícita depois.
+
+    plan = client.post(
+        "/api/v1/playbook/plans",
+        json={
+            "team_id": team_id,
+            "title": "Plano da prancheta",
+            "seasonal_objective": "Testar composição manual.",
+            "context_adjustment": "",
+            "notes": "",
+            "change_summary": "Criação.",
+            "items": [],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert plan.status_code == 201, plan.text
+    plan_id = int(plan.json()["plan"]["id"])
+    session = client.post(
+        "/api/v1/playbook/sessions",
+        json={
+            "team_id": team_id,
+            "plan_id": plan_id,
+            "title_override": "Sessão da prancheta",
+            "change_summary": "Criação.",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert session.status_code == 201, session.text
+    session_id = int(session.json()["session"]["id"])
+
+    block = {
+        "block_id": "time-a",
+        "label": "Time A",
+        "roles": [{"group": "ATTACK", "label": "Ponta esquerda", "count": 1, "attack_positions": ["PE"]}],
+    }
+
+    # Sem vínculo de calendário ainda: sessão existe sem calendário
+    # (docs/planejamento-treinos/ARQUITETURA.md), preview funciona vazio.
+    unlinked_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={"blocks": [block], "assignments": []},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert unlinked_preview.status_code == 200, unlinked_preview.text
+    assert unlinked_preview.json()["diagnostics"]["coverage"]["known_participants"] == 0
+
+    linked = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/calendar-link",
+        json={"event_id": event_id, "reason": "Vincula para a prancheta."},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert linked.status_code == 200, linked.text
+
+    first_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={"blocks": [block], "assignments": [], "mode": "EQUILIBRADO"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert first_preview.status_code == 200, first_preview.text
+    first_payload = first_preview.json()
+    assert first_payload["diagnostics"]["coverage"]["known_participants"] == 1
+    assert first_payload["mode"] == "EQUILIBRADO"
+    slot_id = first_payload["slots"][0]["slot_id"]
+    assert first_payload["diagnostics"]["vacant_slots"] == [
+        {"slot_id": slot_id, "block_id": "time-a", "role": "Ponta esquerda"}
+    ]
+
+    filled_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={
+            "blocks": [block],
+            "assignments": [{"slot_id": slot_id, "member_id": ponta_id, "occupant_locked": True}],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert filled_preview.status_code == 200, filled_preview.text
+    filled_slot = filled_preview.json()["slots"][0]
+    assert filled_slot["member_id"] == ponta_id
+    assert filled_slot["conflicts"] == []
+    assert filled_slot["occupant_locked"] is True
+
+    # Inclusão manual de quem não está confirmado (nem sequer respondeu):
+    # entra no preview a partir do cadastro do elenco, não da chamada.
+    manual_include_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={
+            "blocks": [block, {
+                "block_id": "time-b",
+                "label": "Time B",
+                "roles": [{"group": "ATTACK", "label": "Pivô", "count": 1, "attack_positions": ["PV"]}],
+            }],
+            "assignments": [],
+            "manual_include_member_ids": [pivo_id],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert manual_include_preview.status_code == 200, manual_include_preview.text
+    assert manual_include_preview.json()["diagnostics"]["coverage"]["known_participants"] == 2
+    assert manual_include_preview.json()["unresolved_participant_ids"] == []
+
+    excluded_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={"blocks": [block], "assignments": [], "excluded_member_ids": [ponta_id]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert excluded_preview.status_code == 200, excluded_preview.text
+    assert excluded_preview.json()["diagnostics"]["coverage"]["known_participants"] == 0
+
+    # Ineligibilidade: o pivô fixado no papel de ponta esquerda vira conflito
+    # explícito, nunca uma substituição silenciosa.
+    conflict_preview = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={
+            "blocks": [block],
+            "assignments": [{"slot_id": slot_id, "member_id": pivo_id, "occupant_locked": True}],
+            "manual_include_member_ids": [pivo_id],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert conflict_preview.status_code == 200, conflict_preview.text
+    assert "INELIGIBLE_POSITION" in conflict_preview.json()["slots"][0]["conflicts"]
+
+    missing_session = client.post(
+        "/api/v1/playbook/sessions/999999/composition/preview",
+        json={"blocks": [block], "assignments": []},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert missing_session.status_code == 404
+
+    logout(client)
+    player_csrf = login(client, "player", data["passwords"]["player"])
+    denied = client.post(
+        f"/api/v1/playbook/sessions/{session_id}/composition/preview",
+        json={"blocks": [block], "assignments": []},
+        headers={"X-CSRF-Token": player_csrf},
+    )
+    assert denied.status_code == 403
