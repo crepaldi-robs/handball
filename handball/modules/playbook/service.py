@@ -15,6 +15,9 @@ from handball.modules.presencas.domain import CONFIRMED_CODES
 from handball.modules.presencas.planner import attach_layer_info, confirmed_player_profiles, exercise_fit
 
 from .composition import build_preview
+from .play_templates import play_templates
+
+PLAY_DIAGRAM_SCHEMA_VERSION = 1
 
 
 MEDIA_LIMITS: dict[str, int] = {
@@ -973,6 +976,7 @@ class PlaybookService:
             blocks=[block.model_dump() for block in body.blocks],
             assignments=[item.model_dump() for item in body.assignments],
             mode=body.mode,
+            suggest=body.suggest,
         )
         preview["session_id"] = int(session_id)
         preview["unresolved_participant_ids"] = unresolved_participant_ids
@@ -1004,6 +1008,89 @@ class PlaybookService:
                 event_id,
                 body.model_dump(),
                 team_ids=self._team_ids(context),
+                actor_user_id=context.user_id,
+            )
+
+    # ------------------------------------------------------------------
+    # Jogadas desenhadas
+    # ------------------------------------------------------------------
+
+    def play_templates(self, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        return {"items": play_templates()}
+
+    def play_diagram(self, content_id: int, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_READ)
+        team_ids = self._team_ids(context)
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            item = unit_of_work.playbook.play_diagram(
+                content_id,
+                team_ids=team_ids,
+                published_only=self._published_only(context),
+            )
+            available = unit_of_work.playbook.plays_available()
+            revisions = (
+                unit_of_work.playbook.play_diagram_revisions(content_id, team_ids=team_ids)
+                if self._has_manage(context) and available
+                else []
+            )
+        return {"available": available, "item": item, "revisions": revisions}
+
+    def save_play_diagram(self, content_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        team_ids = self._team_ids(context)
+        with self._unit_of_work_factory() as unit_of_work:
+            item = unit_of_work.playbook.save_play_diagram(
+                content_id,
+                body.diagram.model_dump(mode="json"),
+                schema_version=PLAY_DIAGRAM_SCHEMA_VERSION,
+                base_revision=body.base_revision,
+                change_summary=body.change_summary,
+                team_ids=team_ids,
+                actor_user_id=context.user_id,
+            )
+            revisions = unit_of_work.playbook.play_diagram_revisions(content_id, team_ids=team_ids)
+        return {"available": True, "item": item, "revisions": revisions}
+
+    def save_today(self, event_id: int, body: Any, context: AccessContext) -> dict[str, Any]:
+        """Grava os exercícios de hoje a partir da chamada.
+
+        Reaproveita o plano do evento (título e objetivos continuam os que já
+        estavam) e só troca a lista ordenada de itens.
+        """
+
+        self._require(context, Permission.PLAYBOOK_MANAGE)
+        team_ids = self._team_ids(context)
+        with self._unit_of_work_factory() as unit_of_work:
+            current = unit_of_work.playbook.plan_for_event(event_id, team_ids=team_ids)
+            team_id = int(current["event"]["team_id"])
+            plan = current.get("plan") or {}
+            items = []
+            for order, item in enumerate(body.items):
+                content_id = (
+                    unit_of_work.playbook.ensure_collective_content(team_id, actor_user_id=context.user_id)
+                    if item.collective
+                    else int(item.content_id)
+                )
+                items.append(
+                    {
+                        "content_id": content_id,
+                        "sort_order": order,
+                        "planned_minutes": item.planned_minutes,
+                        "notes": item.notes,
+                    }
+                )
+            return unit_of_work.playbook.save_plan(
+                event_id,
+                {
+                    "title": str(plan.get("title") or current["event"].get("title") or "Treino"),
+                    "seasonal_objective": str(plan.get("seasonal_objective") or ""),
+                    "context_adjustment": str(plan.get("context_adjustment") or ""),
+                    "notes": str(plan.get("notes") or ""),
+                    "items": items,
+                    "change_summary": "Exercícios de hoje ajustados pela chamada.",
+                },
+                team_ids=team_ids,
                 actor_user_id=context.user_id,
             )
 

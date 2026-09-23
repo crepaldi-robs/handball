@@ -22,7 +22,7 @@ class MemberUpdate(BaseModel):
 
 
 class RankingSessionCreate(BaseModel):
-    scope: Literal["LINE", "GOALKEEPER"]
+    scope: Literal["LINE", "DEFENSE", "GOALKEEPER"]
     member_id: int = Field(gt=0)
     rerank: bool = False
 

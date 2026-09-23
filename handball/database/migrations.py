@@ -13,9 +13,9 @@ from handball.core.positions import parse_attack_positions
 
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-LATEST_SCHEMA_VERSION = 14
+LATEST_SCHEMA_VERSION = 15
 MIN_SUPPORTED_SCHEMA_VERSION = 1
-MAX_SUPPORTED_SCHEMA_VERSION = 14
+MAX_SUPPORTED_SCHEMA_VERSION = 15
 FINGERPRINT_FORMAT = "crepaldi-handball-logical-sqlite/v1"
 FINGERPRINT_DOMAIN = b"crepaldi-handball-logical-sqlite/v1\x00"
 
@@ -755,6 +755,85 @@ MIGRATION_V14_CHECKSUM = _migration_checksum(
 )
 KNOWN_MIGRATIONS[14] = (MIGRATION_V14_NAME, MIGRATION_V14_CHECKSUM)
 
+# A hierarquia do elenco ganha uma ordenação própria de defesa. "LINE" passa a
+# significar o ataque de linha (decisão da CT em 23/09/2026) e não é copiada:
+# todo atleta começa "não avaliado" na defesa. O SQLite não altera CHECK no
+# lugar, então as quatro tabelas com escopo são reconstruídas pelo
+# procedimento oficial (tabela nova, cópia, DROP, RENAME) com foreign_keys
+# desligado e foreign_key_check ao final. A mesma manutenção cria o desenho
+# versionado das jogadas do Playbook.
+_V15_SCOPE_CHECK_OLD = "CHECK(scope IN('LINE','GOALKEEPER'))"
+_V15_SCOPE_CHECK_NEW = "CHECK(scope IN('LINE','DEFENSE','GOALKEEPER'))"
+_V15_RANK_TABLES = (
+    ("rank_layers", "id,scope,ordinal,created_at,updated_at"),
+    ("member_layer_assignments", "member_id,scope,layer_id,assigned_at,assigned_by_user_id"),
+    (
+        "rank_sessions",
+        "id,scope,subject_member_id,is_rerank,lo_ordinal,hi_ordinal,"
+        "pending_reference_member_id,status,result_layer_id,created_by_user_id,"
+        "created_at,updated_at",
+    ),
+    (
+        "rank_comparisons",
+        "id,session_id,scope,subject_member_id,reference_member_id,question,"
+        "outcome,answered_at,actor_user_id",
+    ),
+)
+
+
+def _v15_rank_rebuild_statements() -> tuple[str, ...]:
+    create_by_table = {
+        statement.split(" ", 3)[2]: statement
+        for statement in SCHEMA_V13_STATEMENTS
+        if statement.startswith("CREATE TABLE ")
+    }
+    statements: list[str] = []
+    for table, columns in _V15_RANK_TABLES:
+        original = create_by_table[table]
+        if _V15_SCOPE_CHECK_OLD not in original:
+            raise RuntimeError(f"Contrato v13 inesperado para {table}.")
+        rebuilt = original.replace(
+            f"CREATE TABLE {table} ", f"CREATE TABLE {table}_v15 ", 1
+        ).replace(_V15_SCOPE_CHECK_OLD, _V15_SCOPE_CHECK_NEW)
+        statements.extend(
+            (
+                rebuilt,
+                f"INSERT INTO {table}_v15({columns}) SELECT {columns} FROM {table}",
+                f"DROP TABLE {table}",
+                f"ALTER TABLE {table}_v15 RENAME TO {table}",
+            )
+        )
+    statements.extend(
+        statement
+        for statement in SCHEMA_V13_STATEMENTS
+        if statement.startswith("CREATE ") and " INDEX " in statement
+        and "layer_position_refinements" not in statement
+    )
+    return tuple(statements)
+
+
+SCHEMA_V15_STATEMENTS = _v15_rank_rebuild_statements() + (
+    "CREATE TABLE playbook_play_diagrams (content_id INTEGER PRIMARY KEY, schema_version INTEGER NOT NULL CHECK(schema_version>=1), revision INTEGER NOT NULL CHECK(revision>=1), diagram_json TEXT NOT NULL CHECK(json_valid(diagram_json)), updated_by_user_id INTEGER NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE TABLE playbook_play_diagram_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, content_id INTEGER NOT NULL, revision INTEGER NOT NULL CHECK(revision>=1), schema_version INTEGER NOT NULL CHECK(schema_version>=1), diagram_json TEXT NOT NULL CHECK(json_valid(diagram_json)), change_summary TEXT NOT NULL DEFAULT '', created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(content_id,revision), FOREIGN KEY(content_id) REFERENCES playbook_contents(id) ON DELETE CASCADE, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT)",
+    "CREATE INDEX idx_playbook_play_diagram_revisions_content ON playbook_play_diagram_revisions(content_id,revision DESC)",
+)
+MIGRATION_V15_NAME = "defense_hierarchy_and_play_diagrams"
+MIGRATION_V15_CHECKSUM = _migration_checksum(
+    15,
+    MIGRATION_V15_NAME,
+    SCHEMA_V15_STATEMENTS,
+    conditional_steps=(),
+    canonical_contract={
+        "scopes": ["LINE", "DEFENSE", "GOALKEEPER"],
+        "line_semantics": "attack",
+        "defense_initial_state": "unranked",
+        "defense_refinement": "none",
+        "rank_rebuild": "sqlite-12-step-with-foreign-keys-off",
+        "play_diagram": "versioned-json-with-append-only-revisions",
+    },
+)
+KNOWN_MIGRATIONS[15] = (MIGRATION_V15_NAME, MIGRATION_V15_CHECKSUM)
+
 V5_PERMISSION_GRANT_LAYOUT: tuple[ColumnContract, ...] = (
     ("user_id", "INTEGER", True, None, 1),
     ("permission_code", "TEXT", True, None, 2),
@@ -948,6 +1027,17 @@ V13_REQUIRED_COLUMNS = {
     },
 }
 
+V15_REQUIRED_COLUMNS = {
+    "playbook_play_diagrams": {
+        "content_id", "schema_version", "revision", "diagram_json",
+        "updated_by_user_id", "updated_at",
+    },
+    "playbook_play_diagram_revisions": {
+        "id", "content_id", "revision", "schema_version", "diagram_json",
+        "change_summary", "created_by_user_id", "created_at",
+    },
+}
+
 V14_REQUIRED_COLUMNS = {
     "google_connections": {
         "id", "team_id", "connection_uuid", "google_subject", "account_email",
@@ -1080,6 +1170,15 @@ def _apply_schema_v13(conn: sqlite3.Connection) -> None:
 
 def _apply_schema_v14(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_V14_STATEMENTS:
+        conn.execute(statement)
+
+
+def _apply_schema_v15(conn: sqlite3.Connection) -> None:
+    if _fetchall(conn, "PRAGMA foreign_keys")[0][0]:
+        raise DatabaseSchemaError(
+            "A v15 reconstrói a hierarquia do elenco e exige foreign_keys desligado."
+        )
+    for statement in SCHEMA_V15_STATEMENTS:
         conn.execute(statement)
 
 
@@ -1425,6 +1524,14 @@ def _record_schema_v14(conn: sqlite3.Connection, *, app_version: str, origin: st
         (14, MIGRATION_V14_NAME, MIGRATION_V14_CHECKSUM, _now_iso(), app_version, origin),
     )
     conn.execute("PRAGMA user_version = 14").close()
+
+
+def _record_schema_v15(conn: sqlite3.Connection, *, app_version: str, origin: str) -> None:
+    conn.execute(
+        "INSERT INTO schema_migrations(version,name,checksum_sha256,applied_at,app_version,origin) VALUES(?,?,?,?,?,?)",
+        (15, MIGRATION_V15_NAME, MIGRATION_V15_CHECKSUM, _now_iso(), app_version, origin),
+    )
+    conn.execute("PRAGMA user_version = 15").close()
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -2120,6 +2227,31 @@ def _status_from_connection(conn: sqlite3.Connection, db_path: Path) -> SchemaSt
                         + ", ".join(sorted(missing_columns))
                         + "."
                     )
+        if current_version >= 15:
+            required_v15 = set(V15_REQUIRED_COLUMNS)
+            base_problems.extend(
+                f"Tabela de jogadas do Playbook obrigatória ausente: {table}."
+                for table in sorted(required_v15 - tables)
+            )
+            for table, required_columns in V15_REQUIRED_COLUMNS.items():
+                if table not in tables:
+                    continue
+                missing_columns = required_columns - _columns(conn, table)
+                if missing_columns:
+                    base_problems.append(
+                        f"Colunas de jogadas do Playbook ausentes em {table}: "
+                        + ", ".join(sorted(missing_columns))
+                        + "."
+                    )
+            for table, _ in _V15_RANK_TABLES:
+                row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if row is None or _V15_SCOPE_CHECK_NEW not in str(row[0]):
+                    base_problems.append(
+                        f"Hierarquia de defesa ausente no escopo de {table}."
+                    )
         problems.extend(base_problems)
     compatible = (
         not problems
@@ -2381,6 +2513,13 @@ class DatabaseMigrator:
                 planning_status.versioned
                 and planning_status.current_version >= 2
                 and planning_status.current_version < 4
+            ) or (
+                # v15 reconstrói tabelas-pai da hierarquia: com foreign_keys
+                # ligado o DROP apagaria em cascata os refinos de posição.
+                # Toda cadeia que ainda vai aplicar a v15 roda desligada; o
+                # foreign_key_check final continua obrigatório.
+                not planning_status.versioned
+                or planning_status.current_version < 15
             )
         finally:
             planning_connection.close()
@@ -2464,6 +2603,10 @@ class DatabaseMigrator:
                 _apply_schema_v14(conn)
                 _record_schema_v14(conn, app_version=app_version, origin=origin)
                 effective_version = 14
+            if effective_version >= 14 and effective_version < 15:
+                _apply_schema_v15(conn)
+                _record_schema_v15(conn, app_version=app_version, origin=origin)
+                effective_version = 15
 
             after = _status_from_connection(conn, self.db_path)
             if not after.compatible or not after.versioned or after.problems:
@@ -2558,6 +2701,8 @@ class DatabaseMigrator:
                 _record_schema_v13(conn, app_version=app_version, origin=origin)
                 _apply_schema_v14(conn)
                 _record_schema_v14(conn, app_version=app_version, origin=origin)
+                _apply_schema_v15(conn)
+                _record_schema_v15(conn, app_version=app_version, origin=origin)
             result = _status_from_connection(conn, self.db_path)
             if not result.compatible or not result.versioned or result.problems:
                 raise DatabaseSchemaError(

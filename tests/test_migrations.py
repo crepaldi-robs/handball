@@ -44,7 +44,7 @@ def test_v12_backfills_recognized_attack_positions_and_creates_tactical_tables(t
         origin="pytest",
     )
 
-    assert status.current_version == 14
+    assert status.current_version == 15
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         positions = connection.execute(
@@ -66,7 +66,7 @@ def test_v13_creates_roster_hierarchy_tables(tmp_path) -> None:
         origin="pytest",
     )
 
-    assert status.current_version == 14
+    assert status.current_version == 15
     assert status.pending_versions == ()
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -114,7 +114,7 @@ def test_v14_creates_google_integration_without_storing_tokens(tmp_path) -> None
         origin="pytest",
     )
 
-    assert status.current_version == 14
+    assert status.current_version == 15
     assert status.pending_versions == ()
     with sqlite3.connect(database_path) as connection:
         tables = {
@@ -147,6 +147,91 @@ def test_v14_creates_google_integration_without_storing_tokens(tmp_path) -> None
         connection_columns
     )
     assert "DELETE_EVENT" in outbox_sql
+
+
+def test_v15_rebuilds_hierarchy_with_defense_scope_without_losing_rows(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "v15.db"
+    AttendanceRepository(database_path).bootstrap()
+    # Materializa um banco v14 real: a cadeia roda sem a v15, os dados de
+    # hierarquia entram e só então a v15 é aplicada pelo caminho de produção.
+    monkeypatch.setattr(migrations, "_apply_schema_v15", lambda conn: None)
+    monkeypatch.setattr(migrations, "_record_schema_v15", lambda conn, **_: None)
+    status = DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        legacy_admin=("admin", "test-password-hash"),
+        app_version="pytest-v14",
+        origin="pytest",
+    )
+    assert status.current_version == 14
+    monkeypatch.undo()
+
+    now = "2026-09-23T12:00:00-03:00"
+    with sqlite3.connect(database_path) as connection:
+        member_id = connection.execute("SELECT id FROM team_members ORDER BY id LIMIT 1").fetchone()[0]
+        other_id = connection.execute("SELECT id FROM team_members ORDER BY id LIMIT 1 OFFSET 1").fetchone()[0]
+        connection.execute("INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('LINE',0,?,?)", (now, now))
+        layer_id = connection.execute("SELECT id FROM rank_layers").fetchone()[0]
+        connection.execute(
+            "INSERT INTO member_layer_assignments(member_id,scope,layer_id,assigned_at,assigned_by_user_id) VALUES(?,'LINE',?,?,1)",
+            (member_id, layer_id, now),
+        )
+        connection.execute(
+            "INSERT INTO layer_position_refinements(layer_id,position,member_id,refine_ordinal,updated_at,updated_by_user_id) VALUES(?,'C',?,0,?,1)",
+            (layer_id, member_id, now),
+        )
+        connection.execute(
+            "INSERT INTO rank_sessions(id,scope,subject_member_id,lo_ordinal,hi_ordinal,status,result_layer_id,created_by_user_id,created_at,updated_at) VALUES('s1','LINE',?,0,1,'COMPLETED',?,1,?,?)",
+            (other_id, layer_id, now, now),
+        )
+        connection.execute(
+            "INSERT INTO rank_comparisons(session_id,scope,subject_member_id,reference_member_id,outcome,answered_at,actor_user_id) VALUES('s1','LINE',?,?,'EQUAL',?,1)",
+            (other_id, member_id, now),
+        )
+        before = {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+            for table in ("rank_layers", "member_layer_assignments", "layer_position_refinements", "rank_sessions", "rank_comparisons")
+        }
+
+    status = DatabaseMigrator(database_path).apply_pending(
+        expected_fingerprint=logical_fingerprint(database_path),
+        app_version="pytest-v15",
+        origin="pytest",
+    )
+
+    assert status.current_version == 15
+    assert status.problems == ()
+    with sqlite3.connect(database_path) as connection:
+        after = {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+            for table in before
+        }
+        recorded = connection.execute("SELECT checksum_sha256 FROM schema_migrations WHERE version=15").fetchone()
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        leftovers = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name LIKE '%_v15'")]
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('DEFENSE',0,?,?)", (now, now))
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO rank_layers(scope,ordinal,created_at,updated_at) VALUES('MIDFIELD',0,?,?)", (now, now))
+        connection.execute(
+            "INSERT INTO playbook_play_diagrams(content_id,schema_version,revision,diagram_json,updated_by_user_id,updated_at) "
+            "SELECT id,1,1,'{}',1,? FROM playbook_contents LIMIT 1",
+            (now,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO playbook_play_diagram_revisions(content_id,revision,schema_version,diagram_json,created_by_user_id,created_at) VALUES(999999,1,1,'{}',1,?)",
+                (now,),
+            )
+    assert after == before
+    assert recorded[0] == migrations.MIGRATION_V15_CHECKSUM
+    assert leftovers == []
+    assert {
+        "idx_rank_sessions_active_scope",
+        "idx_member_layer_assignments_layer",
+        "idx_rank_comparisons_session",
+        "idx_rank_comparisons_subject",
+        "idx_playbook_play_diagram_revisions_content",
+    } <= indexes
 
 
 def _make_v5_database(database_path) -> None:
@@ -281,7 +366,7 @@ def test_v8_and_v9_playbook_records_migrate_to_v10_without_history_loss(
         expected_fingerprint=logical_fingerprint(database_path),
     )
 
-    assert result.current_version == 14
+    assert result.current_version == 15
     assert result.pending_versions == ()
     assert verify_database(database_path)["ok"] is True
     with sqlite3.connect(database_path) as conn:

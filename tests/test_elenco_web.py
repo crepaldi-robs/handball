@@ -152,7 +152,7 @@ def test_binary_insertion_builds_layers_with_audit_trail(tmp_path: Path) -> None
     assert second["status"] == "ASKING"
     assert second["question"]["subject"]["name"] == "Gabixo"
     assert second["question"]["reference"]["member_id"] == ids["Arthur"]
-    assert "Quem é melhor em quadra" in second["question"]["text"]
+    assert "No ataque" in second["question"]["text"]
     done = answer(client, csrf, second, "BETTER").json()
     assert done["status"] == "COMPLETED"
     assert done["result"]["layer_ordinal"] == 1
@@ -190,7 +190,7 @@ def test_binary_insertion_builds_layers_with_audit_trail(tmp_path: Path) -> None
         (ids["João Alma"], "EQUAL"),
     ]
     assert all(row["actor_user_id"] == 1 and row["answered_at"] for row in comparisons)
-    assert all("Quem é melhor em quadra" in str(row["question"]) for row in comparisons)
+    assert all("No ataque" in str(row["question"]) for row in comparisons)
     assert {"ranking.layer.create", "ranking.assign"} <= audit_actions
 
     # A camada aparece no cadastro e o goleiro tem hierarquia separada.
@@ -410,3 +410,42 @@ def test_degraded_database_without_v13_keeps_module_read_only(tmp_path: Path) ->
     # O restante do sistema segue funcionando com o banco antigo.
     assert client.get("/api/v1/history").status_code == 200
     assert client.get("/app/presencas").status_code == 200
+
+
+def test_defense_hierarchy_is_independent_from_attack_and_has_no_refinement(tmp_path: Path) -> None:
+    client, _, data = make_client(tmp_path)
+    csrf = login(client, "roberto", data["passwords"]["roberto"])
+    ids = member_ids(client)
+
+    overview = client.get("/api/v1/elenco/layers").json()
+    assert overview["scopes"]["LINE"]["label"] == "Ataque"
+    assert overview["scopes"]["DEFENSE"]["label"] == "Defesa"
+    defense_pending = {item["name"] for item in overview["scopes"]["DEFENSE"]["pending"]}
+    assert "Arthur" in defense_pending and "Gabigol" not in defense_pending
+
+    # Ataque: Gabixo e Arthur no mesmo nível. Defesa: Arthur acima de Gabixo.
+    start_session(client, csrf, "LINE", ids["Gabixo"])
+    answer(client, csrf, start_session(client, csrf, "LINE", ids["Arthur"]).json(), "EQUAL")
+    first = start_session(client, csrf, "DEFENSE", ids["Gabixo"])
+    assert first.status_code == 200, first.text
+    asking = start_session(client, csrf, "DEFENSE", ids["Arthur"]).json()
+    assert asking["question"]["text"].startswith("Na defesa")
+    assert answer(client, csrf, asking, "BETTER").status_code == 200
+
+    scopes = client.get("/api/v1/elenco/layers").json()["scopes"]
+    assert len(scopes["LINE"]["layers"]) == 1
+    defense_layers = scopes["DEFENSE"]["layers"]
+    assert [[m["member_id"] for m in layer["members"]] for layer in defense_layers] == [
+        [ids["Arthur"]],
+        [ids["Gabixo"]],
+    ]
+    members = {item["name"]: item for item in client.get("/api/v1/elenco/members").json()["items"]}
+    assert set(members["Arthur"]["layers"]) == {"LINE", "DEFENSE"}
+
+    refused = client.put(
+        f"/api/v1/elenco/layers/{defense_layers[0]['layer_id']}/refinements",
+        json={"position": "PD", "member_ids": [ids["Arthur"]]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert refused.status_code == 400
+    assert "defesa" in refused.json()["detail"]

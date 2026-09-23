@@ -10,6 +10,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
 
+from ..contracts import RevisionConflictError
+
 
 PLAYBOOK_TABLES = frozenset(
     {
@@ -3746,3 +3748,243 @@ class PlaybookRepository:
             },
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Treino do dia e jogadas (v15)
+    # ------------------------------------------------------------------
+
+    def plays_available(self) -> bool:
+        return self._table_exists("playbook_play_diagrams")
+
+    def training_day_items(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Itens do plano da sessão principal do evento, na ordem do plano.
+
+        Cada item traz o tipo do conteúdo, as variantes do exercício (quando
+        houver requisitos cadastrados) e o desenho da jogada (v15). Banco sem
+        Playbook ou sem vínculo devolve lista vazia: a chamada segue sem
+        roteiro, nunca quebra.
+        """
+
+        allowed = _ids(team_ids)
+        if not allowed or not self.is_available() or not self._table_exists("playbook_session_event_links"):
+            return []
+        link = self.connection.execute(
+            f"""SELECT ps.plan_id FROM playbook_session_event_links l
+                JOIN playbook_sessions ps ON ps.id=l.session_id
+                WHERE l.calendar_event_id=? AND l.link_state='ACTIVE'
+                  AND ps.team_id IN ({_placeholders(allowed)})
+                ORDER BY l.link_order,l.id LIMIT 1""",
+            (int(event_id), *allowed),
+        ).fetchone()
+        if link is None:
+            return []
+        published_clause = " AND c.status='PUBLISHED'" if published_only else ""
+        rows = self.connection.execute(
+            f"""SELECT i.content_id,i.sort_order,i.planned_minutes,i.notes,
+                       c.title,c.content_kind,c.status
+                FROM playbook_training_plan_items i
+                JOIN playbook_contents c ON c.id=i.content_id
+                WHERE i.plan_id=?{published_clause}
+                ORDER BY i.sort_order,i.id""",
+            (int(link["plan_id"]),),
+        ).fetchall()
+        items = [dict(row) for row in rows]
+        if not items:
+            return []
+        content_ids = [int(item["content_id"]) for item in items]
+        specs: dict[int, Any] = {}
+        if self._table_exists("playbook_exercise_specs"):
+            for row in self.connection.execute(
+                f"SELECT content_id,spec_json FROM playbook_exercise_specs WHERE content_id IN ({_placeholders(content_ids)})",
+                content_ids,
+            ).fetchall():
+                spec = json.loads(str(row["spec_json"]))
+                variants = spec.get("variants") if isinstance(spec, dict) else None
+                if isinstance(variants, list):
+                    specs[int(row["content_id"])] = variants
+        diagrams: dict[int, Any] = {}
+        if self.plays_available():
+            for row in self.connection.execute(
+                f"SELECT content_id,diagram_json FROM playbook_play_diagrams WHERE content_id IN ({_placeholders(content_ids)})",
+                content_ids,
+            ).fetchall():
+                diagrams[int(row["content_id"])] = json.loads(str(row["diagram_json"]))
+        for item in items:
+            item["variants"] = specs.get(int(item["content_id"]), [])
+            item["diagram"] = diagrams.get(int(item["content_id"]))
+        return items
+
+    def _require_plays(self) -> None:
+        if not self.plays_available():
+            raise RuntimeError(
+                "As jogadas desenhadas dependem da manutenção de banco v15, ainda não aplicada."
+            )
+
+    def play_diagram(
+        self,
+        content_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any] | None:
+        self._require_available()
+        self._allowed_content(content_id, team_ids, published_only=published_only)
+        if not self.plays_available():
+            return None
+        row = self.connection.execute(
+            """SELECT content_id,schema_version,revision,diagram_json,updated_by_user_id,updated_at
+               FROM playbook_play_diagrams WHERE content_id=?""",
+            (int(content_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["diagram"] = json.loads(str(result.pop("diagram_json")))
+        return result
+
+    def save_play_diagram(
+        self,
+        content_id: int,
+        diagram: Mapping[str, Any],
+        *,
+        schema_version: int,
+        base_revision: int | None,
+        change_summary: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]:
+        """Grava o desenho com escrita condicional e histórico append-only.
+
+        ``base_revision`` é a revisão que o editor abriu (None = jogada ainda
+        sem desenho). Se outra pessoa salvou antes, nada é gravado e o
+        chamador recebe RevisionConflictError com a revisão atual.
+        """
+
+        self._require_available()
+        self._require_plays()
+        content = self._allowed_content(content_id, team_ids)
+        if content["status"] == "ARCHIVED":
+            raise ValueError("Jogada arquivada não pode ser editada.")
+        current = self.connection.execute(
+            "SELECT revision,diagram_json FROM playbook_play_diagrams WHERE content_id=?",
+            (int(content_id),),
+        ).fetchone()
+        current_revision = int(current["revision"]) if current is not None else None
+        if current_revision != (int(base_revision) if base_revision is not None else None):
+            raise RevisionConflictError(
+                "Outra pessoa salvou esta jogada enquanto você editava.",
+                current_revision=current_revision or 0,
+            )
+        encoded = json.dumps(diagram, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if current is not None and str(current["diagram_json"]) == encoded:
+            return self.play_diagram(content_id, team_ids=team_ids)  # type: ignore[return-value]
+        revision = (current_revision or 0) + 1
+        now = _now_iso()
+        self.connection.execute(
+            """INSERT INTO playbook_play_diagrams(
+                   content_id,schema_version,revision,diagram_json,updated_by_user_id,updated_at
+               ) VALUES(?,?,?,?,?,?)
+               ON CONFLICT(content_id) DO UPDATE SET
+                   schema_version=excluded.schema_version,
+                   revision=excluded.revision,
+                   diagram_json=excluded.diagram_json,
+                   updated_by_user_id=excluded.updated_by_user_id,
+                   updated_at=excluded.updated_at""",
+            (int(content_id), int(schema_version), revision, encoded, int(actor_user_id), now),
+        )
+        self.connection.execute(
+            """INSERT INTO playbook_play_diagram_revisions(
+                   content_id,revision,schema_version,diagram_json,change_summary,
+                   created_by_user_id,created_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                int(content_id),
+                revision,
+                int(schema_version),
+                encoded,
+                str(change_summary or "").strip()[:500],
+                int(actor_user_id),
+                now,
+            ),
+        )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="playbook.play_diagram.save",
+            entity="playbook_content",
+            target_id=int(content_id),
+            before={"revision": current_revision},
+            after={"revision": revision, "steps": len(diagram.get("steps") or ()), "actors": len(diagram.get("actors") or ())},
+        )
+        return self.play_diagram(content_id, team_ids=team_ids)  # type: ignore[return-value]
+
+    def play_diagram_revisions(
+        self,
+        content_id: int,
+        *,
+        team_ids: Iterable[int],
+    ) -> list[dict[str, Any]]:
+        self._require_available()
+        self._allowed_content(content_id, team_ids)
+        if not self.plays_available():
+            return []
+        return [
+            dict(row)
+            for row in self.connection.execute(
+                """SELECT revision,schema_version,change_summary,created_by_user_id,created_at
+                   FROM playbook_play_diagram_revisions WHERE content_id=?
+                   ORDER BY revision DESC""",
+                (int(content_id),),
+            ).fetchall()
+        ]
+
+    def ensure_collective_content(self, team_id: int, *, actor_user_id: int) -> int:
+        """Conteúdo "Coletivo" da equipe, criado e publicado uma única vez.
+
+        Serve de marcador no plano do treino: a chamada troca o bloco pela
+        sugestão de times do dia. Fica numa pasta "Treino" da raiz.
+        """
+
+        self._require_available()
+        row = self.connection.execute(
+            """SELECT id,status FROM playbook_contents
+               WHERE team_id=? AND UPPER(content_kind)='COLLECTIVE'
+               ORDER BY status='ARCHIVED',id LIMIT 1""",
+            (int(team_id),),
+        ).fetchone()
+        if row is not None:
+            content_id = int(row["id"])
+            if str(row["status"]) == "ARCHIVED":
+                self.set_content_status(content_id, status="RESTORE", team_ids=[team_id], actor_user_id=actor_user_id)
+            if self._content(content_id)["status"] != "PUBLISHED":
+                self.set_content_status(content_id, status="PUBLISHED", team_ids=[team_id], actor_user_id=actor_user_id)
+            return content_id
+        folder = self.connection.execute(
+            """SELECT id FROM playbook_folders
+               WHERE team_id=? AND parent_id IS NULL AND archived_at IS NULL
+                 AND name='Treino' LIMIT 1""",
+            (int(team_id),),
+        ).fetchone()
+        folder_id = (
+            int(folder["id"])
+            if folder is not None
+            else int(self.create_folder(team_id, name="Treino", parent_id=None, actor_user_id=actor_user_id)["id"])
+        )
+        created = self.create_content(
+            team_id,
+            {
+                "title": "Coletivo",
+                "content_kind": "COLLECTIVE",
+                "perspective": "NEUTRAL",
+                "objective": "Jogo em dois times. A chamada sugere os times do dia: ataque forte × defesa forte.",
+                "placements": [{"folder_id": folder_id}],
+            },
+            actor_user_id=actor_user_id,
+        )
+        self.set_content_status(int(created["id"]), status="PUBLISHED", team_ids=[team_id], actor_user_id=actor_user_id)
+        return int(created["id"])
