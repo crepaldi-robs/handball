@@ -164,6 +164,19 @@
       responsibility.classList.add("hidden");
     }
 
+    const playSection = document.querySelector("#pbp-play");
+    playSection.replaceChildren();
+    playSection.classList.add("hidden");
+    if (["JOGADA", "PLAY"].includes(String(content.content_kind || "").toUpperCase()) && window.PlayDiagram) {
+      request(`/api/v1/playbook/contents/${content.id}/diagram`).then((data) => {
+        if (!data.item) return;
+        const box = el("div");
+        playSection.replaceChildren(el("h2", null, "Jogada animada"), box);
+        playSection.classList.remove("hidden");
+        window.PlayDiagram.mount(box, data.item.diagram, { title: content.title });
+      }).catch(() => {});
+    }
+
     const attachmentUrl = (attachment) =>
       `/api/v1/playbook/attachments/${encodeURIComponent(String(attachment.id))}/${attachment.storage_kind === "DRIVE_LINK" ? "open" : "download"}`;
     const attachments = Array.isArray(content.attachments) ? content.attachments : [];

@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from handball.core.auth import require_write_session, session_from_request
 from handball.core.authorization import AccessContext, Permission, require_permission
 from handball.core.errors import PlaybookProblem
+from handball.database.contracts import RevisionConflictError
 from handball.modules.usuarios.service import IdentityService
 
 from .schemas import (
@@ -31,11 +32,13 @@ from .schemas import (
     PermanentDeleteInput,
     PlaybookSeriesInput,
     PlanReuseInput,
+    PlayDiagramInput,
     PlaybookSessionInput,
     SessionEventLinkInput,
     SessionEvaluationInput,
     SessionExecutionInput,
     SessionUnlinkInput,
+    TodayPlanInput,
     TrainingPlanInput,
 )
 from .service import MEDIA_LIMITS, PlaybookService
@@ -58,6 +61,17 @@ def _handle_error(exc: Exception, request: Request | None = None) -> HTTPExcepti
     ) or uuid4().hex[:12]
     if isinstance(exc, PlaybookProblem):
         return HTTPException(status_code=exc.status_code, detail=exc.to_detail(request_id=request_id))
+    if isinstance(exc, RevisionConflictError):
+        problem = PlaybookProblem(
+            code="playbook.revision_conflict",
+            title="Alguém salvou antes de você",
+            message=str(exc),
+            suggestion="Seu desenho continua na tela. Recarregue a versão atual ou salve por cima depois de conferir.",
+            status_code=409,
+        )
+        detail = problem.to_detail(request_id=request_id)
+        detail["current_revision"] = exc.current_revision
+        return HTTPException(status_code=409, detail=detail)
     if isinstance(exc, PermissionError):
         problem = PlaybookProblem(
             code="playbook.permission_denied",
@@ -135,6 +149,32 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
                 "upgrade_required": upgrade_required,
             },
         )
+
+    def _play_editor_page(request: Request, content_id: int | None) -> Response:
+        session = session_from_request(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if Permission.PLAYBOOK_MANAGE not in session.permissions:
+            raise HTTPException(status_code=403)
+        team_view = identity_service.resolve_active_team_view(session.to_access_context())
+        return templates.TemplateResponse(
+            request,
+            "playbook/play_editor.html",
+            {
+                "session": session,
+                "organization": team_view["organization"],
+                "team_theme": team_view["team_theme"],
+                "content_id": content_id,
+            },
+        )
+
+    @router.get("/app/playbook/jogadas/nova", response_class=HTMLResponse)
+    def new_play_page(request: Request) -> Response:
+        return _play_editor_page(request, None)
+
+    @router.get("/app/playbook/jogadas/{content_id}", response_class=HTMLResponse)
+    def play_page(request: Request, content_id: int) -> Response:
+        return _play_editor_page(request, content_id)
 
     @router.get("/api/v1/playbook")
     def library(
@@ -794,6 +834,51 @@ def create_router(service: PlaybookService, identity_service: IdentityService, t
     ) -> dict[str, Any]:
         try:
             return service.save_plan(event_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/play-templates")
+    def play_templates(
+        request: Request,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.play_templates(context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.get("/api/v1/playbook/contents/{content_id}/diagram")
+    def play_diagram(
+        request: Request,
+        content_id: int,
+        context: Annotated[AccessContext, Depends(require_permission(Permission.PLAYBOOK_READ))],
+    ) -> dict[str, Any]:
+        try:
+            return service.play_diagram(content_id, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/contents/{content_id}/diagram")
+    def save_play_diagram(
+        request: Request,
+        content_id: int,
+        body: PlayDiagramInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_play_diagram(content_id, body, context)
+        except Exception as exc:
+            raise _handle_error(exc, request) from exc
+
+    @router.put("/api/v1/playbook/events/{event_id}/today")
+    def save_today(
+        request: Request,
+        event_id: int,
+        body: TodayPlanInput,
+        context: Annotated[AccessContext, Depends(_write_permission(Permission.PLAYBOOK_MANAGE))],
+    ) -> dict[str, Any]:
+        try:
+            return service.save_today(event_id, body, context)
         except Exception as exc:
             raise _handle_error(exc, request) from exc
 

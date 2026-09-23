@@ -18,6 +18,8 @@
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/coach-report.js" defer></script>
+  <script src="/static/training-day.js" defer></script>
+  <script src="/static/today-plan.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body data-user-id="{{ session.user_id }}" data-team-id="{{ session.team_ids|list|first or 0 }}" data-vault-format="2">
@@ -123,14 +125,21 @@
 
           <aside class="panel call-reading only-desktop" aria-labelledby="call-reading-title">
             <div class="page-heading-compact">
-              <h2 id="call-reading-title">Leitura do treino</h2>
+              <h2 id="call-reading-title">Treino do dia</h2>
               <button id="copy-summary" class="icon-action-button" type="button" aria-label="Copiar mensagem para o grupo" title="Copiar mensagem para o grupo">⧉</button>
             </div>
-            <div id="coach-report-panel"></div>
+            <button class="button button-primary today-open online-only" type="button" data-today-open>Exercícios de hoje</button>
+            <div id="training-day-panel"></div>
+            {# A análise técnica (cobertura, robustez, combinações) continua
+               disponível, mas recolhida: não é o que a quadra precisa ler. #}
+            <details class="td-analysis">
+              <summary>Análise técnica da CT</summary>
+              <div id="coach-report-panel"></div>
+            </details>
           </aside>
         </div>
 
-        <button id="open-reading-sheet" class="button only-mobile ct-reading-fab" type="button">Ver leitura do treino</button>
+        <button id="open-reading-sheet" class="button only-mobile ct-reading-fab" type="button">Ver treino do dia</button>
       </section>
 
       <section id="view-summary" class="view" aria-labelledby="summary-title">
@@ -183,13 +192,38 @@
   <dialog id="reading-sheet" class="modal sheet only-mobile">
     <div class="sheet-handle" aria-hidden="true"></div>
     <div class="page-heading-compact">
-      <h2 id="reading-sheet-title">Leitura do treino</h2>
+      <h2 id="reading-sheet-title">Treino do dia</h2>
       <button id="reading-sheet-close" class="icon-action-button" type="button" aria-label="Fechar">✕</button>
     </div>
-    <div id="coach-report-panel-mobile"></div>
+    <button class="button button-primary today-open online-only" type="button" data-today-open>Exercícios de hoje</button>
+    <div id="training-day-panel-mobile"></div>
+    <details class="td-analysis">
+      <summary>Análise técnica da CT</summary>
+      <div id="coach-report-panel-mobile"></div>
+    </details>
     <div class="modal-actions">
       <button id="copy-summary-sheet" class="button button-primary" type="button">Copiar mensagem para o grupo</button>
       <button id="reading-sheet-playbook" class="button" type="button">Ajustar plano no Playbook</button>
+    </div>
+  </dialog>
+
+  <dialog id="today-dialog" class="modal today-dialog" aria-labelledby="today-dialog-title">
+    <div>
+      <span class="eyebrow">PLAYBOOK</span>
+      <h2 id="today-dialog-title">Exercícios de hoje</h2>
+      <p class="muted">Escolha na ordem em que vão acontecer. Minutos são opcionais.</p>
+    </div>
+    <ol id="today-selected" class="today-selected"></ol>
+    <div class="today-toolbar">
+      <button id="today-add-collective" class="button" type="button">+ Coletivo</button>
+      <span id="today-total" class="muted"></span>
+    </div>
+    <label class="today-search"><span>Buscar na biblioteca</span><input id="today-search" type="search" autocomplete="off" placeholder="Nome do exercício ou jogada"></label>
+    <ul id="today-library" class="today-library"></ul>
+    <p id="today-status" class="muted" role="status"></p>
+    <div class="modal-actions">
+      <button id="today-cancel" class="button" type="button">Cancelar</button>
+      <button id="today-save" class="button button-primary" type="button">Salvar roteiro</button>
     </div>
   </dialog>
 

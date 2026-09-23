@@ -119,6 +119,18 @@ def create_router(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @router.get("/api/v1/me/training-plan")
+    def team_training_plan(context: AuthSession = Depends(require_session)) -> dict[str, Any]:
+        if (
+            Permission.ATTENDANCE_READ_SELF not in context.permissions
+            and Permission.ATTENDANCE_READ_TEAM not in context.permissions
+        ):
+            raise HTTPException(status_code=403)
+        try:
+            return {"item": service.team_training_plan(team_ids=context.team_ids)}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     @router.get("/api/v1/session")
     def get_session(
         training_date: str,

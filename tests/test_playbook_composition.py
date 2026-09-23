@@ -248,3 +248,78 @@ def test_mode_is_echoed_back_without_running_any_automatic_search() -> None:
     assert preview["mode"] == "DIRECIONADO"
     assert preview["method_version"]
     assert preview["schema_version"] == 1
+
+
+def _ranked(member_id: int, name: str, position: str, *, attack: int, defense: int) -> dict[str, object]:
+    item = record(member_id, name, [position])
+    item["attack_layer_ordinal"] = attack
+    item["layer_ordinal"] = attack
+    item["defense_layer_ordinal"] = defense
+    return item
+
+
+def _team_blocks() -> list[dict[str, object]]:
+    return [
+        block("time-a", [role("ATTACK", "Time A · Central", attack=["C"]), role("ATTACK", "Time A · Pivô", attack=["PV"])]),
+        block("time-b", [role("ATTACK", "Time B · Central", attack=["C"]), role("ATTACK", "Time B · Pivô", attack=["PV"])]),
+    ]
+
+
+def _occupants(preview: dict) -> dict[str, str]:
+    names = {item["member_id"]: item["name"] for item in preview["participants"]}
+    return {slot["slot_id"]: names.get(slot["member_id"]) for slot in preview["slots"]}
+
+
+def test_board_starts_with_strong_attack_against_strong_defense() -> None:
+    participants = [
+        _ranked(1, "Atq C", "C", attack=3, defense=0),
+        _ranked(2, "Def C", "C", attack=0, defense=3),
+        _ranked(3, "Atq PV", "PV", attack=3, defense=0),
+        _ranked(4, "Def PV", "PV", attack=0, defense=3),
+    ]
+    preview = build_preview(participant_records=participants, blocks=_team_blocks(), assignments=[], mode="DIRECIONADO", suggest=True)
+
+    occupants = _occupants(preview)
+    assert occupants == {"time-a:0:0": "Atq C", "time-a:1:0": "Atq PV", "time-b:0:0": "Def C", "time-b:1:0": "Def PV"}
+    assert {slot["origin"] for slot in preview["slots"]} == {"SUGGESTED"}
+    assert preview["diagnostics"]["conflicts"] == []
+
+
+def test_suggestion_never_moves_what_the_ct_placed_and_leaves_ineligible_slots_vacant() -> None:
+    participants = [
+        _ranked(1, "Atq C", "C", attack=3, defense=0),
+        _ranked(2, "Def C", "C", attack=0, defense=3),
+        _ranked(3, "Atq PV", "PV", attack=3, defense=0),
+    ]
+    manual = [{"slot_id": "time-a:0:0", "member_id": 2, "occupant_locked": True}]
+    preview = build_preview(participant_records=participants, blocks=_team_blocks(), assignments=manual, mode="DIRECIONADO", suggest=True)
+
+    occupants = _occupants(preview)
+    assert occupants["time-a:0:0"] == "Def C"
+    assert occupants["time-b:0:0"] == "Atq C"
+    assert occupants["time-a:1:0"] == "Atq PV"
+    assert occupants["time-b:1:0"] is None  # ninguém mais joga de pivô
+    origins = {slot["slot_id"]: slot["origin"] for slot in preview["slots"]}
+    assert origins["time-a:0:0"] == "MANUAL" and origins["time-b:0:0"] == "SUGGESTED"
+    assert [item["slot_id"] for item in preview["diagnostics"]["vacant_slots"]] == ["time-b:1:0"]
+
+
+def test_balanced_suggestion_splits_strength_between_teams() -> None:
+    participants = [
+        _ranked(1, "Forte C", "C", attack=3, defense=3),
+        _ranked(2, "Fraca C", "C", attack=0, defense=0),
+        _ranked(3, "Forte PV", "PV", attack=3, defense=3),
+        _ranked(4, "Fraca PV", "PV", attack=0, defense=0),
+    ]
+    preview = build_preview(participant_records=participants, blocks=_team_blocks(), assignments=[], mode="EQUILIBRADO", suggest=True)
+
+    occupants = _occupants(preview)
+    team_a = {occupants["time-a:0:0"], occupants["time-a:1:0"]}
+    assert team_a in ({"Forte C", "Fraca PV"}, {"Fraca C", "Forte PV"})
+
+
+def test_without_suggest_flag_the_board_stays_manual() -> None:
+    participants = [_ranked(1, "Atq C", "C", attack=3, defense=0)]
+    preview = build_preview(participant_records=participants, blocks=_team_blocks(), assignments=[], mode="DIRECIONADO")
+
+    assert all(slot["member_id"] is None for slot in preview["slots"])

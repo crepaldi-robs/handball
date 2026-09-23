@@ -35,7 +35,14 @@ def _player(record: Mapping[str, Any]) -> dict[str, Any]:
         "layer_ordinal": int(layer_ordinal) if layer_ordinal is not None else None,
         "layer_label": record.get("layer_label"),
         "layer_refine_bonus": dict(record.get("layer_refine_bonus") or {}),
+        "attack_layer_ordinal": _optional_int(record.get("attack_layer_ordinal")),
+        "defense_layer_ordinal": _optional_int(record.get("defense_layer_ordinal")),
+        "goalkeeper_layer_ordinal": _optional_int(record.get("goalkeeper_layer_ordinal")),
     }
+
+
+def _optional_int(value: Any) -> int | None:
+    return int(value) if value is not None else None
 
 
 def _expand_roles(roles: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -572,6 +579,14 @@ def attach_layer_info(
         scopes = rankings.get(int(record["member_id"]), {})
         if not scopes:
             continue
+        # Ordinais por dimensão ficam lado a lado: o coletivo direcionado
+        # compara ataque e defesa separadamente, sem somar escalas.
+        if scopes.get("LINE") is not None:
+            record["attack_layer_ordinal"] = int(scopes["LINE"]["layer_ordinal"])
+        if scopes.get("DEFENSE") is not None:
+            record["defense_layer_ordinal"] = int(scopes["DEFENSE"]["layer_ordinal"])
+        if scopes.get("GOALKEEPER") is not None:
+            record["goalkeeper_layer_ordinal"] = int(scopes["GOALKEEPER"]["layer_ordinal"])
         positions = set(record.get("attack_positions") or ())
         only_goalkeeper = bool(positions) and positions == {"GOL"}
         info = (

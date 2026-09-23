@@ -56,7 +56,7 @@
   const state = {
     sessions: [],
     sessionId: null,
-    mode: "EQUILIBRADO",
+    mode: "DIRECIONADO",
     blocks: [],
     blockCounter: 0,
     assignments: new Map(), // slot_id -> {member_id, occupant_locked}
@@ -188,7 +188,7 @@
 
   function selectSession(sessionId) {
     state.sessionId = Number(sessionId);
-    state.mode = "EQUILIBRADO";
+    state.mode = "DIRECIONADO";
     state.blockCounter = 1;
     state.blocks = defaultTeamBlocks("");
     state.assignments = new Map();
@@ -205,7 +205,24 @@
     });
     els.empty.hidden = true;
     els.workspace.hidden = false;
-    refreshPreview();
+    refreshPreview({ suggest: true });
+  }
+
+  /* Refaz a sugestão do modo atual: tira só o que não está fixado e deixa o
+   * servidor preencher as vagas livres. O que a CT fixou nunca muda. */
+  function resuggest() {
+    Array.from(state.assignments.entries()).forEach(([slotId, value]) => {
+      if (!value.occupant_locked) state.assignments.delete(slotId);
+    });
+    refreshPreview({ suggest: true });
+  }
+
+  function adoptSuggestions(payload) {
+    (payload.slots || []).forEach((slot) => {
+      if (slot.origin === "SUGGESTED" && slot.member_id != null) {
+        state.assignments.set(slot.slot_id, { member_id: slot.member_id, occupant_locked: false, origin: "SUGGESTED" });
+      }
+    });
   }
 
   // --- Sincronização com o servidor ----------------------------------
@@ -224,7 +241,7 @@
     };
   }
 
-  async function refreshPreview() {
+  async function refreshPreview({ suggest = false } = {}) {
     const requestId = ++state.previewRequestId;
     if (!state.sessionId || !state.blocks.length) return;
     state.syncing = true;
@@ -232,9 +249,10 @@
     try {
       const payload = await request(`/api/v1/playbook/sessions/${state.sessionId}/composition/preview`, {
         method: "POST",
-        body: JSON.stringify(buildRequestBody()),
+        body: JSON.stringify({ ...buildRequestBody(), suggest }),
       });
       if (requestId !== state.previewRequestId) return;
+      if (suggest) adoptSuggestions(payload);
       state.lastPreview = payload;
       state.lastRequestFailed = false;
       pruneUnresolvedManualIncludes(payload.unresolved_participant_ids || []);
@@ -312,7 +330,7 @@
     }
     els.participants.innerHTML = preview.participants.map((player) => {
       const isManual = state.manualIncludeIds.has(Number(player.member_id));
-      const layer = player.layer_label ? `<span class="playbook-board-layer-chip">${escapeHtml(player.layer_label)} · legado</span>` : "";
+      const layer = player.layer_label ? `<span class="playbook-board-layer-chip">${escapeHtml(player.layer_label)}</span>` : "";
       return `
         <div class="playbook-board-participant">
           <span>${escapeHtml(player.name)}${isManual ? " · incluído" : ""} ${layer}</span>
@@ -346,20 +364,14 @@
   }
 
   function drawCourtMarkings(svg) {
+    // Mesma meia quadra IHF do editor de jogadas (court-ihf.js), encaixada
+    // no sistema de coordenadas da prancheta: 200 unidades = 20 m de largura.
+    if (!window.HandballCourt) return;
     const ns = "http://www.w3.org/2000/svg";
-    const goalLine = document.createElementNS(ns, "line");
-    goalLine.setAttribute("x1", "20"); goalLine.setAttribute("y1", "6");
-    goalLine.setAttribute("x2", "180"); goalLine.setAttribute("y2", "6");
-    goalLine.setAttribute("stroke", "var(--color-border)"); goalLine.setAttribute("stroke-width", "1.5");
-    svg.appendChild(goalLine);
-    const goalArea = document.createElementNS(ns, "path");
-    goalArea.setAttribute("d", "M 55 6 A 55 55 0 0 0 145 6");
-    goalArea.setAttribute("fill", "none"); goalArea.setAttribute("stroke", "var(--color-border)"); goalArea.setAttribute("stroke-dasharray", "2 2");
-    svg.appendChild(goalArea);
-    const goal = document.createElementNS(ns, "rect");
-    goal.setAttribute("x", "85"); goal.setAttribute("y", "1"); goal.setAttribute("width", "30"); goal.setAttribute("height", "5");
-    goal.setAttribute("fill", "none"); goal.setAttribute("stroke", "var(--color-info)"); goal.setAttribute("stroke-width", "1.5");
-    svg.appendChild(goal);
+    const group = document.createElementNS(ns, "g");
+    group.setAttribute("transform", "translate(100 6)");
+    group.append(window.HandballCourt.markings({ title: "Meia quadra (medidas IHF)" }));
+    svg.appendChild(group);
   }
 
   function slotAbbrev(slot) {
@@ -629,18 +641,22 @@
     const suffix = state.blockCounter > 1 ? String(state.blockCounter) : "";
     state.blocks = state.blocks.concat(defaultTeamBlocks(suffix));
     setDirty(true);
-    refreshPreview();
+    refreshPreview({ suggest: true });
   });
 
   els.modeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.mode = button.dataset.boardMode;
       setDirty(true);
-      refreshPreview();
+      resuggest();
     });
   });
 
   els.recalculate.addEventListener("click", () => refreshPreview());
+  document.querySelector("#playbook-board-resuggest")?.addEventListener("click", () => {
+    setDirty(true);
+    resuggest();
+  });
   els.sessionSelect.addEventListener("change", (event) => selectSession(Number(event.target.value)));
   els.refreshSessions.addEventListener("click", () => loadSessions());
 

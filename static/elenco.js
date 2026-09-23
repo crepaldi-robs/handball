@@ -8,7 +8,7 @@
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const ATTACK_POSITIONS = ["GOL", "PE", "ME", "C", "MD", "PD", "PV"];
   const DEFENSIVE_POSITIONS = ["M1", "M2", "M3", "AVANCADO"];
-  const SCOPE_ORDER = ["LINE", "GOALKEEPER"];
+  const SCOPE_ORDER = ["LINE", "DEFENSE", "GOALKEEPER"];
 
   const state = { session: null, overview: null, activeSession: null, loadedViews: new Set() };
 
@@ -80,7 +80,8 @@
   function memberLayerText(member) {
     const layers = member.layers || {};
     const parts = [];
-    if (layers.LINE) parts.push(`${layers.LINE.label}`);
+    if (layers.LINE) parts.push(`${layers.LINE.label} (ATQ)`);
+    if (layers.DEFENSE) parts.push(`${layers.DEFENSE.label} (DEF)`);
     if (layers.GOALKEEPER) parts.push(`${layers.GOALKEEPER.label} (GOL)`);
     return parts.join(" · ") || "—";
   }
@@ -193,6 +194,7 @@
   }
 
   function refinementEditor(scope, layer) {
+    if (scope === "DEFENSE") return null;
     const wrap = el("div", "stack-form");
     const positions = [...new Set(layer.members.flatMap((member) => member.attack_positions || []))]
       .filter((position) => layer.members.filter((member) => (member.attack_positions || []).includes(position)).length > 1);
@@ -238,7 +240,7 @@
   function renderLayersBoard(data) {
     const board = $("#layers-board");
     if (!board) return;
-    board.replaceChildren(...SCOPE_ORDER.map((scope) => {
+    board.replaceChildren(...SCOPE_ORDER.filter((scope) => data.scopes[scope]).map((scope) => {
       const scopeData = data.scopes[scope];
       const column = el("section", "panel stack-form");
       column.append(el("h2", null, scopeData.label));
@@ -272,7 +274,7 @@
   function renderRankingQueues(data) {
     const wrap = $("#ranking-queues");
     if (!wrap) return;
-    wrap.replaceChildren(...SCOPE_ORDER.map((scope) => {
+    wrap.replaceChildren(...SCOPE_ORDER.filter((scope) => data.scopes[scope]).map((scope) => {
       const scopeData = data.scopes[scope];
       const column = el("section", "panel stack-form");
       column.append(el("h2", null, `${scopeData.label} · fila de pendentes`));
@@ -412,7 +414,7 @@
         groupCard("Reservas", comparison.reserves),
         groupCard("Fora da hierarquia", comparison.unranked),
         ...data.layers.map((layer) => groupCard(
-          `${layer.label} · ${layer.scope === "GOALKEEPER" ? "Goleiros" : "Linha"}`,
+          `${layer.label} · ${layer.scope === "GOALKEEPER" ? "Goleiros" : "Ataque"}`,
           layer,
         )),
       );
