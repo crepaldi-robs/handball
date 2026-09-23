@@ -15,6 +15,8 @@ Inspeção em 21/09/2026 do checkout `69e87657a9985ed1839833c6984035ade7bba315`.
 5. [Entrega e aceite](ENTREGA.md): fases, riscos e verificações.
 6. [Meta-prompt para Claude](META-PROMPT-CLAUDE.md): execução futura, dentro do escopo que vier a ser autorizado.
 7. [Registro de verificação](VERIFICACAO.md): evidências desta entrega documental.
+8. [Chamada → treino do dia](CHAMADA-TREINO.md): filas por posição, mensagem enxuta, quem vê o quê.
+9. [Criação de jogadas](JOGADAS.md): pesquisa e especificação do editor animado.
 
 O objetivo é preparar treinos específicos com assistência e controle humano. Não criar taxonomia de jogadores, arquétipos nem avaliação de “forma do dia”.
 

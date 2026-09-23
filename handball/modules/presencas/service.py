@@ -11,8 +11,9 @@ from handball.database.contracts import (
     UnitOfWorkFactoryContract,
 )
 
-from .domain import CONFIRMATION_LABELS, build_coach_message, summarize_records
-from .planner import attach_layer_info, build_coach_report, render_coach_report
+from .domain import CONFIRMATION_LABELS, summarize_records
+from .planner import attach_layer_info, build_coach_report
+from .training_day import build_training_day, public_training_day, render_training_message
 
 LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -43,6 +44,7 @@ class AttendanceService:
         records = self._effective_records(records)
         summary = summarize_records(records)
         coach_report = build_coach_report(records)
+        training_day = build_training_day(records)
         return {
             "session": training,
             "records": records,
@@ -55,11 +57,10 @@ class AttendanceService:
                 "unknown_presence": len(summary["unknown_presence"]),
             },
             "coach_report": coach_report,
-            "coach_message": build_coach_message(
-                training_date,
-                records,
-                is_finalized=bool(training["is_finalized"]),
-            ) + render_coach_report(coach_report),
+            "training_day": training_day,
+            "coach_message": render_training_message(
+                training_day, records, training_date=training_date
+            ),
             "confirmation_labels": CONFIRMATION_LABELS,
         }
 
@@ -70,10 +71,12 @@ class AttendanceService:
         *,
         calendar_event: dict[str, Any] | None,
         exercises: Iterable[dict[str, Any]] = (),
+        plan_items: Iterable[dict[str, Any]] = (),
     ) -> dict[str, Any]:
         records = AttendanceService._effective_records(records)
         summary = summarize_records(records)
         coach_report = build_coach_report(records, exercises)
+        training_day = build_training_day(records, plan_items, event=calendar_event)
         return {
             "session": training,
             "calendar_event": calendar_event,
@@ -87,11 +90,12 @@ class AttendanceService:
                 "unknown_presence": len(summary["unknown_presence"]),
             },
             "coach_report": coach_report,
-            "coach_message": build_coach_message(
-                date.fromisoformat(str(training["training_date"])),
+            "training_day": training_day,
+            "coach_message": render_training_message(
+                training_day,
                 records,
-                is_finalized=bool(training["is_finalized"]),
-            ) + render_coach_report(coach_report),
+                training_date=date.fromisoformat(str(training["training_date"])),
+            ),
             "confirmation_labels": CONFIRMATION_LABELS,
         }
 
@@ -208,12 +212,37 @@ class AttendanceService:
             )
             records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
             exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
+            plan_items = unit_of_work.playbook.training_day_items(event_id, team_ids=team_ids)
         return self._payload(
             linked["session"],
             records,
             calendar_event=linked["event"],
             exercises=exercises,
+            plan_items=plan_items,
         )
+
+    def team_training_plan(self, *, team_ids: Iterable[int]) -> dict[str, Any] | None:
+        """Planejamento final do próximo treino visível, como a atleta vê.
+
+        Só conteúdos publicados; filas e times sem camadas, notas ou avisos
+        internos da CT. Leitura pura: não cria chamada nem altera nada.
+        """
+
+        with self._unit_of_work_factory(read_only=True) as unit_of_work:
+            event = unit_of_work.calendar.active_training_event(team_ids, player_visible_only=True)
+            if event is None:
+                return None
+            records: list[dict[str, Any]] = []
+            if event.get("attendance_session_id"):
+                records = unit_of_work.attendance.get_session_records(int(event["attendance_session_id"]))
+                records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
+            plan_items = unit_of_work.playbook.training_day_items(
+                int(event["id"]), team_ids=team_ids, published_only=True
+            )
+        records = self._effective_records(records)
+        public = public_training_day(build_training_day(records, plan_items, event=event))
+        public["has_plan"] = bool(plan_items)
+        return public
 
     def calendar_session_payload(
         self,
@@ -232,7 +261,16 @@ class AttendanceService:
             records = unit_of_work.attendance.get_session_records(session_id)
             records = self._attach_rankings(records, unit_of_work.roster.rankings_by_member())
             exercises = unit_of_work.playbook.list_published_exercise_specs(team_ids)
-        return self._payload(training, records, calendar_event=calendar_event, exercises=exercises)
+            plan_items = unit_of_work.playbook.training_day_items(
+                int(calendar_event["id"]), team_ids=team_ids
+            )
+        return self._payload(
+            training,
+            records,
+            calendar_event=calendar_event,
+            exercises=exercises,
+            plan_items=plan_items,
+        )
 
     def sync_records(
         self,

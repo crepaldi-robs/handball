@@ -175,7 +175,7 @@ def test_pwa_v9_keeps_last_calendar_navigation_read_only_offline(tmp_path):
     platform = client.get("/static/platform.js").text
 
     assert manifest["start_url"] == "/app"
-    assert 'const CACHE_NAME = "handball-shell-v19"' in worker
+    assert 'const CACHE_NAME = "handball-shell-v20"' in worker
     assert '"/static/playbook-board.js"' in worker
     assert '"/static/css/playbook-board.css"' in worker
     # A identidade visual só sobrevive offline se os tokens e as fontes

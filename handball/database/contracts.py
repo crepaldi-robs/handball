@@ -20,6 +20,14 @@ class DatabaseCompatibilityError(RuntimeError):
     """O banco persistente está ausente, corrompido ou incompatível."""
 
 
+class RevisionConflictError(ValueError):
+    """Escrita condicional recusada: outra pessoa salvou uma revisão mais nova."""
+
+    def __init__(self, message: str, *, current_revision: int) -> None:
+        super().__init__(message)
+        self.current_revision = int(current_revision)
+
+
 class MemberDTO(TypedDict, total=False):
     id: int
     name: str
@@ -152,6 +160,8 @@ class RosterRepositoryContract(Protocol):
     """Contrato de persistência consumido pelo módulo de gestão de elenco."""
 
     def is_available(self) -> bool: ...
+
+    def supports_scope(self, scope: str) -> bool: ...
 
     def list_layers(self, scope: str) -> list[dict[str, Any]]: ...
 
@@ -596,6 +606,45 @@ class PlaybookRepositoryContract(Protocol):
     ) -> dict[str, Any]: ...
 
     def list_published_exercise_specs(self, team_ids: Iterable[int]) -> list[dict[str, Any]]: ...
+
+    def plays_available(self) -> bool: ...
+
+    def ensure_collective_content(self, team_id: int, *, actor_user_id: int) -> int: ...
+
+    def training_day_items(
+        self,
+        event_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def play_diagram(
+        self,
+        content_id: int,
+        *,
+        team_ids: Iterable[int],
+        published_only: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    def save_play_diagram(
+        self,
+        content_id: int,
+        diagram: Mapping[str, Any],
+        *,
+        schema_version: int,
+        base_revision: int | None,
+        change_summary: str,
+        team_ids: Iterable[int],
+        actor_user_id: int,
+    ) -> dict[str, Any]: ...
+
+    def play_diagram_revisions(
+        self,
+        content_id: int,
+        *,
+        team_ids: Iterable[int],
+    ) -> list[dict[str, Any]]: ...
 
     def move_contents(
         self,

@@ -678,6 +678,7 @@ if (playbookRoot) {
         <button id="playbook-favorite" class="playbook-icon-button light" type="button" aria-label="Favoritar">★</button>
       </header>
       <div class="playbook-detail-tags">${content.perspective ? `<span>${content.perspective === "ATTACK" ? "Ataque" : content.perspective === "DEFENSE" ? "Defesa" : "Neutro"}</span>` : ""}${(content.positions || []).map((position) => `<span>${escapeHtml(position)}</span>`).join("")}</div>
+      ${isPlayContent(content) ? `<section class="playbook-play-section"><h3>Jogada animada</h3><div id="playbook-play-box"><p class="muted">Carregando desenho…</p></div>${canManage ? `<div class="playbook-play-actions"><a class="playbook-soft-button" href="/app/playbook/jogadas/${encodeURIComponent(content.id)}">✎ Desenhar jogada</a></div>` : ""}</section>` : ""}
       <section><h3>Objetivo</h3><p>${textLines(content.objective || "Ainda não descrito.")}</p></section>
       ${content.when_to_use ? `<section><h3>Quando usar</h3><p>${textLines(content.when_to_use)}</p></section>` : ""}
       ${content.prerequisites ? `<section><h3>Pré-requisitos</h3><p>${textLines(content.prerequisites)}</p></section>` : ""}
@@ -696,6 +697,29 @@ if (playbookRoot) {
     elements.detail.querySelectorAll("[data-relation-content]").forEach((button) => button.addEventListener("click", () => openContent(Number(button.dataset.relationContent))));
     elements.detail.querySelectorAll("[data-restore-revision]").forEach((button) => button.addEventListener("click", () => restoreRevision(content, Number(button.dataset.restoreRevision))));
     if (canManage) bindDetailManagement(content);
+    if (isPlayContent(content)) loadPlayDiagram(content);
+  }
+
+  function isPlayContent(content) {
+    return ["JOGADA", "PLAY"].includes(String(content?.content_kind || "").toUpperCase());
+  }
+
+  async function loadPlayDiagram(content) {
+    const box = elements.detail.querySelector("#playbook-play-box");
+    if (!box || !window.PlayDiagram) return;
+    try {
+      const data = await request(`/api/v1/playbook/contents/${content.id}/diagram`);
+      if (state.selectedContent?.id !== content.id) return;
+      if (!data.available) {
+        box.innerHTML = '<p class="muted">As jogadas desenhadas dependem da manutenção de banco v15.</p>';
+      } else if (!data.item) {
+        box.innerHTML = '<p class="muted">Ainda sem desenho. Use “Desenhar jogada”.</p>';
+      } else {
+        window.PlayDiagram.mount(box, data.item.diagram, { title: content.title });
+      }
+    } catch (error) {
+      box.textContent = error.message || "Não foi possível carregar o desenho.";
+    }
   }
 
   function bindDetailManagement(content) {

@@ -134,6 +134,8 @@ class RosterService:
             names = self._member_names(unit_of_work)
             scopes: dict[str, Any] = {}
             for scope in RANK_SCOPES:
+                if scope == "DEFENSE" and not roster.supports_scope(scope):
+                    continue
                 layers = roster.list_layers(scope)
                 for layer in layers:
                     layer["label"] = layer_label(layer["ordinal"])
@@ -161,6 +163,10 @@ class RosterService:
                 raise RuntimeError(
                     "O banco ainda não recebeu a atualização de hierarquia do elenco."
                 )
+            if not roster.supports_scope(scope):
+                raise RuntimeError(
+                    "O banco ainda não recebeu a hierarquia de defesa (manutenção v15)."
+                )
             members = unit_of_work.attendance.list_members(include_inactive=True)
             member = next(
                 (item for item in members if int(item["id"]) == int(member_id)), None
@@ -172,7 +178,7 @@ class RosterService:
             positions = list(member.get("attack_positions") or ())
             if scope == "GOALKEEPER" and "GOL" not in positions:
                 raise ValueError("Este atleta não tem a posição de goleiro cadastrada.")
-            if scope == "LINE" and not any(value != "GOL" for value in positions):
+            if scope in {"LINE", "DEFENSE"} and not any(value != "GOL" for value in positions):
                 raise ValueError("Este atleta não tem posição de linha cadastrada.")
             existing = roster.assignment_for_member(member_id, scope)
             if rerank and existing is None:
@@ -275,6 +281,7 @@ class RosterService:
                 question=question_text(
                     names.get(subject_id, f"#{subject_id}"),
                     names.get(int(reference_member_id), f"#{reference_member_id}"),
+                    scope,
                 ),
                 outcome=outcome,
                 actor_user_id=actor_user_id,
@@ -549,6 +556,7 @@ class RosterService:
                 "text": question_text(
                     names.get(subject_id, f"#{subject_id}"),
                     names.get(reference_id, f"#{reference_id}"),
+                    session["scope"],
                 ),
             },
             "result": None,

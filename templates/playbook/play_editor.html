@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="{{ 'neutral' if team_theme.slug == 'neutral' else 'team' }}" data-team="{{ team_theme.slug }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="{{ team_theme.primary }}">
+  <title>Editor de jogadas · {{ organization.display_name }}</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/tokens.generated.css">
+  <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/css/play.css">
+  <script src="/static/platform.js" defer></script>
+  <script src="/static/court-ihf.js" defer></script>
+  <script src="/static/play-diagram.js" defer></script>
+  <script src="/static/play-editor.js" defer></script>
+</head>
+<body class="platform-body play-editor-body" data-csrf-token="{{ session.csrf_token }}">
+  <header class="topbar"><div class="topbar-inner">
+    {% set page_subtitle = "Editor de jogadas" %}
+    {% include "partials/_brand.html" %}
+    <div class="top-actions"><a id="pe-back" class="text-button" href="/app/playbook{{ '?content_id=' ~ content_id if content_id else '' }}">← Playbook</a></div>
+  </div></header>
+
+  <main class="module-shell play-editor" data-play-editor data-content-id="{{ content_id or '' }}">
+    <section class="pe-head">
+      <label class="pe-field pe-title-field"><span>Nome da jogada</span><input id="pe-title" type="text" maxlength="220" placeholder="Ex.: Cruzamento C → MD" autocomplete="off"></label>
+      <label id="pe-template-field" class="pe-field"><span>Começar de</span><select id="pe-templates"></select></label>
+      <label id="pe-folder-field" class="pe-field"><span>Pasta</span><select id="pe-folder"></select></label>
+    </section>
+
+    <nav id="pe-steps" class="pe-steps" aria-label="Passos da jogada"></nav>
+
+    <div class="pe-stage">
+      <div class="pe-court-wrap">
+        <svg id="pe-court" class="pe-court" aria-label="Quadra da jogada. Toque numa atleta para escolher o que ela faz."></svg>
+        <p id="pe-hint" class="pe-hint" aria-live="polite"></p>
+      </div>
+      <aside class="pe-side">
+        <div id="pe-actionbar" class="pe-actionbar" role="toolbar" aria-label="O que a atleta faz" hidden></div>
+
+        <div id="pe-formation-tools" class="pe-panel">
+          <h2>Formação</h2>
+          <p class="muted">Arraste as atletas para a posição inicial. Toque numa atacante para dizer se ela começa com a bola.</p>
+          <div class="pe-add-row">
+            <select id="pe-add-attack-position" aria-label="Posição da atacante"></select>
+            <button id="pe-add-attack" class="button" type="button">+ Atacante</button>
+          </div>
+          <div class="pe-add-row">
+            <select id="pe-add-defense-position" aria-label="Posição da defensora"></select>
+            <button id="pe-add-defense" class="button" type="button">+ Defensora</button>
+          </div>
+        </div>
+
+        <div id="pe-step-fields" class="pe-panel" hidden>
+          <h2>Passo</h2>
+          <label class="pe-field"><span>Nome curto</span><input id="pe-step-label" type="text" maxlength="80" placeholder="Ex.: Cruzamento C → MD"></label>
+          <label class="pe-field"><span>Explicação para as atletas</span><textarea id="pe-step-note" rows="3" maxlength="500"></textarea></label>
+          <label class="pe-field pe-field-inline"><span>Duração (s)</span><input id="pe-step-duration" type="number" min="0.5" max="10" step="0.5" inputmode="decimal"></label>
+          <button id="pe-delete-step" class="text-button pe-danger" type="button">Apagar este passo</button>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="pe-footer">
+      <div class="pe-history">
+        <button id="pe-undo" class="button" type="button" aria-label="Desfazer">↶ Desfazer</button>
+        <button id="pe-redo" class="button" type="button" aria-label="Refazer">↷ Refazer</button>
+        <button id="pe-preview" class="button" type="button">▶ Ver animação</button>
+      </div>
+      <p id="pe-status" class="pe-status" role="status" aria-live="polite"></p>
+      <button id="pe-save" class="button button-primary" type="button">Salvar jogada</button>
+    </footer>
+    <section id="pe-preview-box" class="pe-preview" hidden aria-label="Prévia animada"></section>
+  </main>
+</body>
+</html>

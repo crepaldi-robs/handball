@@ -13,10 +13,13 @@
   <link rel="stylesheet" href="/static/css/tokens.generated.css">
   <link rel="stylesheet" href="/static/css/hm-ime-expressive.css">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/css/play.css">
   {% if can_manage %}
   <link rel="stylesheet" href="/static/css/playbook-board.css">
   {% endif %}
   <script src="/static/platform.js" defer></script>
+  <script src="/static/court-ihf.js" defer></script>
+  <script src="/static/play-diagram.js" defer></script>
   {% if can_manage %}
   <script src="/static/coach-report.js" defer></script>
   <script src="/static/playbook.js" defer></script>
@@ -104,6 +107,7 @@
         <span id="pbp-detail-subtitle" class="muted"></span>
       </header>
       <div id="pbp-responsibility" class="pbp-responsibility hidden"></div>
+      <section id="pbp-play" class="pbp-detail-section playbook-play-section hidden" aria-label="Jogada animada"></section>
       <section id="pbp-media" class="pbp-detail-section hidden" aria-label="Vídeos e imagens"></section>
       <section id="pbp-objective" class="pbp-detail-section hidden"><h2>Objetivo</h2><p id="pbp-objective-text"></p></section>
       <section id="pbp-when" class="pbp-detail-section hidden"><h2>Quando usar</h2><p id="pbp-when-text"></p></section>
@@ -150,6 +154,7 @@
       <button id="playbook-offline" class="playbook-soft-button" type="button">↓ Essenciais offline</button>
       {% if can_manage %}
       <button id="playbook-open-organizer" class="playbook-soft-button playbook-organize-action" type="button">Organizar Playbook</button>
+      <a class="playbook-soft-button" href="/app/playbook/jogadas/nova">＋ Nova jogada</a>
       <button id="playbook-new-content" class="playbook-primary-action" type="button">＋ Novo conteúdo</button>
       {% endif %}
     </section>
@@ -175,9 +180,9 @@
     <section id="playbook-board-panel" class="playbook-board-panel" aria-labelledby="playbook-board-title">
       <header class="playbook-board-header">
         <div>
-          <span class="playbook-kicker">PRÉVIA MANUAL · NADA É SALVO AINDA</span>
-          <h2 id="playbook-board-title">Preparar treino · prancheta manual</h2>
-          <p>Monte a composição manualmente; o diagnóstico é recalculado a cada ajuste. Ataque e defesa independentes e a sugestão automática ainda dependem de decisões em aberto.</p>
+          <span class="playbook-kicker">PRÉVIA · NADA É SALVO AINDA</span>
+          <h2 id="playbook-board-title">Preparar treino · prancheta</h2>
+          <p>A prancheta começa com a sugestão do modo escolhido, usando as hierarquias de ataque e de defesa do Elenco. Troque, fixe e recalcule: o que você fixar não muda.</p>
         </div>
         <div class="playbook-board-session-picker">
           <label for="playbook-board-session">Sessão do Playbook</label>
@@ -191,10 +196,10 @@
       <div id="playbook-board-workspace" class="playbook-board-workspace" hidden>
         <aside class="playbook-board-side" aria-label="Modo, participantes e blocos">
           <div class="playbook-board-mode" role="group" aria-label="Modo de composição">
-            <button type="button" data-board-mode="EQUILIBRADO" class="is-active" aria-pressed="true">Equilibrado</button>
-            <button type="button" data-board-mode="DIRECIONADO" aria-pressed="false">Direcionado</button>
+            <button type="button" data-board-mode="DIRECIONADO" class="is-active" aria-pressed="true">Ataque forte × Defesa forte</button>
+            <button type="button" data-board-mode="EQUILIBRADO" aria-pressed="false">Equilibrado</button>
           </div>
-          <p class="playbook-board-mode-hint">Equilibrado é o padrão. Os dois modos têm o mesmo acesso e destaque — nenhum é avançado ou secundário.</p>
+          <p class="playbook-board-mode-hint">A prancheta já começa com a sugestão: Time A com o melhor ataque, Time B com a melhor defesa. Troque, fixe ou mude de modo à vontade — o que você fixar não muda.</p>
 
           <h3>Participantes previstos</h3>
           <div id="playbook-board-participants" class="playbook-board-participants" aria-live="polite"></div>
@@ -208,9 +213,10 @@
         <div class="playbook-board-court-wrap">
           <div id="playbook-board-status" class="playbook-board-status" role="status" aria-live="polite"></div>
           <svg id="playbook-board-court" class="playbook-board-court" viewBox="0 0 200 220" role="group" aria-label="Meia quadra com os papéis do treino" tabindex="0"></svg>
-          <p class="playbook-board-geometry-note">Geometria conceitual, a conferir contra a fonte oficial IHF antes de uso em treino real.</p>
+          <p class="playbook-board-geometry-note">Meia quadra nas medidas da Regra 1 da IHF.</p>
           <div class="playbook-board-court-actions">
             <button id="playbook-board-recalculate" class="playbook-primary-action" type="button">Recalcular</button>
+            <button id="playbook-board-resuggest" class="playbook-soft-button" type="button">Sugerir de novo</button>
             <span id="playbook-board-dirty" class="playbook-board-dirty" hidden>Rascunho não salvo</span>
           </div>
         </div>

@@ -17,6 +17,15 @@
 | Horizonte | Etapas com duração, movimentos, passes e finalizações; reprodução e vídeo automático em fases posteriores. |
 | Primeira etapa | Sem obrigatoriedade de atributos específicos adicionais. |
 
+## Atualização de 23/09/2026
+
+Registrada em [CHAMADA-TREINO.md](CHAMADA-TREINO.md). O padrão do coletivo
+passa a ser **ataque forte × defesa forte** (Time A melhor ataque, Time B
+melhor defesa), e a prancheta começa com a sugestão; Equilibrado continua com
+o mesmo acesso. A hierarquia de linha passa a ser a de ataque, e a defesa
+ganha ordenação própria, geral, sem refino por posição. Isso substitui o
+"Equilibrado é o default" da seção seguinte.
+
 ## Atualização confirmada no encerramento da voz
 
 Equilibrado é o default, apenas primeiro selecionado/apresentado. Ambos os modos têm **igual importância, hierarquia visual, acesso e destaque**. Direcionado não fica em menu avançado ou secundário. Modo ativo deve aparecer na mensagem e no mapinha/quadra do coletivo, mantendo consistência também nos blocos.

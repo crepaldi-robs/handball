@@ -13,6 +13,8 @@
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/platform.js" defer></script>
   <script src="/static/player-attendance.js" defer></script>
+  <script src="/static/training-day.js" defer></script>
+  <script src="/static/player-plan.js" defer></script>
 </head>
 <body class="platform-body" data-csrf-token="{{ session.csrf_token }}">
   <header class="topbar"><div class="topbar-inner">
@@ -22,6 +24,10 @@
   </div></header>
   <main class="module-shell player-attendance-shell">
     {% include "partials/_attendance_response_widget.html" %}
+    <section class="panel team-plan-panel" aria-labelledby="team-plan-title">
+      <h2 id="team-plan-title">Treino do time</h2>
+      <div id="team-plan"><p class="muted">Carregando…</p></div>
+    </section>
   </main>
   {% include "partials/_player_bottom_nav.html" %}
 </body>

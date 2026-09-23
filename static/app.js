@@ -711,6 +711,27 @@ function renderCoachReportPanels() {
   const mobile = $("#coach-report-panel-mobile");
   if (desktop) window.CoachReportPanel?.render(desktop, report);
   if (mobile) window.CoachReportPanel?.render(mobile, report);
+  const day = state.payload?.training_day || null;
+  const options = { eventId: state.currentEventId };
+  const dayDesktop = $("#training-day-panel");
+  const dayMobile = $("#training-day-panel-mobile");
+  if (dayDesktop) window.TrainingDayPanel?.render(dayDesktop, day, options);
+  if (dayMobile) window.TrainingDayPanel?.render(dayMobile, day, options);
+  document.querySelectorAll("[data-today-open]").forEach((button) => {
+    button.disabled = !state.currentEventId;
+  });
+}
+
+function openTodayPlan() {
+  if (!state.currentEventId || !window.TodayPlanDialog) return;
+  window.TodayPlanDialog.open({
+    eventId: state.currentEventId,
+    api,
+    onSaved: async () => {
+      if (state.payload?.session?.id) await loadSession(state.payload.session.id);
+      setAlert("Roteiro do treino atualizado.");
+    },
+  });
 }
 
 function updateSaveButtonLabel() {
@@ -1223,6 +1244,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try { await navigator.clipboard.writeText($("#coach-message").textContent); setAlert("Mensagem copiada."); }
     catch (_) { setAlert("Não foi possível copiar automaticamente.", "warning"); }
   }
+  document.querySelectorAll("[data-today-open]").forEach((button) => button.addEventListener("click", openTodayPlan));
   $("#copy-summary").addEventListener("click", copySummary);
   $("#copy-summary-text-view").addEventListener("click", copySummary);
   $("#copy-summary-sheet").addEventListener("click", copySummary);

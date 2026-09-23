@@ -9,7 +9,7 @@ from handball.core.positions import parse_attack_positions
 
 from .shared import now_iso
 
-RANK_SCOPES = ("LINE", "GOALKEEPER")
+RANK_SCOPES = ("LINE", "DEFENSE", "GOALKEEPER")
 
 # Deslocamento temporário usado ao renumerar ordinais: o UPDATE direto de
 # ordinal+1 violaria UNIQUE(scope,ordinal) no meio da varredura do SQLite.
@@ -35,6 +35,22 @@ class RosterRepository:
 
     def is_available(self) -> bool:
         return self._table_exists("rank_layers")
+
+    def supports_scope(self, scope: str) -> bool:
+        """Escopo aceito pelo CHECK do banco instalado.
+
+        DEFENSE só existe a partir da v15; um banco ainda na v13/v14 continua
+        funcionando com ataque e goleiros, sem tentar gravar o escopo novo.
+        """
+
+        if scope not in RANK_SCOPES or not self.is_available():
+            return False
+        if scope != "DEFENSE":
+            return True
+        row = self.connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='table' AND name='rank_layers'"
+        ).fetchone()
+        return row is not None and "'DEFENSE'" in str(row[0])
 
     def _require_available(self) -> None:
         if not self.is_available():
@@ -500,6 +516,10 @@ class RosterRepository:
         ).fetchone()
         if layer is None:
             raise KeyError("Camada não encontrada.")
+        if str(layer["scope"]) == "DEFENSE":
+            raise ValueError(
+                "A defesa usa a ordem geral da camada; não há refino por posição."
+            )
         layer_members = {
             int(row["member_id"])
             for row in self.connection.execute(

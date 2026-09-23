@@ -12,8 +12,10 @@ from __future__ import annotations
 from math import ceil, log2
 from typing import Any, Mapping, Sequence
 
-RANK_SCOPES = ("LINE", "GOALKEEPER")
-SCOPE_LABELS = {"LINE": "Linha", "GOALKEEPER": "Goleiros"}
+# "LINE" é a hierarquia de ataque dos atletas de linha (nome mantido para não
+# converter dados); "DEFENSE" é a ordenação própria de defesa, criada pela v15.
+RANK_SCOPES = ("LINE", "DEFENSE", "GOALKEEPER")
+SCOPE_LABELS = {"LINE": "Ataque", "DEFENSE": "Defesa", "GOALKEEPER": "Goleiros"}
 
 OUTCOME_BETTER = "BETTER"
 OUTCOME_WORSE = "WORSE"
@@ -87,7 +89,17 @@ def choose_representative(
     )[0]
 
 
-def question_text(subject_name: str, reference_name: str) -> str:
+def question_text(subject_name: str, reference_name: str, scope: str = "LINE") -> str:
+    if scope == "DEFENSE":
+        return (
+            f"Na defesa, no dia a dia: quem rende mais, {subject_name} ou "
+            f"{reference_name}? (ou são do mesmo nível)"
+        )
+    if scope == "LINE":
+        return (
+            f"No ataque, no dia a dia: quem rende mais, {subject_name} ou "
+            f"{reference_name}? (ou são do mesmo nível)"
+        )
     return (
         f"Quem é melhor em quadra: {subject_name} ou {reference_name}? "
         "(ou são do mesmo nível)"
